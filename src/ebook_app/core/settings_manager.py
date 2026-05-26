@@ -1,87 +1,103 @@
-# src/ebook_app/core/settings_manager.py
-"""Persistent JSON-based settings manager."""
-
 from __future__ import annotations
-
 import json
-import os
 from pathlib import Path
-from typing import Any
+from PySide6.QtCore import QObject, Signal
 
 
-_DEFAULT_SETTINGS: dict[str, Any] = {
-    "theme": "dark",
-    "output_dir": str(Path.home() / "EbookAudioStudio" / "output"),
-    "tts_voice": "af_heart",
-    "tts_speed": 1.0,
-    "kokoro_cli_path": "",
-    "translator_provider": "google",
-    "translator_target_lang": "en",
-    "scraper_delay_ms": 500,
-}
+class SettingsManager(QObject):
+    settings_changed = Signal(str)
 
+    DEFAULTS = {
+        "tts_voice": "af_heart",
+        "tts_speed": 1.0,
+        "tts_device": "auto",
+        "output_dir": "output",
+        "theme": "dark",
+        "window_width": 1200,
+        "window_height": 800,
+    }
 
-class SettingsManager:
-    """Load, access, and persist application settings as a JSON file.
+    def __init__(self):
+        super().__init__()
+        self.settings_path = Path.home() / ".ebook_audio_studio_settings.json"
+        self._settings = {}
+        self.load()
 
-    Settings are stored in the user's config directory:
-      - Linux/macOS: ~/.config/EbookAudioStudio/settings.json
-      - Windows:     %APPDATA%\\EbookAudioStudio\\settings.json
+    # ---------------------------------------------------------
+    # Load / Save
+    # ---------------------------------------------------------
 
-    Usage::
-
-        sm = SettingsManager()
-        sm.get("tts_voice")          # returns current value
-        sm.set("tts_voice", "am_adam")
-        sm.save()
-    """
-
-    def __init__(self) -> None:
-        self._path = self._resolve_config_path()
-        self._data: dict[str, Any] = dict(_DEFAULT_SETTINGS)
-        self._load()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Return the value for *key*, falling back to *default*."""
-        return self._data.get(key, default)
-
-    def set(self, key: str, value: Any) -> None:
-        """Update *key* in memory (call :meth:`save` to persist)."""
-        self._data[key] = value
-
-    def all(self) -> dict[str, Any]:
-        """Return a shallow copy of all settings."""
-        return dict(self._data)
-
-    def save(self) -> None:
-        """Write current settings to disk."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as fh:
-            json.dump(self._data, fh, indent=2)
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _load(self) -> None:
-        if self._path.exists():
+    def load(self):
+        if self.settings_path.exists():
             try:
-                with self._path.open("r", encoding="utf-8") as fh:
-                    on_disk = json.load(fh)
-                # Merge: on-disk values override defaults; new defaults are kept.
-                self._data.update(on_disk)
-            except (json.JSONDecodeError, OSError):
-                # Corrupt or unreadable file — fall back to defaults.
-                pass
-
-    @staticmethod
-    def _resolve_config_path() -> Path:
-        if os.name == "nt":
-            base = Path(os.environ.get("APPDATA", Path.home()))
+                self._settings = json.loads(self.settings_path.read_text())
+            except Exception:
+                self._settings = {}
         else:
-            base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        return base / "EbookAudioStudio" / "settings.json"
+            self._settings = {}
+
+        # Apply defaults for missing keys
+        for key, value in self.DEFAULTS.items():
+            self._settings.setdefault(key, value)
+
+    def save(self):
+        try:
+            self.settings_path.write_text(json.dumps(self._settings, indent=2))
+        except Exception as e:
+            print("Failed to save settings:", e)
+
+    # ---------------------------------------------------------
+    # Get / Set
+    # ---------------------------------------------------------
+
+    def get(self, key: str):
+        return self._settings.get(key, self.DEFAULTS.get(key))
+
+    def set(self, key: str, value):
+        self._settings[key] = value
+        self.save()
+        self.settings_changed.emit(key)
+
+    # ---------------------------------------------------------
+    # Convenience Properties
+    # ---------------------------------------------------------
+
+    @property
+    def tts_voice(self):
+        return self.get("tts_voice")
+
+    @tts_voice.setter
+    def tts_voice(self, value):
+        self.set("tts_voice", value)
+
+    @property
+    def tts_speed(self):
+        return self.get("tts_speed")
+
+    @tts_speed.setter
+    def tts_speed(self, value):
+        self.set("tts_speed", value)
+
+    @property
+    def tts_device(self):
+        return self.get("tts_device")
+
+    @tts_device.setter
+    def tts_device(self, value):
+        self.set("tts_device", value)
+
+    @property
+    def output_dir(self):
+        return self.get("output_dir")
+
+    @output_dir.setter
+    def output_dir(self, value):
+        self.set("output_dir", value)
+
+    @property
+    def theme(self):
+        return self.get("theme")
+
+    @theme.setter
+    def theme(self, value):
+        self.set("theme", value)
