@@ -1,86 +1,136 @@
-# src/ebook_app/models/epub_builder.py
-"""EPUB3 builder — assembles chapters, audio, and SMIL into an .epub file."""
-
 from __future__ import annotations
-
-import uuid
 from pathlib import Path
+import zipfile
+import uuid
+from typing import List, Dict
+
+from ebook_app.models.media_overlay import MediaOverlayBuilder, TextSegment
 
 
-class EpubBuilder:
-    """Packages XHTML chapters, WAV/MP3 audio, and SMIL overlays into an EPUB3 file.
-
-    Usage::
-
-        builder = EpubBuilder()
-        epub_path = builder.build(
-            chapter_dir="/project/chapters",
-            audio_dir="/project/audio",
-            output_path="/project/output/novel.epub",
-            title="My Novel",
-            author="Author Name",
-        )
-
-    TODO: use the ``ebooklib`` library (or direct ZIP construction) to produce
-    a valid EPUB3 package with Media Overlays.
+class EPUBBuilder:
+    """
+    Builds EPUB3 files with optional Media Overlays (audio/text sync).
     """
 
-    def build(
-        self,
-        chapter_dir: str,
-        audio_dir: str,
-        output_path: str,
-        title: str = "Untitled",
-        author: str = "Unknown",
-        language: str = "en",
-    ) -> str:
-        """Build the EPUB3 file.
+    def __init__(self, title: str, author: str, output_dir: str):
+        self.title = title
+        self.author = author
+        self.output_dir = Path(output_dir)
+        self.book_id = str(uuid.uuid4())
 
-        :param chapter_dir:  Directory containing XHTML chapter files.
-        :param audio_dir:    Directory containing synthesised WAV/MP3 files.
-        :param output_path:  Destination .epub path.
-        :param title:        Book title for OPF metadata.
-        :param author:       Author name for OPF metadata.
-        :param language:     BCP-47 language tag.
-        :returns:            Absolute path to the generated .epub file.
+        self.chapters: List[Dict] = []
+        self.audio_files: Dict[str, str] = {}
+        self.smil_files: Dict[str, str] = {}
 
-        TODO: implement real EPUB packaging using ebooklib or zipfile.
+    def add_chapter(self, filename: str, xhtml: str):
+        self.chapters.append({
+            "filename": filename,
+            "xhtml": xhtml
+        })
+
+    def add_audio(self, chapter_filename: str, audio_path: str, segments: List[TextSegment]):
         """
-        # Placeholder: create an empty file so the service doesn't crash.
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            f"<!-- EPUB placeholder for '{title}' by {author} [id:{uuid.uuid4()}] -->",
-            encoding="utf-8",
+        Adds audio + generates SMIL overlay.
+        """
+        audio_name = Path(audio_path).name
+        self.audio_files[chapter_filename] = audio_name
+
+        smil_name = chapter_filename.replace(".xhtml", "_overlay.smil")
+        smil_xml = MediaOverlayBuilder.build_smil(
+            chapter_filename=chapter_filename,
+            audio_filename=audio_name,
+            segments=segments
         )
-        return str(out.resolve())
 
-    # ------------------------------------------------------------------
-    # Private helpers (stubs)
-    # ------------------------------------------------------------------
+        self.smil_files[chapter_filename] = (smil_name, smil_xml)
 
-    def _generate_opf(self, title: str, author: str, language: str, uid: str) -> str:
-        """Generate the OPF package document XML.
-
-        TODO: add manifest items for chapters, audio, SMIL, and NCX/nav.
+    def build(self) -> Path:
         """
-        return f"""<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="bookid">{uid}</dc:identifier>
-    <dc:title>{title}</dc:title>
-    <dc:creator>{author}</dc:creator>
-    <dc:language>{language}</dc:language>
-  </metadata>
-  <manifest/>
-  <spine/>
-</package>"""
+        Creates the EPUB file.
+        """
+        out_path = self.output_dir / f"{self.title}.epub"
 
-    def _generate_container_xml(self) -> str:
-        """Generate META-INF/container.xml pointing to content.opf."""
-        return """<?xml version="1.0" encoding="utf-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+        with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+            # Required mimetype file (must be uncompressed)
+            z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+
+            # META-INF/container.xml
+            z.writestr("META-INF/container.xml", self._container_xml())
+
+            # OEBPS content
+            for chapter in self.chapters:
+                z.writestr(f"OEBPS/{chapter['filename']}", chapter["xhtml"])
+
+            for chapter_filename, audio_name in self.audio_files.items():
+                audio_path = self.output_dir / audio_name
+                z.write(audio_path, f"OEBPS/{audio_name}")
+
+            for chapter_filename, (smil_name, smil_xml) in self.smil_files.items():
+                z.writestr(f"OEBPS/{smil_name}", smil_xml)
+
+            # content.opf
+            z.writestr("OEBPS/content.opf", self._content_opf())
+
+        return out_path
+
+    # ---------------------------------------------------------
+    # XML Builders
+    # ---------------------------------------------------------
+
+    def _container_xml(self) -> str:
+        return f"""<?xml version="1.0"?>
+<container version="1.0"
+    xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
-    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+    <rootfile full-path="OEBPS/content.opf"
+              media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>"""
+</container>
+"""
+
+    def _content_opf(self) -> str:
+        manifest_items = []
+        spine_items = []
+
+        for chapter in self.chapters:
+            fn = chapter["filename"]
+            manifest_items.append(
+                f'<item id="{fn}" href="{fn}" media-type="application/xhtml+xml"/>'
+            )
+            spine_items.append(
+                f'<itemref idref="{fn}" media-overlay="{fn}_overlay"/>'
+                if fn in self.smil_files
+                else f'<itemref idref="{fn}"/>'
+            )
+
+        for chapter_filename, audio_name in self.audio_files.items():
+            manifest_items.append(
+                f'<item id="{audio_name}" href="{audio_name}" media-type="audio/mpeg"/>'
+            )
+
+        for chapter_filename, (smil_name, _) in self.smil_files.items():
+            manifest_items.append(
+                f'<item id="{smil_name}" href="{smil_name}" media-type="application/smil+xml"/>'
+            )
+
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0"
+         xmlns="http://www.idpf.org/2007/opf"
+         unique-identifier="bookid">
+
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{self.title}</dc:title>
+    <dc:creator>{self.author}</dc:creator>
+    <dc:identifier id="bookid">{self.book_id}</dc:identifier>
+  </metadata>
+
+  <manifest>
+    {''.join(manifest_items)}
+  </manifest>
+
+  <spine>
+    {''.join(spine_items)}
+  </spine>
+
+</package>
+"""
