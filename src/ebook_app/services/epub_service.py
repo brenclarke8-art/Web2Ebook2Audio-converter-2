@@ -1,64 +1,71 @@
-# src/ebook_app/services/epub_service.py
-"""Threaded EPUB export service."""
+from PySide6.QtCore import QObject, Signal, QThread
+from pathlib import Path
 
-from __future__ import annotations
+from src.services.translation_service import TranslationService
 
-from PySide6.QtCore import QThread, Signal
+# Placeholder for your future EPUB builder
+# from ebook_app.models.epub_builder import EPUBBuilder
 
-from ebook_app.models.epub_builder import EpubBuilder
 
+class EPUBThread(QThread):
+    progress = Signal(str)
+    export_ready = Signal(str)
+    error = Signal(str)
 
-class EPUBService(QThread):
-    """QThread-based service for packaging the final EPUB3 file.
-
-    Signals:
-        progress (int): 0–100 during export.
-        success (str): Path to the generated .epub file.
-        error (str): Error message on failure.
-    """
-
-    progress: Signal = Signal(int)
-    success: Signal = Signal(str)
-    error: Signal = Signal(str)
-
-    def __init__(
-        self,
-        chapter_dir: str,
-        audio_dir: str,
-        output_path: str,
-        title: str = "Untitled",
-        author: str = "Unknown",
-        language: str = "en",
-    ) -> None:
+    def __init__(self, title, author, cover, chapters, audio_files, output_dir):
         super().__init__()
-        self.chapter_dir = chapter_dir
-        self.audio_dir = audio_dir
-        self.output_path = output_path
         self.title = title
         self.author = author
-        self.language = language
-        self._builder = EpubBuilder()
+        self.cover = cover
+        self.chapters = chapters
+        self.audio_files = audio_files
+        self.output_dir = output_dir
 
-    # ------------------------------------------------------------------
-    # QThread entry point
-    # ------------------------------------------------------------------
-
-    def run(self) -> None:
-        """Build the EPUB3 package and write it to output_path.
-
-        TODO: load chapters + audio, generate XHTML, build SMIL, package EPUB.
-        """
+    def run(self):
         try:
-            self.progress.emit(0)
-            epub_path = self._builder.build(
-                chapter_dir=self.chapter_dir,
-                audio_dir=self.audio_dir,
-                output_path=self.output_path,
-                title=self.title,
-                author=self.author,
-                language=self.language,
-            )
-            self.progress.emit(100)
-            self.success.emit(epub_path)
-        except Exception as exc:  # noqa: BLE001
-            self.error.emit(str(exc))
+            self.progress.emit("Building EPUB...")
+
+            # Placeholder logic
+            output_path = Path(self.output_dir) / f"{self.title}.epub"
+
+            # Simulate work
+            import time
+            time.sleep(1)
+
+            # TODO: Replace with real EPUB builder
+            with open(output_path, "w") as f:
+                f.write("EPUB placeholder")
+
+            self.export_ready.emit(str(output_path))
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class EPUBService(QObject):
+    progress_changed = Signal(str)
+    export_ready = Signal(str)
+    error_occurred = Signal(str)
+
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+
+    output_dir = self.settings.output_dir
+
+    def _connect(self, thread):
+        thread.progress.connect(self.progress_changed)
+        thread.export_ready.connect(self.export_ready)
+        thread.error.connect(self.error_occurred)
+        thread.finished.connect(thread.deleteLater)
+
+    def export_epub(self, title, author, cover, chapters, audio_files, output_dir):
+        thread = EPUBThread(title, author, cover, chapters, audio_files, output_dir)
+        self._thread = thread
+        self._connect(thread)
+        thread.start()
+
+    self.scraper = ScrapingService()
+    self.translator = TranslationService()
+    self.tts = TTSService(settings)
+    self.epub = EPUBService(settings)
