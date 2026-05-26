@@ -2,7 +2,8 @@ from __future__ import annotations
 from pathlib import Path
 import zipfile
 import uuid
-from typing import List, Dict
+from typing import List, Dict, Optional
+from datetime import datetime
 
 from ebook_app.models.media_overlay import MediaOverlayBuilder, TextSegment
 
@@ -12,20 +13,33 @@ class EPUBBuilder:
     Builds EPUB3 files with optional Media Overlays (audio/text sync).
     """
 
-    def __init__(self, title: str, author: str, output_dir: str):
+    def __init__(
+        self,
+        title: str,
+        author: str,
+        output_dir: str,
+        language: str = "en",
+        publisher: str = "",
+        cover_path: Optional[str] = None,
+    ):
         self.title = title
         self.author = author
         self.output_dir = Path(output_dir)
         self.book_id = str(uuid.uuid4())
+        self.language = language
+        self.publisher = publisher
+        self.cover_path = Path(cover_path) if cover_path else None
 
         self.chapters: List[Dict] = []
         self.audio_files: Dict[str, str] = {}
         self.smil_files: Dict[str, str] = {}
 
-    def add_chapter(self, filename: str, xhtml: str):
+    def add_chapter(self, filename: str, xhtml: str, title: str = ""):
+        """Add a chapter to the EPUB."""
         self.chapters.append({
             "filename": filename,
-            "xhtml": xhtml
+            "xhtml": xhtml,
+            "title": title or filename.replace(".xhtml", "").replace("_", " ").title()
         })
 
     def add_audio(self, chapter_filename: str, audio_path: str, segments: List[TextSegment]):
@@ -57,14 +71,32 @@ class EPUBBuilder:
             # META-INF/container.xml
             z.writestr("META-INF/container.xml", self._container_xml())
 
-            # OEBPS content
+            # CSS stylesheet
+            z.writestr("OEBPS/stylesheet.css", self._stylesheet_css())
+
+            # Cover image if provided
+            if self.cover_path and self.cover_path.exists():
+                cover_ext = self.cover_path.suffix.lower()
+                cover_name = f"cover{cover_ext}"
+                z.write(self.cover_path, f"OEBPS/{cover_name}")
+
+            # Navigation document (EPUB3 nav.xhtml)
+            z.writestr("OEBPS/nav.xhtml", self._nav_xhtml())
+
+            # TOC (toc.xhtml for compatibility)
+            z.writestr("OEBPS/toc.xhtml", self._toc_xhtml())
+
+            # OEBPS content chapters
             for chapter in self.chapters:
                 z.writestr(f"OEBPS/{chapter['filename']}", chapter["xhtml"])
 
+            # Audio files
             for chapter_filename, audio_name in self.audio_files.items():
-                audio_path = self.output_dir / audio_name
-                z.write(audio_path, f"OEBPS/{audio_name}")
+                audio_path = self.output_dir / "pipeline_work" / "audio" / audio_name
+                if audio_path.exists():
+                    z.write(audio_path, f"OEBPS/{audio_name}")
 
+            # SMIL files
             for chapter_filename, (smil_name, smil_xml) in self.smil_files.items():
                 z.writestr(f"OEBPS/{smil_name}", smil_xml)
 
@@ -92,6 +124,34 @@ class EPUBBuilder:
         manifest_items = []
         spine_items = []
 
+        # Add navigation documents
+        manifest_items.append(
+            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+        )
+        manifest_items.append(
+            '<item id="toc" href="toc.xhtml" media-type="application/xhtml+xml"/>'
+        )
+
+        # Add stylesheet
+        manifest_items.append(
+            '<item id="stylesheet" href="stylesheet.css" media-type="text/css"/>'
+        )
+
+        # Add cover image if provided
+        if self.cover_path and self.cover_path.exists():
+            cover_ext = self.cover_path.suffix.lower()
+            cover_name = f"cover{cover_ext}"
+            media_type = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".gif": "image/gif",
+            }.get(cover_ext, "image/jpeg")
+            manifest_items.append(
+                f'<item id="cover-image" href="{cover_name}" media-type="{media_type}" properties="cover-image"/>'
+            )
+
+        # Add chapters
         for chapter in self.chapters:
             fn = chapter["filename"]
             manifest_items.append(
@@ -103,34 +163,163 @@ class EPUBBuilder:
                 else f'<itemref idref="{fn}"/>'
             )
 
+        # Add audio files
         for chapter_filename, audio_name in self.audio_files.items():
             manifest_items.append(
-                f'<item id="{audio_name}" href="{audio_name}" media-type="audio/mpeg"/>'
+                f'<item id="{audio_name}" href="{audio_name}" media-type="audio/wav"/>'
             )
 
+        # Add SMIL files
         for chapter_filename, (smil_name, _) in self.smil_files.items():
             manifest_items.append(
                 f'<item id="{smil_name}" href="{smil_name}" media-type="application/smil+xml"/>'
             )
+
+        # Build metadata
+        date_now = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        metadata = f"""  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{self._escape_xml(self.title)}</dc:title>
+    <dc:creator>{self._escape_xml(self.author)}</dc:creator>
+    <dc:identifier id="bookid">{self.book_id}</dc:identifier>
+    <dc:language>{self.language}</dc:language>
+    <dc:date>{date_now}</dc:date>"""
+
+        if self.publisher:
+            metadata += f"\n    <dc:publisher>{self._escape_xml(self.publisher)}</dc:publisher>"
+
+        metadata += "\n    <meta property=\"dcterms:modified\">{}</meta>".format(date_now)
+        metadata += "\n  </metadata>"
 
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0"
          xmlns="http://www.idpf.org/2007/opf"
          unique-identifier="bookid">
 
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>{self.title}</dc:title>
-    <dc:creator>{self.author}</dc:creator>
-    <dc:identifier id="bookid">{self.book_id}</dc:identifier>
-  </metadata>
+{metadata}
 
   <manifest>
-    {''.join(manifest_items)}
+    {'\n    '.join(manifest_items)}
   </manifest>
 
   <spine>
-    {''.join(spine_items)}
+    {'\n    '.join(spine_items)}
   </spine>
 
 </package>
 """
+
+    def _nav_xhtml(self) -> str:
+        """Generate EPUB3 navigation document."""
+        nav_items = []
+        for i, chapter in enumerate(self.chapters, 1):
+            title = self._escape_xml(chapter.get("title", f"Chapter {i}"))
+            filename = chapter["filename"]
+            nav_items.append(f'      <li><a href="{filename}">{title}</a></li>')
+
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+    <title>Navigation</title>
+    <link rel="stylesheet" type="text/css" href="stylesheet.css"/>
+</head>
+<body>
+    <nav epub:type="toc" id="toc">
+        <h1>Table of Contents</h1>
+        <ol>
+{chr(10).join(nav_items)}
+        </ol>
+    </nav>
+</body>
+</html>"""
+
+    def _toc_xhtml(self) -> str:
+        """Generate legacy TOC for EPUB2 compatibility."""
+        toc_items = []
+        for i, chapter in enumerate(self.chapters, 1):
+            title = self._escape_xml(chapter.get("title", f"Chapter {i}"))
+            filename = chapter["filename"]
+            toc_items.append(f'      <li><a href="{filename}">{title}</a></li>')
+
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title>Table of Contents</title>
+    <link rel="stylesheet" type="text/css" href="stylesheet.css"/>
+</head>
+<body>
+    <h1>Table of Contents</h1>
+    <ol>
+{chr(10).join(toc_items)}
+    </ol>
+</body>
+</html>"""
+
+    def _stylesheet_css(self) -> str:
+        """Generate basic CSS stylesheet for EPUB."""
+        return """/* EPUB Stylesheet */
+
+body {
+    font-family: Georgia, serif;
+    font-size: 1.1em;
+    line-height: 1.6;
+    margin: 1em;
+    text-align: justify;
+}
+
+h1 {
+    font-size: 1.8em;
+    font-weight: bold;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    text-align: center;
+}
+
+h2 {
+    font-size: 1.4em;
+    font-weight: bold;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+}
+
+p {
+    margin-top: 0;
+    margin-bottom: 1em;
+    text-indent: 1.5em;
+}
+
+p:first-of-type {
+    text-indent: 0;
+}
+
+a {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+nav ol {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+nav li {
+    margin-bottom: 0.5em;
+}
+"""
+
+    @staticmethod
+    def _escape_xml(text: str) -> str:
+        """Escape XML special characters."""
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;")
+        )
+

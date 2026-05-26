@@ -340,10 +340,11 @@ class PipelineController:
         for i, chapter in enumerate(self.translated_chapters):
             chapter_id = f"ch{i:03d}"
             xhtml_filename = f"{chapter_id}.xhtml"
+            chapter_title = chapter.get("title", f"Chapter {i+1}")
 
             # Generate basic XHTML
             xhtml_content = self._generate_xhtml(chapter, chapter_id)
-            builder.add_chapter(xhtml_filename, xhtml_content)
+            builder.add_chapter(xhtml_filename, xhtml_content, chapter_title)
 
             # Add audio and SMIL if available
             if i in self.audio_files and i in self.alignment_data:
