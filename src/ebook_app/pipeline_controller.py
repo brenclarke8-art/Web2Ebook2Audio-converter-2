@@ -245,7 +245,7 @@ class PipelineController:
         logger.info(f"Batch TTS for {len(self.dialogue_segments)} chapters...")
         engine = TTSEngine(
             output_dir=str(self.work_dir / "audio"),
-            device=self.settings.tts_device,
+            cli_path=self.settings.kokoro_cli_path,
         )
 
         for i, segments in self.dialogue_segments.items():

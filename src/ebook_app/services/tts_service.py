@@ -77,8 +77,7 @@ class TTSService(QObject):
         self.settings = settings
         self.engine = TTSEngine(
             output_dir=self.settings.output_dir,
-            device=self.settings.tts_device,
-            preload_voices=[self.settings.tts_voice]
+            cli_path=self.settings.kokoro_cli_path,
         )
         self._current_thread = None
 

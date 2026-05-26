@@ -1,33 +1,25 @@
 from __future__ import annotations
 
 import logging
-import threading
-from concurrent.futures import ThreadPoolExecutor
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import numpy as np
 import soundfile as sf
-import torch
 
 from .multispeaker import build_normalized_voice_lookup, resolve_voice_mapping
 from .voice_catalog import KOKORO_VOICE_CATALOG
 
 logger = logging.getLogger(__name__)
 
-try:
-    from kokoro_tts.kokoro import KPipeline
-    KOKORO_AVAILABLE = True
-except ImportError:
-    KOKORO_AVAILABLE = False
-
 
 class TTSEngine:
     """
-    Backend TTS engine using bundled Kokoro TTS.
+    Backend TTS engine using Kokoro-ONNX CLI.
 
-    - Device auto-selection (CUDA / MPS / CPU)
-    - Optional voice preloading
+    - Calls external kokoro-onnx executable for audio generation
     - Single-voice and multi-voice generation
     - Progress callbacks for GUI integration
     """
@@ -35,91 +27,108 @@ class TTSEngine:
     def __init__(
         self,
         output_dir: str = "output",
-        device: str = "auto",
-        preload_voices: Optional[List[str]] = None,
+        cli_path: Optional[str] = None,
         default_lang_code: str = "a",
     ):
-        if not KOKORO_AVAILABLE:
-            raise ImportError(
-                "Kokoro TTS not available. Ensure 'kokoro_tts' is bundled with the project."
-            )
-
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.device_config = device
+        self.cli_path = cli_path
         self.default_lang_code = default_lang_code
-        self.preload_voices = preload_voices or []
 
-        self.device = self._select_device(device)
-        logger.info(f"TTSEngine using device: {self.device}")
+        if self.cli_path:
+            self._verify_cli_available()
 
-        self.pipeline: Optional[KPipeline] = None
-        self.preloaded_voices: Dict[str, object] = {}
-        self._voice_load_lock = threading.Lock()
+    def _verify_cli_available(self) -> None:
+        """Check if the kokoro-onnx CLI is available and executable."""
+        if not self.cli_path:
+            raise ValueError("Kokoro CLI path not configured. Please set the path in Settings.")
 
-        if self.preload_voices:
-            self._preload_voices_parallel()
+        cli = Path(self.cli_path)
+        if not cli.exists():
+            raise FileNotFoundError(f"Kokoro CLI not found at: {self.cli_path}")
 
-    # ------------------------------------------------------------------
-    # Device selection
-    # ------------------------------------------------------------------
+        if not cli.is_file():
+            raise ValueError(f"Kokoro CLI path is not a file: {self.cli_path}")
 
-    def _select_device(self, device: str) -> str:
-        if device == "auto":
-            if torch.cuda.is_available():
-                return "cuda"
-            if torch.backends.mps.is_available():
-                import os
-
-                if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") == "1":
-                    return "mps"
-                return "cpu"
-            return "cpu"
-
-        if device == "cuda":
-            if not torch.cuda.is_available():
-                raise RuntimeError("CUDA requested but not available.")
-            return "cuda"
-
-        if device == "mps":
-            if not torch.backends.mps.is_available():
-                raise RuntimeError("MPS requested but not available.")
-            return "mps"
-
-        if device == "cpu":
-            return "cpu"
-
-        return self._select_device("auto")
+        # Try to run with --help to verify it's executable
+        try:
+            result = subprocess.run(
+                [str(cli), "--help"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                logger.warning(f"Kokoro CLI --help returned non-zero exit code: {result.returncode}")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Kokoro CLI timed out when checking availability: {self.cli_path}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to execute Kokoro CLI: {e}")
 
     # ------------------------------------------------------------------
-    # Voice preloading
+    # CLI execution
     # ------------------------------------------------------------------
 
-    def _ensure_pipeline(self, lang_code: str, progress_callback=None) -> None:
-        if self.pipeline is not None:
-            return
+    def _call_cli(
+        self,
+        text: str,
+        output_path: Path,
+        voice: str,
+        speed: float,
+        progress_callback=None,
+    ) -> None:
+        """Call kokoro-onnx CLI to generate audio."""
+        self._verify_cli_available()
+
         if progress_callback:
-            progress_callback("Loading TTS model...")
-        logger.info(f"Loading Kokoro TTS model (lang={lang_code}, device={self.device})")
-        self.pipeline = KPipeline(lang_code=lang_code, device=self.device)
+            progress_callback("Generating audio with Kokoro CLI...")
 
-    def _preload_voices_parallel(self) -> None:
-        if not self.preload_voices:
-            return
+        # Write text to temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            temp_text_file = Path(f.name)
+            f.write(text)
 
-        self._ensure_pipeline(self.default_lang_code)
+        try:
+            # Build CLI command
+            # Typical usage: kokoro-onnx --input text.txt --output audio.wav --voice af_heart --speed 1.0
+            cmd = [
+                str(self.cli_path),
+                "--input", str(temp_text_file),
+                "--output", str(output_path),
+                "--voice", voice,
+                "--speed", str(speed),
+            ]
 
-        def load_voice(name: str) -> None:
-            try:
-                voice_data = self.pipeline.load_voice(name)
-                with self._voice_load_lock:
-                    self.preloaded_voices[name] = voice_data
-            except Exception as exc:
-                logger.error(f"Failed to preload voice '{name}': {exc}")
+            logger.info(f"Executing: {' '.join(cmd)}")
 
-        with ThreadPoolExecutor(max_workers=min(4, len(self.preload_voices))) as ex:
-            ex.map(load_voice, self.preload_voices)
+            # Execute CLI
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode != 0:
+                error_msg = f"Kokoro CLI failed with exit code {result.returncode}"
+                if result.stderr:
+                    error_msg += f"\nStderr: {result.stderr}"
+                if result.stdout:
+                    error_msg += f"\nStdout: {result.stdout}"
+                raise RuntimeError(error_msg)
+
+            if not output_path.exists():
+                raise RuntimeError(f"CLI completed but output file not created: {output_path}")
+
+            logger.info(f"Audio generated successfully: {output_path}")
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Kokoro CLI timed out during audio generation")
+        finally:
+            # Clean up temp file
+            if temp_text_file.exists():
+                temp_text_file.unlink()
 
     # ------------------------------------------------------------------
     # Public API
@@ -177,8 +186,6 @@ class TTSEngine:
         """
         dialogue_segments: list of objects with .text, .speaker, .is_dialogue
         """
-        self._ensure_pipeline(lang_code, progress_callback)
-
         all_audio_segments: List[np.ndarray] = []
         silence_samples = int(24000 * dialogue_pause)
         silence = np.zeros(silence_samples, dtype=np.float32)
@@ -217,21 +224,27 @@ class TTSEngine:
                 all_audio_segments.append(silence)
 
             try:
-                generator = self.pipeline(
-                    segment.text,
+                # Generate audio for this segment using CLI
+                temp_filename = f"temp_segment_{i}.wav"
+                temp_path = self.output_dir / temp_filename
+
+                self._call_cli(
+                    text=segment.text,
+                    output_path=temp_path,
                     voice=voice,
                     speed=speed,
-                    split_pattern=r"\n+",
+                    progress_callback=None,  # Avoid nested progress updates
                 )
-                seg_audio: List[np.ndarray] = []
-                for _, _, audio in generator:
-                    seg_audio.append(audio)
 
-                if seg_audio:
-                    combined = np.concatenate(seg_audio)
-                    all_audio_segments.append(combined)
-                else:
-                    logger.warning(f"Segment {i+1} generated no audio")
+                # Load the generated audio
+                audio_data, sample_rate = sf.read(str(temp_path))
+                if sample_rate != 24000:
+                    logger.warning(f"Expected sample rate 24000, got {sample_rate}")
+
+                all_audio_segments.append(audio_data.astype(np.float32))
+
+                # Clean up temp file
+                temp_path.unlink()
 
             except Exception as exc:
                 logger.error(f"Error generating audio for segment {i+1}: {exc}")
@@ -273,34 +286,18 @@ class TTSEngine:
         if not text or not text.strip():
             raise ValueError("Cannot generate audio: text is empty")
 
-        self._ensure_pipeline(lang_code, progress_callback)
-
         output_path = self.output_dir / output_filename
 
         if progress_callback:
             progress_callback("Generating audio...")
 
-        generator = self.pipeline(
-            text,
+        self._call_cli(
+            text=text,
+            output_path=output_path,
             voice=voice,
             speed=speed,
-            split_pattern=r"\n+",
+            progress_callback=progress_callback,
         )
-
-        segments: List[np.ndarray] = []
-        for i, (_, _, audio) in enumerate(generator):
-            segments.append(audio)
-            if progress_callback:
-                progress_callback(f"Processing segment {i+1}...")
-
-        if not segments:
-            raise ValueError("No audio segments were generated")
-
-        combined = np.concatenate(segments)
-
-        if progress_callback:
-            progress_callback("Saving audio file...")
-        sf.write(str(output_path), combined, 24000)
 
         if progress_callback:
             progress_callback("Audio generation complete")

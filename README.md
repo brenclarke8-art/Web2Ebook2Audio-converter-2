@@ -38,9 +38,7 @@ src/ebook_app/
 
 - **Python**: 3.10 or higher
 - **Operating System**: Windows, macOS, or Linux
-- **Optional (for GPU acceleration)**:
-  - NVIDIA GPU with CUDA support (Windows/Linux)
-  - Apple Silicon with MPS support (macOS)
+- **Kokoro-ONNX CLI**: Required for text-to-speech synthesis (see installation instructions)
 - **Disk Space**: ~500MB for application + models, plus space for project outputs
 
 ## Installation
@@ -74,42 +72,46 @@ python -m venv venv
 source venv/bin/activate
 ```
 
-### 4. Install PyTorch
+### 4. Install Kokoro-ONNX CLI
 
-The application requires PyTorch for TTS processing. Install the appropriate version for your system:
+The application uses Kokoro-ONNX CLI for multi-speaker text-to-speech synthesis.
 
-**For CPU-only (works on all systems):**
-```bash
-pip install torch torchvision torchaudio
-```
+**Download or build the CLI:**
 
-**For NVIDIA GPU (CUDA) support:**
-```bash
-# Visit https://pytorch.org/get-started/locally/ for the latest CUDA version
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
+1. Visit the Kokoro-ONNX repository: https://github.com/thewh1teagle/kokoro-onnx
+2. Download the pre-built binary for your operating system from the releases page
+3. Extract and place the executable in a convenient location (e.g., `/usr/local/bin/kokoro-onnx` on Linux/macOS or `C:\Program Files\kokoro-onnx\kokoro-onnx.exe` on Windows)
+4. Make note of the full path to the executable - you'll need to configure it in the application
 
-**For Apple Silicon (M1/M2/M3) Mac:**
-```bash
-pip install torch torchvision torchaudio
-# MPS acceleration is automatically enabled on compatible devices
-```
-
-### 5. Install Kokoro TTS
-
-The application uses Kokoro TTS for multi-speaker text-to-speech synthesis. Install it via:
+**Alternatively, build from source:**
 
 ```bash
-pip install kokoro-tts
+# Clone the kokoro-onnx repository
+git clone https://github.com/thewh1teagle/kokoro-onnx.git
+cd kokoro-onnx
+
+# Follow the build instructions in their README
+# The resulting binary will be your kokoro-onnx CLI executable
 ```
 
-### 6. Install the Application
+### 5. Install the Application
 
 ```bash
 pip install -e .
 ```
 
 This installs the application in "editable" mode, allowing you to make changes to the source code while still using the installed package.
+
+### 6. Configure Kokoro CLI Path
+
+After installation, you'll need to configure the path to your kokoro-onnx executable:
+
+1. Launch the application
+2. Navigate to the **Settings** page
+3. Enter the full path to your kokoro-onnx executable in the "Kokoro CLI path" field
+4. Click "Save Settings"
+
+Alternatively, the TTS page also has a field to set the CLI path.
 
 ### 7. Verify Installation
 
@@ -156,15 +158,15 @@ The application follows a project-based workflow with multiple pipeline steps:
 
 #### 4. **Configure Characters & Voices**
    - Navigate to the **TTS** page
-   - Assign Kokoro voices to dialogue speakers
+   - Configure the path to kokoro-onnx CLI executable if not already set
+   - Assign Kokoro-ONNX voices to dialogue speakers
    - Configure default voice for narration
    - Adjust speech speed (0.5x - 2.0x)
 
 #### 5. **Generate Audio**
    - The system parses dialogue using pattern matching
-   - Multi-speaker TTS generates audio with character voices
+   - Multi-speaker TTS generates audio with character voices using Kokoro-ONNX CLI
    - Audio files are saved in `<project>/pipeline_work/audio/`
-   - Supports GPU acceleration (CUDA/MPS) if available
 
 #### 6. **Create EPUB3 with Media Overlays**
    - Navigate to the **EPUB Export** page
@@ -246,20 +248,21 @@ Application settings are stored in platform-specific locations:
 
 ## Troubleshooting
 
-### "Kokoro TTS not available" Error
+### "Kokoro CLI not configured" Error
 
-Make sure Kokoro TTS is installed:
-```bash
-pip install kokoro-tts
-```
+Make sure you've configured the path to the kokoro-onnx executable:
+1. Navigate to **Settings** page
+2. Enter the full path to your kokoro-onnx executable
+3. Click "Save Settings"
 
-### "CUDA requested but not available" Error
+You can download kokoro-onnx from: https://github.com/thewh1teagle/kokoro-onnx
 
-Either install CUDA-enabled PyTorch or switch to CPU mode in settings:
-```bash
-# Install CUDA PyTorch
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
+### Kokoro CLI Executable Not Found
+
+Ensure the kokoro-onnx executable:
+- Is downloaded and placed in an accessible location
+- Has execute permissions (on Linux/macOS: `chmod +x /path/to/kokoro-onnx`)
+- Path is correctly configured in Settings
 
 ### Application Won't Start
 
@@ -275,9 +278,9 @@ pip install -r requirements.txt
 
 ### Audio Generation is Slow
 
-- **Enable GPU acceleration**: Install CUDA (NVIDIA) or use MPS (Apple Silicon)
-- **Reduce speech quality**: Lower sample rate in TTS settings (not yet exposed in UI)
+- **Check Kokoro-ONNX CLI configuration**: Ensure you're using the latest version
 - **Process chapters individually**: Instead of running full pipeline at once
+- **Hardware limitations**: Audio generation speed depends on your CPU performance
 
 ### EPUB Won't Open in Reader
 
@@ -303,7 +306,7 @@ The project uses Python type hints and follows PEP 8 conventions.
 - **SettingsManager**: Persistent application settings
 - **BookLibrary**: Multi-book library management
 - **PipelineController**: Orchestrates end-to-end conversion pipeline
-- **TTSEngine**: Kokoro TTS integration with multi-speaker support
+- **TTSEngine**: Kokoro-ONNX CLI integration with multi-speaker support
 - **EPUBBuilder**: EPUB3 generation with Media Overlays
 
 Each project maintains its own directory with intermediate files and state preservation for resume support.
