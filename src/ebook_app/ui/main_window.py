@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from ebook_app.core.project_manager import ProjectManager
 from ebook_app.ui.top_navbar import TopNavBar
 from ebook_app.ui.pages.scraper_page import ScraperPage
 from ebook_app.ui.pages.translator_page import TranslatorPage
@@ -16,6 +17,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
+        self.project_manager = ProjectManager(settings)
 
         self.setWindowTitle("Ebook Audio Studio")
         self.resize(
@@ -66,6 +68,10 @@ class MainWindow(QMainWindow):
         self.log_console.log(msg)
 
     def closeEvent(self, event):
+        # Close current project and save state
+        self.project_manager.close_project()
+
+        # Save window settings
         self.settings.set("window_width", self.width())
         self.settings.set("window_height", self.height())
         super().closeEvent(event)
