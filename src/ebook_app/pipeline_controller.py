@@ -51,13 +51,18 @@ class PipelineController:
         self,
         settings: SettingsManager,
         on_progress: ProgressCallback | None = None,
+        work_dir: Path | str | None = None,
     ) -> None:
         self.settings = settings
         self._on_progress = on_progress or (lambda key, val: None)
         self._running = False
 
         # Data storage for pipeline state
-        self.work_dir = Path(self.settings.output_dir) / "pipeline_work"
+        # Allow work_dir to be passed in (e.g., from ProjectManager)
+        if work_dir:
+            self.work_dir = Path(work_dir)
+        else:
+            self.work_dir = Path(self.settings.output_dir) / "pipeline_work"
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
         self.chapter_urls: list[str] = []

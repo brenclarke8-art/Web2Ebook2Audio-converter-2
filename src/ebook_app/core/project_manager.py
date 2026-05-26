@@ -252,6 +252,29 @@ class ProjectManager(QObject):
         self._save_project_state()
         self.pipeline_state_changed.emit(step, progress)
 
+    def create_pipeline_controller(self, on_progress=None):
+        """
+        Create a PipelineController instance configured for the current project.
+
+        Args:
+            on_progress: Optional callback for pipeline progress updates
+
+        Returns:
+            PipelineController instance or None if no project is loaded
+        """
+        if not self.current_project_dir:
+            logger.warning("Cannot create pipeline controller: no project loaded")
+            return None
+
+        from ebook_app.pipeline_controller import PipelineController
+
+        work_dir = self.get_work_dir()
+        return PipelineController(
+            settings=self.settings,
+            on_progress=on_progress,
+            work_dir=work_dir,
+        )
+
     # ------------------------------------------------------------------
     # Library operations
     # ------------------------------------------------------------------
