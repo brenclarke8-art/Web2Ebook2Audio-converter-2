@@ -1,16 +1,19 @@
-# src/ebook_app/app.py
-"""Top-level application widget — wires together main window and settings."""
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
+import sys
 
-from ebook_app.core.settings_manager import SettingsManager
 from ebook_app.ui.main_window import MainWindow
+from ebook_app.core.settings_manager import SettingsManager
+
+settings = SettingsManager()
 
 
-class EbookAudioStudioApp(MainWindow):
-    """Root application window.
+def run_app():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Ebook Audio Studio")
 
-    Loads user settings and injects them into the main window on startup.
-    """
+    window = MainWindow(settings)
+    window.show()
 
-    def __init__(self) -> None:
-        self.settings = SettingsManager()
-        super().__init__(settings=self.settings)
+    sys.exit(app.exec())
+
