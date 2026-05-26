@@ -60,8 +60,3 @@ class ScrapingService(QObject):
         self._thread = thread
         self._connect(thread)
         thread.start()
-
-self.scraper = ScrapingService()
-self.translator = TranslationService()
-self.tts = TTSService(settings)
-self.epub = EPUBService(settings)

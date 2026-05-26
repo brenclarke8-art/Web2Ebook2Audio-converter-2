@@ -681,29 +681,29 @@ class WebScraper:
 
         return {"top": top, "left": left}
 
-@staticmethod
-def _detect_title(soup: BeautifulSoup) -> str:
-    # 1) Strong semantic tags
-    for tag in ["h1", "h2", "title", "h3"]:
-        el = soup.find(tag)
-        if el:
-            title = el.get_text(strip=True)
-            if title and len(title) < 200:
-                return title
+    @staticmethod
+    def _detect_title(soup: BeautifulSoup) -> str:
+        # 1) Strong semantic tags
+        for tag in ["h1", "h2", "title", "h3"]:
+            el = soup.find(tag)
+            if el:
+                title = el.get_text(strip=True)
+                if title and len(title) < 200:
+                    return title
 
-    # 2) Common class names used by novel sites
-    for cls in ["chapter-title", "entry-title", "post-title"]:
-        el = soup.find(class_=cls)
-        if el:
-            title = el.get_text(strip=True)
-            if title and len(title) < 200:
-                return title
+        # 2) Common class names used by novel sites
+        for cls in ["chapter-title", "entry-title", "post-title"]:
+            el = soup.find(class_=cls)
+            if el:
+                title = el.get_text(strip=True)
+                if title and len(title) < 200:
+                    return title
 
-    # 3) Regex fallback: “Chapter 123”, “Ch. 45”, etc.
-    text = soup.get_text(" ", strip=True)
-    m = re.search(r"(chapter|ch\.?)\s*\d{1,4}", text, re.IGNORECASE)
-    if m:
-        return m.group(0).strip().title()
+        # 3) Regex fallback: "Chapter 123", "Ch. 45", etc.
+        text = soup.get_text(" ", strip=True)
+        m = re.search(r"(chapter|ch\.?)\s*\d{1,4}", text, re.IGNORECASE)
+        if m:
+            return m.group(0).strip().title()
 
-    # 4) Final fallback
-    return "Chapter"
+        # 4) Final fallback
+        return "Chapter"

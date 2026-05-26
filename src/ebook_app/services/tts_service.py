@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, Signal, QThread
 
-from ebook_app.models.tts import TTSEngine
+from ebook_app.models.tts_engine_cli import TTSEngine
 
 
 class TTSThread(QThread):
@@ -80,6 +80,7 @@ class TTSService(QObject):
             device=self.settings.tts_device,
             preload_voices=[self.settings.tts_voice]
         )
+        self._current_thread = None
 
     def _connect_thread(self, thread: TTSThread) -> None:
         thread.progress.connect(self.progress_changed)
