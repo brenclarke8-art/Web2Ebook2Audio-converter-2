@@ -4,9 +4,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
-
-
 @dataclass
 class Character:
     """Represents a named character and their assigned TTS voice.
@@ -40,7 +37,7 @@ class CharacterDatabase:
         """Register a character (overwrites if the name already exists)."""
         self._chars[character.name] = character
 
-    def get(self, name: str) -> Optional[Character]:
+    def get(self, name: str) -> Character | None:
         """Return the :class:`Character` for *name*, or ``None``."""
         return self._chars.get(name)
 
