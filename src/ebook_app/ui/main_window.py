@@ -66,6 +66,6 @@ class MainWindow(QMainWindow):
         self.log_console.log(msg)
 
     def closeEvent(self, event):
-    self.settings.set("window_width", self.width())
-    self.settings.set("window_height", self.height())
-    super().closeEvent(event)
+        self.settings.set("window_width", self.width())
+        self.settings.set("window_height", self.height())
+        super().closeEvent(event)
