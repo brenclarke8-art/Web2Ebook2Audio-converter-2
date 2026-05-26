@@ -50,8 +50,8 @@ class EPUBService(QObject):
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
-
-    output_dir = self.settings.output_dir
+        self.output_dir = self.settings.output_dir
+        self._thread = None
 
     def _connect(self, thread):
         thread.progress.connect(self.progress_changed)
@@ -64,8 +64,3 @@ class EPUBService(QObject):
         self._thread = thread
         self._connect(thread)
         thread.start()
-
-    self.scraper = ScrapingService()
-    self.translator = TranslationService()
-    self.tts = TTSService(settings)
-    self.epub = EPUBService(settings)
