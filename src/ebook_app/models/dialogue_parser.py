@@ -189,9 +189,7 @@ class DialogueParser:
         cleaned = "\n".join(kept_lines)
         cleaned = re.sub(r"[ \t]+", " ", cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-        if len(cleaned) < max(80, int(len(source) * 0.2)):
-            return source
-        return cleaned
+        return cleaned or source
 
     def _append_llm_log(self, *, chapter_id: str, direction: str, payload: dict) -> None:
         if not self.llm_log_path:
