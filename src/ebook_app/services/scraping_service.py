@@ -149,6 +149,10 @@ class ScrapingService(QObject):
 
     def cancel(self):
         if self._thread and self._thread.isRunning():
-            self._thread.terminate()
+            self._thread.requestInterruption()
+            self._thread.quit()
+            if not self._thread.wait(2000):
+                self._thread.terminate()
+                self._thread.wait(1000)
             self._thread = None
             logger.info("ScrapingService thread cancelled.")

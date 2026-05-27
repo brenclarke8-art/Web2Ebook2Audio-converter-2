@@ -311,6 +311,7 @@ class ScraperPage(BasePage):
     def _on_cancel(self) -> None:
         self._service.cancel()
         self._status_label.setText("Cancelled.")
+        self._progress_bar.setValue(0)
         self._set_busy(False)
         self.log.log("Scraping cancelled.", level="WARNING")
 
@@ -319,7 +320,7 @@ class ScraperPage(BasePage):
 
     def _on_chapter_progress(self, current: int, total: int, url: str) -> None:
         self._progress_bar.setRange(0, total)
-        self._progress_bar.setValue(current - 1)  # will be updated on completion
+        self._progress_bar.setValue(current)
         short_url = url if len(url) <= 80 else url[:77] + "…"
         self._status_label.setText(f"[{current}/{total}] {short_url}")
         item = QListWidgetItem(f"⏳ [{current}/{total}] {url}")

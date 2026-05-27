@@ -238,7 +238,7 @@ class HttpWebScraper:
                 logger.debug("HTTP chapter %d/%d OK: %s", idx, total, url)
             except Exception as exc:
                 logger.error("HTTP chapter fetch failed %s: %s", url, exc)
-                results.append({"url": url, "title": "Error", "content": "", "error": str(exc)})
+                results.append({"url": url, "title": "Failed to scrape", "content": "", "error": str(exc)})
             if self.request_delay > 0:
                 time.sleep(self.request_delay)
         return results
@@ -794,7 +794,7 @@ class WebScraper:
                     self.chapters.append(self._scrape_single_browser(url, browser))
                 except Exception as exc:
                     logger.error(f"Error scraping {url}: {exc}")
-                    self.chapters.append({"url": url, "title": "Error",
+                    self.chapters.append({"url": url, "title": "Failed to scrape",
                                           "content": "", "error": str(exc)})
         logger.info("Chapter scraping complete: %d successful pages.", len(self.chapters))
         return self.chapters

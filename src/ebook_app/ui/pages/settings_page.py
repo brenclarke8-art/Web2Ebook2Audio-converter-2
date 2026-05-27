@@ -71,7 +71,7 @@ class _TtsServiceManager:
                 cmd,
                 cwd=str(server_dir),
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
             return "started"
         except Exception as exc:
@@ -684,6 +684,10 @@ class SettingsPage(BasePage):
             self.log.log("TTS service process launched.", level="INFO")
             self._refresh_service_buttons()
             # Auto-check health after a short delay to let the server come up
+            if self._start_check_timer is not None:
+                self._start_check_timer.stop()
+                self._start_check_timer.deleteLater()
+                self._start_check_timer = None
             timer = QTimer(self)
             timer.setSingleShot(True)
             timer.timeout.connect(self._on_check_service)
