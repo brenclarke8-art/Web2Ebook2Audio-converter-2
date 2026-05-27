@@ -35,6 +35,7 @@ from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.ui.pages._base_page import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
+_EMPTY_MODEL_LABEL = "(blank)"
 
 # ---------------------------------------------------------------------------
 # Resolve TTS service paths from repository layout
@@ -133,6 +134,10 @@ class _LlmHealthThread(QThread):
         self._ollama_url = ollama_url.strip()
         self._model = model.strip()
 
+    @staticmethod
+    def _normalize_model_name(model_name: str) -> str:
+        return (model_name or "").split(":", 1)[0].strip()
+
     def run(self) -> None:
         from urllib.parse import urlparse, urlunparse
         import requests
@@ -155,11 +160,11 @@ class _LlmHealthThread(QThread):
             data = response.json()
             models = data.get("models", []) if isinstance(data, dict) else []
             model_names = {
-                str(model.get("name", "")).split(":", 1)[0]
+                self._normalize_model_name(str(model.get("name", "")))
                 for model in models
                 if isinstance(model, dict)
             }
-            selected_model = self._model.split(":", 1)[0] if self._model else ""
+            selected_model = self._normalize_model_name(self._model)
             model_found = (not selected_model) or (selected_model in model_names)
             self.result.emit(
                 {
@@ -171,7 +176,7 @@ class _LlmHealthThread(QThread):
                     "model_found": model_found,
                 }
             )
-        except Exception as exc:
+        except (requests.RequestException, ValueError, TypeError) as exc:
             self.result.emit(
                 {
                     "status": "unreachable",
@@ -884,7 +889,7 @@ class SettingsPage(BasePage):
                 self._llm_status_label.setText("✅ Local LLM reachable and selected model is available.")
                 self._llm_status_label.setStyleSheet("color: green;")
             else:
-                model = result.get("model", "").strip() or "(blank)"
+                model = result.get("model", "").strip() or _EMPTY_MODEL_LABEL
                 self._llm_status_label.setText(
                     f"⚠ Local LLM reachable, but model '{model}' was not found."
                 )
