@@ -228,7 +228,7 @@ class DialogueParser:
                 }
             ],
         }
-        chapter_payload = json.dumps({"chapter_text": text}, ensure_ascii=False)
+        chapter_input_json = json.dumps({"chapter_text": text}, ensure_ascii=False)
         return (
             "You are a chapter segmenter for TTS production.\n"
             "Return JSON only. No markdown or commentary.\n"
@@ -239,7 +239,7 @@ class DialogueParser:
             f"Expected JSON schema:\n{json.dumps(schema)}\n\n"
             "The chapter input is provided as JSON with one field named 'chapter_text'.\n"
             "Parse the value exactly as the chapter content.\n"
-            f"CHAPTER INPUT JSON:\n{chapter_payload}"
+            f"CHAPTER INPUT JSON:\n{chapter_input_json}"
         )
 
     @staticmethod
