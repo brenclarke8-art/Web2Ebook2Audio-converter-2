@@ -116,6 +116,29 @@ class PipelineController:
             voices_path=self.settings.kokoro_voices_path or None,
         )
 
+    def _build_scraper(self) -> WebScraper:
+        scraper_kwargs = {
+            "wait_for_js": bool(self.settings.get("scraper_wait_for_js", True)),
+            "remove_overlays": bool(self.settings.get("scraper_remove_overlays", True)),
+            "browser_timeout": int(self.settings.get("scraper_browser_timeout_sec", 30)),
+            "browser_headless": not bool(self.settings.get("scraper_use_browser_gui", False)),
+            "manual_navigation": bool(self.settings.get("scraper_manual_navigation", False)),
+            "manual_navigation_timeout_sec": int(
+                self.settings.get("scraper_manual_navigation_timeout_sec", 120)
+            ),
+            "max_index_pages": int(self.settings.get("scraper_max_index_pages", 50)),
+            "browser_channel": (self.settings.get("scraper_browser_channel", "") or "").strip() or None,
+        }
+        logger.debug("Creating WebScraper with options: %s", scraper_kwargs)
+        try:
+            return WebScraper(**scraper_kwargs)
+        except TypeError:
+            logger.debug(
+                "WebScraper monkeypatch does not accept kwargs; retrying with defaults.",
+                exc_info=True,
+            )
+            return WebScraper()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -190,8 +213,16 @@ class PipelineController:
             return
 
         logger.info(f"Scraping index from: {index_url}")
-        scraper = WebScraper()
-        self.raw_chapter_urls = scraper.scrape_index_page(index_url)
+        scraper = self._build_scraper()
+        max_index_pages = int(self.settings.get("scraper_max_index_pages", 50))
+        try:
+            self.raw_chapter_urls = scraper.scrape_index_page(index_url, max_pages=max_index_pages)
+        except TypeError:
+            logger.debug(
+                "Scraper implementation does not accept max_pages kwarg; retrying without it.",
+                exc_info=True,
+            )
+            self.raw_chapter_urls = scraper.scrape_index_page(index_url)
         url_filter = FillerChapterFilter()
         self.chapter_urls, filtered_urls = url_filter.filter_urls(self.raw_chapter_urls)
         logger.info(
@@ -203,10 +234,12 @@ class PipelineController:
 
         # Save URLs to disk
         raw_urls_file = self.work_dir / "raw_chapter_urls.json"
+        logger.debug("Writing raw chapter URLs to %s", raw_urls_file)
         with open(raw_urls_file, "w", encoding="utf-8") as f:
             json.dump(self.raw_chapter_urls, f, indent=2, ensure_ascii=False)
 
         urls_file = self.work_dir / "chapter_urls.json"
+        logger.debug("Writing filtered chapter URLs to %s", urls_file)
         with open(urls_file, "w", encoding="utf-8") as f:
             json.dump(self.chapter_urls, f, indent=2, ensure_ascii=False)
 
@@ -241,11 +274,13 @@ class PipelineController:
             self.selected_end_chapter,
             len(selected_urls),
         )
-        scraper = WebScraper()
+        logger.debug("Selected chapter URL range: %s", selected_urls)
+        scraper = self._build_scraper()
         self.chapters = scraper.scrape_chapters(selected_urls)
 
         # Save chapters to disk
         chapters_file = self.work_dir / "chapters.json"
+        logger.debug("Writing chapter scrape output to %s", chapters_file)
         with open(chapters_file, "w", encoding="utf-8") as f:
             json.dump(self.chapters, f, indent=2, ensure_ascii=False)
 

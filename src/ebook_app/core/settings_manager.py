@@ -30,6 +30,12 @@ DEFAULT_SETTINGS_PATH = APP_HOME_DIR / "settings.json"
 
 class SettingsManager(QObject):
     settings_changed = Signal(str)
+    _LOG_GETS = os.environ.get("EBOOK_AUDIO_STUDIO_LOG_SETTINGS_GET", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     DEFAULTS = {
         "tts_voice": "af_heart",
@@ -53,6 +59,15 @@ class SettingsManager(QObject):
         "character_confidence_threshold": 0.8,
         "character_review_approved": False,
         "audio_output_mode": "per_chapter",
+        # Browser scraper controls
+        "scraper_use_browser_gui": False,
+        "scraper_manual_navigation": False,
+        "scraper_manual_navigation_timeout_sec": 120,
+        "scraper_max_index_pages": 50,
+        "scraper_browser_timeout_sec": 30,
+        "scraper_wait_for_js": True,
+        "scraper_remove_overlays": True,
+        "scraper_browser_channel": "",
         # Multi-speaker TTS
         "multispeaker_enabled": False,
         "narrator_voice": "af_heart",
@@ -79,6 +94,7 @@ class SettingsManager(QObject):
     # ---------------------------------------------------------
 
     def load(self):
+        logger.debug("Loading settings from %s", self.path)
         if self.path.exists():
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
@@ -105,10 +121,12 @@ class SettingsManager(QObject):
 
         self._settings = self.data
         if changed:
+            logger.debug("Settings were missing keys or needed migration; persisting defaults.")
             self.save()
 
     def save(self):
         try:
+            logger.debug("Saving settings to %s", self.path)
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2)
         except Exception as e:
@@ -119,9 +137,13 @@ class SettingsManager(QObject):
     # ---------------------------------------------------------
 
     def get(self, key: str, default=None):
-        return self.data.get(key, default)
+        value = self.data.get(key, default)
+        if self._LOG_GETS:
+            logger.debug("Settings get: %s=%r", key, value)
+        return value
 
     def set(self, key: str, value):
+        logger.debug("Settings set: %s=%r", key, value)
         self.data[key] = value
         self.save()
         self.settings_changed.emit(key)

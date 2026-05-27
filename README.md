@@ -185,9 +185,14 @@ If the target site requires JavaScript rendering, install Playwright in the GUI
 environment:
 
 ```bash
-python -m pip install playwright
+python -m pip install -e ".[browser]"
 python -m playwright install chromium
 ```
+
+For anti-bot/pop-up bypass flows, enable these in the app UI before scraping:
+- Check **Use visible browser (non-headless)**
+- Check **Allow manual navigation for protection/popups**
+- Set **Manual nav window (sec)** as needed
 
 #### Start the TTS service
 
@@ -410,6 +415,14 @@ Check for missing dependencies:
 
 ```bash
 python -m pip install -e .
+```
+
+### Debug Logging
+
+The app now runs with verbose logs by default (`DEBUG`). Override if needed:
+
+```bash
+EBOOK_AUDIO_STUDIO_LOG_LEVEL=INFO ebook-audio-studio
 ```
 
 ### Audio Generation is Slow

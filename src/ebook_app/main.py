@@ -3,6 +3,7 @@
 
 import os
 import sys
+import logging
 
 # ---------------------------------------------------------------------------
 # Prevent ONNX Runtime / OpenMP threads from saturating all CPU cores.
@@ -28,8 +29,25 @@ from ebook_app.ui.main_window import MainWindow
 from ebook_app.core.settings_manager import SettingsManager
 
 
+def _configure_logging() -> None:
+    level_name = os.environ.get("EBOOK_AUDIO_STUDIO_LOG_LEVEL", "DEBUG").upper()
+    level = getattr(logging, level_name, logging.DEBUG)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=level,
+            format=(
+                "%(asctime)s | %(levelname)-8s | %(processName)s:%(threadName)s | "
+                "%(name)s | %(message)s"
+            ),
+        )
+    else:
+        logging.getLogger().setLevel(level)
+    logging.getLogger(__name__).debug("Logging configured at level %s", logging.getLevelName(level))
+
+
 def main() -> None:
     """Launch the Ebook Audio Studio application."""
+    _configure_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("Ebook Audio Studio")
     app.setOrganizationName("EbookAudioStudio")

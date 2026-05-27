@@ -7,6 +7,7 @@ from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -214,6 +215,26 @@ class PipelinePage(BasePage):
         inventory_layout.addRow("Start chapter:", self._start_spin)
         inventory_layout.addRow("End chapter:", self._end_spin)
 
+        self._browser_gui_check = QCheckBox("Use visible browser (non-headless)")
+        self._browser_gui_check.setChecked(bool(self.settings.get("scraper_use_browser_gui", False)))
+        inventory_layout.addRow("Browser mode:", self._browser_gui_check)
+
+        self._manual_nav_check = QCheckBox("Allow manual navigation for protection/popups")
+        self._manual_nav_check.setChecked(bool(self.settings.get("scraper_manual_navigation", False)))
+        inventory_layout.addRow("Manual navigation:", self._manual_nav_check)
+
+        self._manual_nav_timeout_spin = QSpinBox()
+        self._manual_nav_timeout_spin.setRange(5, 900)
+        self._manual_nav_timeout_spin.setValue(
+            int(self.settings.get("scraper_manual_navigation_timeout_sec", 120))
+        )
+        inventory_layout.addRow("Manual nav window (sec):", self._manual_nav_timeout_spin)
+
+        self._max_index_pages_spin = QSpinBox()
+        self._max_index_pages_spin.setRange(1, 1000)
+        self._max_index_pages_spin.setValue(int(self.settings.get("scraper_max_index_pages", 50)))
+        inventory_layout.addRow("Max index pages:", self._max_index_pages_spin)
+
         self._audio_mode_combo = QComboBox()
         self._audio_mode_combo.addItems(["per_chapter", "single_file"])
         current_mode = self.settings.get("audio_output_mode", "per_chapter")
@@ -350,6 +371,15 @@ class PipelinePage(BasePage):
         self._set_buttons_enabled(False)
         worker.start()
 
+    def _persist_scraper_options(self) -> None:
+        self.settings.set("scraper_use_browser_gui", self._browser_gui_check.isChecked())
+        self.settings.set("scraper_manual_navigation", self._manual_nav_check.isChecked())
+        self.settings.set(
+            "scraper_manual_navigation_timeout_sec",
+            int(self._manual_nav_timeout_spin.value()),
+        )
+        self.settings.set("scraper_max_index_pages", int(self._max_index_pages_spin.value()))
+
     def _on_inventory_ready(self, data: dict) -> None:
         if not self.project_manager:
             return
@@ -393,6 +423,7 @@ class PipelinePage(BasePage):
             self.log.log("Index URL is required.", level="WARNING")
             return
         self.settings.set("index_url", index_url)
+        self._persist_scraper_options()
         self.project_manager.set_index_url(index_url)
         self.log.log("Checking index in background…", level="INFO")
         self._start_worker(
@@ -427,6 +458,7 @@ class PipelinePage(BasePage):
         start, end = result
         self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", False)
+        self._persist_scraper_options()
         self.project_manager.set_selected_range(start, end)
         self.log.log("Starting pipeline (scrape → translate → parse)…", level="INFO")
         self._start_worker(
