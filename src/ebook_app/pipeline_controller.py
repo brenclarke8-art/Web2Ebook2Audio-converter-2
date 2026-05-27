@@ -13,7 +13,7 @@ from ebook_app.models.dialogue_parser import DialogueParser, Segment
 from ebook_app.models.epub_builder import EPUBBuilder
 from ebook_app.models.forced_alignment import ForcedAlignment, AlignmentEntry
 from ebook_app.models.media_overlay import MediaOverlayBuilder, TextSegment
-from ebook_app.models.scraper import WebScraper
+from ebook_app.models.scraper import HttpWebScraper, WebScraper
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,23 @@ class PipelineController:
             voices_path=self.settings.kokoro_voices_path or None,
         )
 
-    def _build_scraper(self) -> WebScraper:
+    def _build_scraper(self):
+        scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
+        if scraper_method == "http":
+            css_raw = (self.settings.get("scraper_css_selectors", "") or "").strip()
+            css_selectors = [s.strip() for s in css_raw.split(",") if s.strip()] if css_raw else []
+            excl_raw = (self.settings.get("scraper_exclude_selectors", "") or "").strip()
+            exclude_selectors = [s.strip() for s in excl_raw.split(",") if s.strip()] if excl_raw else []
+            scraper_kwargs = {
+                "css_selectors": css_selectors,
+                "exclude_selectors": exclude_selectors,
+                "request_delay": int(self.settings.get("scraper_delay_ms", 500)) / 1000.0,
+                "timeout": int(self.settings.get("scraper_browser_timeout_sec", 30)),
+                "max_index_pages": int(self.settings.get("scraper_max_index_pages", 50)),
+            }
+            logger.debug("Creating HttpWebScraper with options: %s", scraper_kwargs)
+            return HttpWebScraper(**scraper_kwargs)
+
         scraper_kwargs = {
             "wait_for_js": bool(self.settings.get("scraper_wait_for_js", True)),
             "remove_overlays": bool(self.settings.get("scraper_remove_overlays", True)),

@@ -474,13 +474,81 @@ class BrowserScraper:
         if not self.manual_navigation or self.headless:
             return
         logger.info(
-            "Manual browser mode active for %s. Navigate/login/dismiss popups, then wait %d seconds for capture.",
+            "Manual browser mode active for %s. Navigate/login/dismiss popups, then click the confirm button in the page to continue.",
             url,
-            self.manual_navigation_timeout_sec,
         )
         page.bring_to_front()
-        page.wait_for_timeout(self.manual_navigation_timeout_sec * 1000)
-        logger.info("Manual navigation window finished; capturing current page at %s", page.url)
+        page.evaluate(
+            """
+            () => {
+                if (typeof window.__ebookManualNavCleanup === 'function') {
+                    window.__ebookManualNavCleanup();
+                }
+                window.__ebookManualNavConfirmed = false;
+                const existing = document.getElementById('ebook-manual-nav-confirm');
+                if (existing) existing.remove();
+                const wrap = document.createElement('div');
+                wrap.id = 'ebook-manual-nav-confirm';
+                wrap.style.position = 'fixed';
+                wrap.style.bottom = '16px';
+                wrap.style.right = '16px';
+                wrap.style.zIndex = '2147483647';
+                wrap.style.background = 'rgba(17,17,17,0.92)';
+                wrap.style.border = '1px solid #3a3a3a';
+                wrap.style.borderRadius = '10px';
+                wrap.style.padding = '12px';
+                wrap.style.boxShadow = '0 4px 18px rgba(0,0,0,0.45)';
+
+                const label = document.createElement('div');
+                label.textContent = 'When ready, confirm this page for capture.';
+                label.style.color = '#fff';
+                label.style.fontFamily = 'system-ui, sans-serif';
+                label.style.fontSize = '13px';
+                label.style.marginBottom = '8px';
+                wrap.appendChild(label);
+
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = '✅ Confirm and Continue';
+                button.style.cursor = 'pointer';
+                button.style.background = '#1678c2';
+                button.style.border = 'none';
+                button.style.color = '#fff';
+                button.style.fontSize = '13px';
+                button.style.fontWeight = '600';
+                button.style.padding = '8px 12px';
+                button.style.borderRadius = '6px';
+                button.addEventListener('click', () => {
+                    window.__ebookManualNavConfirmed = true;
+                });
+                wrap.appendChild(button);
+
+                document.documentElement.appendChild(wrap);
+                window.__ebookManualNavCleanup = () => {
+                    const current = document.getElementById('ebook-manual-nav-confirm');
+                    if (current) current.remove();
+                };
+            }
+            """
+        )
+        try:
+            page.wait_for_function("() => window.__ebookManualNavConfirmed === true", timeout=0)
+            logger.info("Manual navigation confirmed; capturing current page at %s", page.url)
+        finally:
+            try:
+                page.evaluate(
+                    """
+                    () => {
+                        if (typeof window.__ebookManualNavCleanup === 'function') {
+                            window.__ebookManualNavCleanup();
+                        }
+                        delete window.__ebookManualNavCleanup;
+                        delete window.__ebookManualNavConfirmed;
+                    }
+                    """
+                )
+            except Exception:
+                logger.debug("Manual navigation prompt cleanup skipped for %s", page.url, exc_info=True)
 
     def extract_visual_text(
         self,

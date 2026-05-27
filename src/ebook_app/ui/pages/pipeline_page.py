@@ -219,16 +219,18 @@ class PipelinePage(BasePage):
         self._browser_gui_check.setChecked(bool(self.settings.get("scraper_use_browser_gui", False)))
         inventory_layout.addRow("Browser mode:", self._browser_gui_check)
 
+        self._scraper_method_combo = QComboBox()
+        self._scraper_method_combo.addItem("Browser (JS/login pages)", "browser")
+        self._scraper_method_combo.addItem("HTTP (fast, no JS)", "http")
+        scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
+        method_index = self._scraper_method_combo.findData(scraper_method)
+        self._scraper_method_combo.setCurrentIndex(method_index if method_index >= 0 else 0)
+        self._scraper_method_combo.currentIndexChanged.connect(self._on_scraper_method_changed)
+        inventory_layout.addRow("Scraper method:", self._scraper_method_combo)
+
         self._manual_nav_check = QCheckBox("Allow manual navigation for protection/popups")
         self._manual_nav_check.setChecked(bool(self.settings.get("scraper_manual_navigation", False)))
         inventory_layout.addRow("Manual navigation:", self._manual_nav_check)
-
-        self._manual_nav_timeout_spin = QSpinBox()
-        self._manual_nav_timeout_spin.setRange(5, 900)
-        self._manual_nav_timeout_spin.setValue(
-            int(self.settings.get("scraper_manual_navigation_timeout_sec", 120))
-        )
-        inventory_layout.addRow("Manual nav window (sec):", self._manual_nav_timeout_spin)
 
         self._max_index_pages_spin = QSpinBox()
         self._max_index_pages_spin.setRange(1, 1000)
@@ -270,6 +272,7 @@ class PipelinePage(BasePage):
             steps_layout.addLayout(row)
         self._layout.addWidget(steps_group)
         self._layout.addStretch()
+        self._on_scraper_method_changed()
 
     def _require_project(self) -> bool:
         if not self.project_manager:
@@ -308,6 +311,10 @@ class PipelinePage(BasePage):
         self._valid_count_label.setText(str(inventory.get("valid_chapter_count", 0)))
         self._last_processed_label.setText(str(inventory.get("last_processed_chapter", 0)))
         self._last_checked_label.setText(str(book.get("last_checked") or "-"))
+        scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
+        method_idx = self._scraper_method_combo.findData(scraper_method)
+        self._scraper_method_combo.setCurrentIndex(method_idx if method_idx >= 0 else 0)
+        self._on_scraper_method_changed()
 
         valid_count = max(1, int(inventory.get("valid_chapter_count", 1)))
         self._start_spin.setRange(1, valid_count)
@@ -372,13 +379,16 @@ class PipelinePage(BasePage):
         worker.start()
 
     def _persist_scraper_options(self) -> None:
+        method = self._scraper_method_combo.currentData() or "browser"
+        self.settings.set("scraper_method", method)
         self.settings.set("scraper_use_browser_gui", self._browser_gui_check.isChecked())
         self.settings.set("scraper_manual_navigation", self._manual_nav_check.isChecked())
-        self.settings.set(
-            "scraper_manual_navigation_timeout_sec",
-            int(self._manual_nav_timeout_spin.value()),
-        )
         self.settings.set("scraper_max_index_pages", int(self._max_index_pages_spin.value()))
+
+    def _on_scraper_method_changed(self) -> None:
+        use_browser = (self._scraper_method_combo.currentData() or "browser") == "browser"
+        self._browser_gui_check.setEnabled(use_browser)
+        self._manual_nav_check.setEnabled(use_browser)
 
     def _on_inventory_ready(self, data: dict) -> None:
         if not self.project_manager:
