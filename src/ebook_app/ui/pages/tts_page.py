@@ -18,6 +18,8 @@ from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, TTSEngine, _reso
 from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG
 from ebook_app.ui.pages._base_page import BasePage
 
+_DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
+
 _VOICES = list(KOKORO_VOICE_CATALOG.keys())
 
 
@@ -104,9 +106,13 @@ class TTSPage(BasePage):
         if mode == "remote":
             self._status_label.setText("⏳ Checking TTS service…")
             self._status_label.setStyleSheet("")
-            url = self.settings.get("tts_backend_url", "http://127.0.0.1:5005")
+            url = self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL)
             if self._health_thread and self._health_thread.isRunning():
                 return
+            # Discard old thread before creating a new one to avoid signal leaks.
+            if self._health_thread is not None:
+                self._health_thread.result.disconnect(self._on_health_result)
+                self._health_thread.deleteLater()
             self._health_thread = _HealthCheckThread(url, parent=self)
             self._health_thread.result.connect(self._on_health_result)
             self._health_thread.start()
@@ -128,7 +134,7 @@ class TTSPage(BasePage):
     def _on_health_result(self, health: dict) -> None:
         status = health.get("status", "unknown")
         models_ready = health.get("models_ready", False)
-        url = self.settings.get("tts_backend_url", "http://127.0.0.1:5005")
+        url = self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL)
 
         if status == "unreachable":
             self._status_label.setText(
@@ -180,7 +186,7 @@ class TTSPage(BasePage):
                 client = TTSClient(
                     output_dir=self.settings.output_dir,
                     base_url=self.settings.get(
-                        "tts_backend_url", "http://127.0.0.1:5005"
+                        "tts_backend_url", _DEFAULT_TTS_SERVICE_URL
                     ),
                 )
                 self.log.log(

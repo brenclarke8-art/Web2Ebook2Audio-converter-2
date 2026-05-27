@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, download_kokoro_models
 from ebook_app.ui.pages._base_page import BasePage
 
+_DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
+
 
 class _DownloadThread(QThread):
     progress = Signal(str)
@@ -88,9 +90,9 @@ class SettingsPage(BasePage):
         backend_form.addRow("Backend mode:", self._backend_mode_combo)
 
         self._backend_url_input = QLineEdit(
-            str(self.settings.get("tts_backend_url", "http://127.0.0.1:5005"))
+            str(self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL))
         )
-        self._backend_url_input.setPlaceholderText("http://127.0.0.1:5005")
+        self._backend_url_input.setPlaceholderText(_DEFAULT_TTS_SERVICE_URL)
         backend_form.addRow("Service URL:", self._backend_url_input)
 
         self._autostart_check = QCheckBox("Auto-start TTS service on launch")
@@ -250,7 +252,11 @@ class SettingsPage(BasePage):
     def _on_check_service(self) -> None:
         if self._svc_health_thread and self._svc_health_thread.isRunning():
             return
-        url = self._backend_url_input.text().strip() or "http://127.0.0.1:5005"
+        # Discard old thread before creating a new one to avoid signal leaks.
+        if self._svc_health_thread is not None:
+            self._svc_health_thread.result.disconnect(self._on_service_health_result)
+            self._svc_health_thread.deleteLater()
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
         self._svc_status_label.setText("⏳ Checking…")
         self._svc_status_label.setStyleSheet("")
         self._svc_health_thread = _ServiceHealthThread(url, parent=self)
@@ -260,7 +266,7 @@ class SettingsPage(BasePage):
     def _on_service_health_result(self, health: dict) -> None:
         status = health.get("status", "unknown")
         models_ready = health.get("models_ready", False)
-        url = self._backend_url_input.text().strip() or "http://127.0.0.1:5005"
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
 
         if status == "unreachable":
             self._svc_status_label.setText(f"🔴 Service not reachable at {url}")

@@ -141,10 +141,24 @@ def _synthesise(text: str, *, voice: str, speed: float, lang: str) -> np.ndarray
     return np.array(samples, dtype=np.float32)
 
 
+def _safe_output_path(output_dir: str, filename: str) -> Path:
+    """Resolve *output_dir* / *filename* and guard against path traversal.
+
+    Only the *filename* component of *filename* is used (any directory portion
+    is stripped) so a caller cannot escape the intended output directory.
+    """
+    out_dir = Path(output_dir).resolve()
+    # Strip directory components from the caller-supplied filename so that
+    # e.g. '../../etc/passwd' cannot escape the output directory.
+    safe_name = Path(filename).name
+    if not safe_name or safe_name in (".", ".."):
+        raise ValueError(f"Invalid output filename: {filename!r}")
+    return out_dir / safe_name
+
+
 def _write_wav(samples: np.ndarray, output_dir: str, filename: str) -> str:
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / filename
+    out_path = _safe_output_path(output_dir, filename)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out_path), samples, 24000)
     return str(out_path)
 
@@ -186,6 +200,8 @@ def synthesize(req: SynthesizeRequest) -> AudioResponse:
         samples = _synthesise(req.text, voice=req.voice, speed=req.speed, lang=req.lang)
         path = _write_wav(samples, req.output_dir, req.output_filename)
         return AudioResponse(audio_path=path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -198,13 +214,17 @@ def preview(req: PreviewRequest) -> AudioResponse:
         "This is a preview of the selected voice at the current speed setting. "
         "Listen carefully to determine if this suits your needs."
     )
-    filename = f"preview_{req.voice}_{req.speed}.wav"
+    # Use integer centiseconds to avoid decimal points / OS-unsafe chars in name.
+    speed_tag = int(req.speed * 100)
+    filename = f"preview_{req.voice}_{speed_tag}.wav"
     try:
         samples = _synthesise(
             preview_text, voice=req.voice, speed=req.speed, lang=req.lang
         )
         path = _write_wav(samples, req.output_dir, filename)
         return AudioResponse(audio_path=path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -246,6 +266,8 @@ def synthesize_multi(req: MultiSynthesizeRequest) -> AudioResponse:
         return AudioResponse(audio_path=path)
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
