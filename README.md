@@ -70,48 +70,82 @@ This split setup is the supported path: GUI in Python 3.10 and Kokoro service in
 
 The app runs in remote mode, so you must set up **both** environments:
 
-1. GUI environment (this section)
-2. TTS service environment (next section)
+1. GUI environment (Python 3.10+)
+2. TTS service environment (Python 3.14 recommended)
 
-### Step 1 — GUI Environment (required)
-
-#### 1. Prerequisites
-
-Ensure Python 3.10+ is installed:
-
-```bash
-python --version  # Should show 3.10 or higher
-```
-
-#### 2. Clone the Repository
+### 1) Clone and enter the repository root
 
 ```bash
 git clone https://github.com/brenclarke8-art/Web2Ebook2Audio-converter-2.git
 cd Web2Ebook2Audio-converter-2
 ```
 
-#### 3. Create a Virtual Environment
+Before installing, confirm you are in the repo root (must contain `pyproject.toml` and `tts_service/`).
 
-```bash
-# On Windows
-python -m venv venv
-venv\Scripts\activate
+### 2) Create and install the GUI environment (required)
 
-# On macOS/Linux
-python -m venv venv
-source venv/bin/activate
-```
+**Windows (cmd/PowerShell):**
 
-#### 4. Install the Application (GUI)
-
-```bash
+```powershell
+py -3.10 -m venv .venv_gui
+.\.venv_gui\Scripts\activate
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-This installs GUI and pipeline dependencies. Kokoro stays in the separate TTS service environment.
+**macOS/Linux:**
 
-#### 5. Download Kokoro ONNX Model Files
+```bash
+python3.10 -m venv .venv_gui
+source .venv_gui/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+### 3) Create and install the TTS service environment (required)
+
+**Windows (cmd/PowerShell):**
+
+```powershell
+py -3.14 -m venv tts_service\.venv_tts
+.\tts_service\.venv_tts\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r .\tts_service\requirements.txt
+```
+
+**macOS/Linux:**
+
+```bash
+python3.14 -m venv tts_service/.venv_tts
+source tts_service/.venv_tts/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r tts_service/requirements.txt
+```
+
+### 4) Start the TTS service
+
+From the repository root, with the TTS venv active:
+
+```bash
+cd tts_service
+uvicorn tts_server:app --host 127.0.0.1 --port 5005
+```
+
+### 5) Launch the GUI
+
+In a separate terminal, from the repository root, activate the GUI venv and run:
+
+```bash
+ebook-audio-studio
+```
+
+If the command is not found:
+
+```bash
+python -m ebook_app.main
+```
+
+### 6) Download Kokoro ONNX model files
 
 The application uses the [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx) library **as a Python package** — no separate CLI binary is required.
 
@@ -138,47 +172,6 @@ Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
 - Place them in `<repo>/.ebook_audio_studio/models/` (auto-discovered), or
 - Set custom paths via **Settings → Model file (.onnx)** and **Settings → Voices file (.bin)**
 
-#### 6. Verify Installation
-
-```bash
-ebook-audio-studio
-```
-
-If the command is not found, run directly:
-
-```bash
-python -m ebook_app.main
-```
-
----
-
-### Step 2 — TTS Service Environment (required)
-
-This is required for the remote-only setup (GUI Python 3.10, TTS Python 3.14).
-
-#### GUI environment (Python 3.10 / 3.12 / any PySide6-compatible version)
-
-```bash
-# Create GUI venv
-py -3.10 -m venv venv_gui
-venv_gui\Scripts\activate        # Windows
-# source venv_gui/bin/activate   # macOS/Linux
-
-python -m pip install --upgrade pip
-python -m pip install -e .       # GUI only — no kokoro-onnx
-```
-
-#### TTS service environment (Python 3.14 or any preferred version)
-
-```bash
-py -3.14 -m venv tts_service/venv_tts
-tts_service\venv_tts\Scripts\activate        # Windows
-# source tts_service/venv_tts/bin/activate   # macOS/Linux
-
-python -m pip install --upgrade pip
-python -m pip install -r tts_service/requirements.txt
-```
-
 #### Optional: Browser scraping support (Playwright)
 
 If the target site requires JavaScript rendering, install Playwright in the GUI
@@ -193,14 +186,6 @@ For anti-bot/pop-up bypass flows, enable these in the app UI before scraping:
 - Check **Use visible browser (non-headless)**
 - Check **Allow manual navigation for protection/popups**
 - Set **Manual nav window (sec)** as needed
-
-#### Start the TTS service
-
-```bash
-# From the tts_service directory with its venv active:
-cd tts_service
-uvicorn tts_server:app --host 127.0.0.1 --port 5005
-```
 
 You can also set custom model paths via environment variables:
 
@@ -397,10 +382,18 @@ The status indicator on the TTS page and Settings page shows amber (⚠) if mode
 
 ### TTS Service Dependency Error
 
-Install service dependencies in the Python 3.14 venv:
+This usually means the command was run outside the repository root.
+
+From the repository root, install service dependencies in the TTS venv:
 
 ```bash
 python -m pip install -r tts_service/requirements.txt
+```
+
+Quick check from repo root:
+
+```bash
+python -c "from pathlib import Path; print(Path('tts_service/requirements.txt').resolve(), Path('tts_service/requirements.txt').exists())"
 ```
 
 ### Application Won't Start
@@ -416,6 +409,8 @@ Check for missing dependencies:
 ```bash
 python -m pip install -e .
 ```
+
+If `pip install -e .` says no `pyproject.toml` was found, you are not in the repository root.
 
 ### Debug Logging
 
