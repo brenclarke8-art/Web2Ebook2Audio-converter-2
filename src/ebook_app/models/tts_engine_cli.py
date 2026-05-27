@@ -96,8 +96,6 @@ class TTSEngine:
         model_path: Optional[str] = None,
         voices_path: Optional[str] = None,
         default_lang_code: str = "a",
-        # Legacy parameter kept for compatibility — ignored when using Python API
-        cli_path: Optional[str] = None,
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +206,7 @@ class TTSEngine:
         silence = np.zeros(silence_samples, dtype=np.float32)
 
         previous_speaker = None
-        warned_non_exact: set = set()
+        warned_non_exact: set[str] = set()
         normalized_lookup = build_normalized_voice_lookup(voice_mappings)
 
         for i, segment in enumerate(dialogue_segments):
