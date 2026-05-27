@@ -21,6 +21,14 @@ class SettingsManager(QObject):
         "tts_backend_mode": "local",
         "tts_backend_url": "http://127.0.0.1:5005",
         "tts_autostart_service": False,
+        # LLM / translation API connection
+        "llm_api_url": "http://localhost:5000/translate",
+        "llm_api_key": "",
+        # Multi-speaker TTS
+        "multispeaker_enabled": False,
+        "narrator_voice": "af_heart",
+        # Character database: list of {name, voice, description} dicts
+        "character_db": [],
     }
 
     def __init__(self):
