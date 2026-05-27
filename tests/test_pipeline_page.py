@@ -1,6 +1,53 @@
 from __future__ import annotations
 
+import sys
+import types
 from types import SimpleNamespace
+
+
+class _DummyQThread:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+
+class _DummyWidget:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+
+class _DummyMessageBox:
+    @staticmethod
+    def information(*args, **kwargs) -> None:
+        pass
+
+
+sys.modules.setdefault("PySide6", types.ModuleType("PySide6"))
+qtcore = types.ModuleType("PySide6.QtCore")
+qtcore.QThread = _DummyQThread
+qtcore.Signal = lambda *args, **kwargs: None
+sys.modules["PySide6.QtCore"] = qtcore
+
+qtwidgets = types.ModuleType("PySide6.QtWidgets")
+for name in [
+    "QCheckBox",
+    "QComboBox",
+    "QFormLayout",
+    "QGroupBox",
+    "QHBoxLayout",
+    "QLabel",
+    "QLineEdit",
+    "QProgressBar",
+    "QPushButton",
+    "QSpinBox",
+    "QVBoxLayout",
+]:
+    setattr(qtwidgets, name, _DummyWidget)
+qtwidgets.QMessageBox = _DummyMessageBox
+sys.modules["PySide6.QtWidgets"] = qtwidgets
+
+base_page = types.ModuleType("ebook_app.ui.pages._base_page")
+base_page.BasePage = type("BasePage", (), {})
+sys.modules["ebook_app.ui.pages._base_page"] = base_page
 
 from ebook_app.ui.pages.pipeline_page import PipelinePage, QMessageBox, _PipelineWorker
 
