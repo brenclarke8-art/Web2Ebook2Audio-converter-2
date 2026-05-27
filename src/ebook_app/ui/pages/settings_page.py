@@ -136,6 +136,7 @@ class _LlmHealthThread(QThread):
 
     @staticmethod
     def _normalize_model_name(model_name: str) -> str:
+        """Normalize Ollama model names by dropping optional variant tags (e.g. ':latest')."""
         return (model_name or "").split(":", 1)[0].strip()
 
     def run(self) -> None:
@@ -165,7 +166,8 @@ class _LlmHealthThread(QThread):
                 if isinstance(model, dict)
             }
             selected_model = self._normalize_model_name(self._model)
-            model_found = (not selected_model) or (selected_model in model_names)
+            model_configured = bool(selected_model)
+            model_found = model_configured and (selected_model in model_names)
             self.result.emit(
                 {
                     "status": "ok",
@@ -173,6 +175,7 @@ class _LlmHealthThread(QThread):
                     "ollama_url": self._ollama_url,
                     "tags_url": tags_url,
                     "model": self._model,
+                    "model_configured": model_configured,
                     "model_found": model_found,
                 }
             )
@@ -885,7 +888,12 @@ class SettingsPage(BasePage):
 
     def _on_llm_health_result(self, result: dict) -> None:
         if result.get("status") == "ok":
-            if result.get("model_found", True):
+            if not result.get("model_configured", False):
+                self._llm_status_label.setText(
+                    "⚠ Local LLM reachable, but no model is configured in Settings."
+                )
+                self._llm_status_label.setStyleSheet("color: orange;")
+            elif result.get("model_found", False):
                 self._llm_status_label.setText("✅ Local LLM reachable and selected model is available.")
                 self._llm_status_label.setStyleSheet("color: green;")
             else:
