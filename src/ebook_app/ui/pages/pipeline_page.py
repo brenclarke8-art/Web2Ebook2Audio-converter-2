@@ -622,9 +622,9 @@ class PipelinePage(BasePage):
         else:
             index_to_use = 0
             if isinstance(selected_idx, int):
-                restored = self._review_chapter_combo.findData(selected_idx)
-                if restored >= 0:
-                    index_to_use = restored
+                restored_index = self._review_chapter_combo.findData(selected_idx)
+                if restored_index >= 0:
+                    index_to_use = restored_index
             self._review_chapter_combo.setCurrentIndex(index_to_use)
             self._on_review_chapter_changed(index_to_use)
 
@@ -738,6 +738,7 @@ class PipelinePage(BasePage):
 
     def _on_save_detected_characters(self) -> None:
         pending = []
+        clamped_rows = 0
         for row in range(self._detected_char_table.rowCount()):
             name_item = self._detected_char_table.item(row, 0)
             gender_item = self._detected_char_table.item(row, 1)
@@ -752,15 +753,24 @@ class PipelinePage(BasePage):
                 confidence = float(confidence_item.text()) if confidence_item else 0.0
             except (TypeError, ValueError):
                 confidence = 0.0
+            clamped = max(0.0, min(1.0, confidence))
+            if clamped != confidence:
+                clamped_rows += 1
             source = source_item.text().strip() if source_item else ""
             pending.append(
                 {
                     "name": name,
                     "gender": gender,
-                    "confidence": max(0.0, min(1.0, confidence)),
+                    "confidence": clamped,
                     "source_chapter": source,
                 }
             )
         self.settings.set("pending_character_additions", pending)
         self.settings.save()
+        if clamped_rows:
+            self.log.log(
+                f"Saved review character edits ({clamped_rows} confidence value(s) clamped to 0..1).",
+                level="WARNING",
+            )
+            return
         self.log.log("Saved review character edits.", level="SUCCESS")
