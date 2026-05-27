@@ -70,10 +70,11 @@ def test_scrape_index_filters_placeholder_urls(tmp_path, monkeypatch):
         "https://example.com/book/paywalled-chapter-2",
         "https://example.com/book/chapter-3",
     ]
-    monkeypatch.setattr(
-        "ebook_app.pipeline_controller.WebScraper.scrape_index_page",
-        lambda _self, _url: urls,
-    )
+    class _FakeScraper:
+        def scrape_index_page(self, _url):
+            return urls
+
+    monkeypatch.setattr("ebook_app.pipeline_controller.WebScraper", _FakeScraper)
 
     controller.scrape_index()
 
@@ -105,14 +106,12 @@ def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
 
     captured = {}
 
-    def _fake_scrape_chapters(_self, selected_urls):
-        captured["urls"] = selected_urls
-        return [{"url": url, "title": "title", "content": "content"} for url in selected_urls]
+    class _FakeScraper:
+        def scrape_chapters(self, selected_urls):
+            captured["urls"] = selected_urls
+            return [{"url": url, "title": "title", "content": "content"} for url in selected_urls]
 
-    monkeypatch.setattr(
-        "ebook_app.pipeline_controller.WebScraper.scrape_chapters",
-        _fake_scrape_chapters,
-    )
+    monkeypatch.setattr("ebook_app.pipeline_controller.WebScraper", _FakeScraper)
 
     controller.scrape_chapters()
 

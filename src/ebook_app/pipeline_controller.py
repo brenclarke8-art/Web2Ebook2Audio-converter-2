@@ -6,19 +6,19 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from ebook_app.core.settings_manager import SettingsManager
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
 from ebook_app.models.epub_builder import EPUBBuilder
 from ebook_app.models.forced_alignment import ForcedAlignment, AlignmentEntry
 from ebook_app.models.media_overlay import MediaOverlayBuilder, TextSegment
 from ebook_app.models.scraper import WebScraper
-from ebook_app.models.tts_engine_cli import TTSEngine
-from ebook_app.services.translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ebook_app.core.settings_manager import SettingsManager
 
 # Progress callback type: (step_key, value 0-100) -> None
 ProgressCallback = Callable[[str, int], None]
@@ -108,6 +108,8 @@ class PipelineController:
                 output_dir=effective_output_dir,
                 base_url=self.settings.tts_backend_url,
             )
+        from ebook_app.models.tts_engine_cli import TTSEngine
+
         return TTSEngine(
             output_dir=effective_output_dir,
             model_path=self.settings.kokoro_model_path or None,
@@ -292,7 +294,7 @@ class PipelineController:
                 logger.warning("No translated chapters available.")
                 return
 
-        logger.info(f"Parsing dialogue for {len(self.translated_chapters)} chapters...")
+        logger.info("Parsing dialogue for %d chapters...", len(self.translated_chapters))
         parser = DialogueParser(
             ollama_url=self.settings.get("ollama_url", ""),
             model=self.settings.get("ollama_model", ""),
@@ -375,7 +377,7 @@ class PipelineController:
         self.settings.set("character_review_approved", False)
         self.review_required = True
 
-        logger.info(f"Dialogue parsing complete.")
+        logger.info("Dialogue parsing complete.")
 
     def multispeaker_tts(self) -> None:
         """Synthesise audio with per-character voices using MultiSpeakerTTS."""
