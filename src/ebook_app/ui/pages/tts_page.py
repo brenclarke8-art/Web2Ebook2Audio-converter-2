@@ -14,7 +14,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, TTSEngine, _resolve_model_paths
+from ebook_app.models.tts_engine_cli import (
+    DEFAULT_MODELS_DIR,
+    TTSEngine,
+    _resolve_model_paths,
+    is_kokoro_onnx_available,
+)
 from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG
 from ebook_app.ui.pages._base_page import BasePage
 
@@ -128,9 +133,15 @@ class TTSPage(BasePage):
                 self.settings.get("kokoro_model_path") or None,
                 self.settings.get("kokoro_voices_path") or None,
             )
-            if model_path.exists() and voices_path.exists():
-                self._status_label.setText("✅ Kokoro models ready (local mode).")
+            package_ok = is_kokoro_onnx_available()
+            if model_path.exists() and voices_path.exists() and package_ok:
+                self._status_label.setText("✅ Local TTS ready (models + kokoro-onnx).")
                 self._status_label.setStyleSheet("color: green;")
+            elif model_path.exists() and voices_path.exists():
+                self._status_label.setText(
+                    "⚠ Models are ready, but kokoro-onnx is missing in this Python env."
+                )
+                self._status_label.setStyleSheet("color: orange;")
             else:
                 self._status_label.setText(
                     "⚠ Kokoro models not found. Go to Settings → Download Models."
@@ -214,4 +225,3 @@ class TTSPage(BasePage):
             self.log.log(f"Preview saved: {path}", level="SUCCESS")
         except Exception as exc:
             self.log.log(f"Preview failed: {exc}", level="ERROR")
-
