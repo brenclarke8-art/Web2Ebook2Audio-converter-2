@@ -3,6 +3,7 @@ import os
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)
@@ -125,10 +126,10 @@ class SettingsManager(QObject):
         dialogue_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
         legacy_ollama_url = str(self.data.get("ollama_url", "") or "").strip()
         if not dialogue_url and legacy_ollama_url:
-            self.data["dialogue_llm_url"] = legacy_ollama_url.replace("/api/generate", "/api/chat")
+            self.data["dialogue_llm_url"] = self._migrate_generate_to_chat_url(legacy_ollama_url)
             changed = True
         elif dialogue_url.endswith("/api/generate"):
-            self.data["dialogue_llm_url"] = dialogue_url.replace("/api/generate", "/api/chat")
+            self.data["dialogue_llm_url"] = self._migrate_generate_to_chat_url(dialogue_url)
             changed = True
 
         dialogue_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
@@ -137,12 +138,6 @@ class SettingsManager(QObject):
             self.data["dialogue_llm_model"] = legacy_ollama_model
             changed = True
 
-        if not legacy_ollama_url and self.data.get("dialogue_llm_url"):
-            self.data["ollama_url"] = str(self.data["dialogue_llm_url"]).replace("/api/chat", "/api/generate")
-            changed = True
-        if not legacy_ollama_model and self.data.get("dialogue_llm_model"):
-            self.data["ollama_model"] = self.data["dialogue_llm_model"]
-            changed = True
         if self.data.get("tts_backend_mode") != "remote":
             if "tts_backend_mode" in self.data:
                 logger.info(
@@ -156,6 +151,17 @@ class SettingsManager(QObject):
         if changed:
             logger.debug("Settings were missing keys or needed migration; persisting defaults.")
             self.save()
+
+    @staticmethod
+    def _migrate_generate_to_chat_url(url: str) -> str:
+        clean = (url or "").strip()
+        if not clean:
+            return clean
+        parsed = urlparse(clean)
+        if parsed.path.endswith("/api/generate"):
+            new_path = parsed.path[: -len("/api/generate")] + "/api/chat"
+            return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
+        return clean
 
     def save(self):
         try:

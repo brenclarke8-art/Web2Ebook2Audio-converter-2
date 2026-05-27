@@ -357,6 +357,12 @@ Custom paths can be set in **Settings → Kokoro ONNX Models**.
 | **Speech Speed** | Global speed multiplier | `1.0` |
 | **Model file (.onnx)** | Path to Kokoro ONNX model | auto (see above) |
 | **Voices file (.bin)** | Path to Kokoro voices file | auto (see above) |
+| **Dialogue LLM URL** | Ollama chat endpoint used for dialogue segmentation | `http://127.0.0.1:11434/api/chat` |
+| **Dialogue LLM model** | Ollama model for chapter segmentation | `mistral:instruct` |
+| **Dialogue LLM mode** | Segmentation mode (`full` or `off`) | `full` |
+| **Dialogue LLM timeout / retries** | Network timeout and retry count for LLM requests | `120s / 1` |
+
+Legacy `ollama_url` and `ollama_model` settings are migrated to the new `dialogue_llm_*` keys automatically, and existing settings files remain compatible.
 
 ### Available Voices (Kokoro 1.0)
 

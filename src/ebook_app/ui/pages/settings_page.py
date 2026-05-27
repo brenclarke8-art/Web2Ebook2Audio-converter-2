@@ -699,8 +699,6 @@ class SettingsPage(BasePage):
         dialogue_llm_model = self._ollama_model_input.text().strip()
         self.settings.set("dialogue_llm_url", dialogue_llm_url)
         self.settings.set("dialogue_llm_model", dialogue_llm_model)
-        self.settings.set("ollama_url", dialogue_llm_url.replace("/api/chat", "/api/generate"))
-        self.settings.set("ollama_model", dialogue_llm_model)
         self.settings.set("multispeaker_enabled", self._multispeaker_check.isChecked())
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())

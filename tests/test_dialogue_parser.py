@@ -97,3 +97,18 @@ def test_dialogue_parser_falls_back_on_invalid_output(monkeypatch):
     assert len(result.segments) == 1
     assert result.segments[0].type == "narration"
     assert result.segments[0].speaker == "narrator"
+
+
+def test_dialogue_parser_migrates_generate_endpoint_to_chat():
+    parser = DialogueParser(ollama_url="http://127.0.0.1:11434/api/generate", model="mistral")
+    assert parser.ollama_url == "http://127.0.0.1:11434/api/chat"
+
+
+def test_dialogue_parser_keeps_chat_endpoint_unchanged():
+    parser = DialogueParser(ollama_url="http://127.0.0.1:11434/api/chat", model="mistral")
+    assert parser.ollama_url == "http://127.0.0.1:11434/api/chat"
+
+
+def test_dialogue_parser_keeps_custom_endpoint_unchanged():
+    parser = DialogueParser(ollama_url="http://example.local/custom-endpoint", model="mistral")
+    assert parser.ollama_url == "http://example.local/custom-endpoint"

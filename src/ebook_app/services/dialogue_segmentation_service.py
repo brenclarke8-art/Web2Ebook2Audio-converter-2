@@ -6,7 +6,7 @@ from typing import Literal
 
 from ebook_app.services.llm_client import OllamaChatClient
 
-SegmentType = Literal["dialogue", "thought", "narration"]
+SegmentType = Literal["dialogue", "thought", "narration", "general"]
 
 _SEGMENTATION_SYSTEM_PROMPT = (
     "You are a deterministic JSON segmentation engine for scraped fiction.\n"

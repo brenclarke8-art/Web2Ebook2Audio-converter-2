@@ -29,7 +29,7 @@ class Segment:
 class DetectedCharacter:
     name: str
     gender: Literal["male", "female", "unknown"] = "unknown"
-    confidence: float = 0.7
+    confidence: float = 0.0
 
 
 @dataclass
@@ -104,7 +104,7 @@ class DialogueParser:
             segments = [self._fallback_segment(self.service.clean_text_for_llm(text), chapter_id, 0)]
 
         detected_characters = [
-            DetectedCharacter(name=name, gender="unknown", confidence=0.7)
+            DetectedCharacter(name=name, gender="unknown", confidence=0.85)
             for name in result.characters
         ]
         return ParseResult(segments=segments, detected_characters=detected_characters)

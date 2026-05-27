@@ -103,7 +103,7 @@ class OllamaChatClient:
         except json.JSONDecodeError:
             pass
 
-        match = re.search(r"\{.*\}", content, re.DOTALL)
+        match = re.search(r"\{.*?\}", content, re.DOTALL)
         if not match:
             return {}
         try:
