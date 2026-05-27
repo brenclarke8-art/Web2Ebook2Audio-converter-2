@@ -657,7 +657,7 @@ class PipelinePage(BasePage):
                                     or chapter_data.get("chapter_id")
                                     or ""
                                 ).strip()
-                                for char in chapter_data.get("detected_characters", []) or []:
+                                for char in chapter_data.get("detected_characters", []):
                                     if not isinstance(char, dict):
                                         continue
                                     name = str(char.get("name", "")).strip()
@@ -757,7 +757,7 @@ class PipelinePage(BasePage):
             except (TypeError, ValueError):
                 confidence = 0.0
             clamped = max(0.0, min(1.0, confidence))
-            if clamped != confidence:
+            if confidence < 0.0 or confidence > 1.0:
                 clamped_rows += 1
             source = source_item.text().strip() if source_item else ""
             pending.append(
