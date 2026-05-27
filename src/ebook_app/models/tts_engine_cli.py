@@ -147,7 +147,7 @@ class TTSEngine:
             from kokoro_onnx import Kokoro  # type: ignore[import]
         except ImportError as exc:
             raise ImportError(
-                "kokoro-onnx is not installed. Install with: pip install kokoro-onnx, "
+                "kokoro-onnx is not installed. Install with: pip install kokoro-onnx "
                 "or use remote backend in Settings → TTS Backend."
             ) from exc
 

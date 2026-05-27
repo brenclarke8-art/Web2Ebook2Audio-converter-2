@@ -139,7 +139,7 @@ class TTSPage(BasePage):
                 self._status_label.setStyleSheet("color: green;")
             elif model_path.exists() and voices_path.exists():
                 self._status_label.setText(
-                    "⚠ Models are ready, but kokoro-onnx is missing in this Python env."
+                    "⚠ Models are ready, but kokoro-onnx is missing in this Python environment."
                 )
                 self._status_label.setStyleSheet("color: orange;")
             else:
