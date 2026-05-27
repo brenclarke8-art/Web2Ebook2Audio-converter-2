@@ -105,7 +105,8 @@ source venv/bin/activate
 #### 4. Install the Application (GUI + local TTS)
 
 ```bash
-pip install -e ".[local-tts]"
+python -m pip install --upgrade pip
+python -m pip install -e ".[local-tts]"
 ```
 
 This installs `PySide6`, `kokoro-onnx`, `onnxruntime`, and all other dependencies.
@@ -164,7 +165,8 @@ py -3.10 -m venv venv_gui
 venv_gui\Scripts\activate        # Windows
 # source venv_gui/bin/activate   # macOS/Linux
 
-pip install -e .                 # GUI only — no kokoro-onnx
+python -m pip install --upgrade pip
+python -m pip install -e .       # GUI only — no kokoro-onnx
 ```
 
 #### TTS service environment (Python 3.14 or any preferred version)
@@ -174,7 +176,18 @@ py -3.14 -m venv tts_service/venv_tts
 tts_service\venv_tts\Scripts\activate        # Windows
 # source tts_service/venv_tts/bin/activate   # macOS/Linux
 
-pip install -r tts_service/requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r tts_service/requirements.txt
+```
+
+#### Optional: Browser scraping support (Playwright)
+
+If the target site requires JavaScript rendering, install Playwright in the GUI
+environment:
+
+```bash
+python -m pip install playwright
+python -m playwright install chromium
 ```
 
 #### Start the TTS service
@@ -384,7 +397,7 @@ The status indicator on the TTS page and Settings page shows amber (⚠) if mode
 Make sure the package is installed:
 
 ```bash
-pip install kokoro-onnx
+python -m pip install kokoro-onnx
 ```
 
 ### Application Won't Start
@@ -398,7 +411,7 @@ python -m ebook_app.main
 Check for missing dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 ### Audio Generation is Slow
