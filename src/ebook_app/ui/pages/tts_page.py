@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -20,17 +21,36 @@ from ebook_app.ui.pages._base_page import BasePage
 _VOICES = list(KOKORO_VOICE_CATALOG.keys())
 
 
+class _HealthCheckThread(QThread):
+    """Background thread to probe the remote TTS service health endpoint."""
+
+    result = Signal(dict)  # emits the health JSON dict
+
+    def __init__(self, url: str, parent=None):
+        super().__init__(parent)
+        self._url = url
+
+    def run(self) -> None:
+        from ebook_app.services.tts_client import TTSClient
+
+        client = TTSClient(base_url=self._url)
+        self.result.emit(client.health())
+
+
 class TTSPage(BasePage):
     """Page for configuring TTS voice and speed, and triggering synthesis."""
 
     def _build_ui(self) -> None:
-        # ── Model status ───────────────────────────────────────────────
-        status_group = QGroupBox("Kokoro ONNX Status")
+        # ── Model / Service status ──────────────────────────────────────
+        status_group = QGroupBox("TTS Backend Status")
         status_layout = QHBoxLayout(status_group)
         self._status_label = QLabel()
         self._refresh_status()
         status_layout.addWidget(self._status_label)
         status_layout.addStretch()
+        self._refresh_status_btn = QPushButton("Refresh")
+        self._refresh_status_btn.clicked.connect(self._refresh_status)
+        status_layout.addWidget(self._refresh_status_btn)
         self._layout.addWidget(status_group)
 
         # ── Voice Settings ─────────────────────────────────────────────
@@ -72,23 +92,62 @@ class TTSPage(BasePage):
         self._layout.addLayout(btn_row)
 
         self._layout.addStretch()
+        self._health_thread: _HealthCheckThread | None = None
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _refresh_status(self) -> None:
-        model_path, voices_path = _resolve_model_paths(
-            self.settings.get("kokoro_model_path") or None,
-            self.settings.get("kokoro_voices_path") or None,
-        )
-        if model_path.exists() and voices_path.exists():
-            self._status_label.setText("✅ Kokoro models ready.")
-            self._status_label.setStyleSheet("color: green;")
+        mode = self.settings.get("tts_backend_mode", "local")
+
+        if mode == "remote":
+            self._status_label.setText("⏳ Checking TTS service…")
+            self._status_label.setStyleSheet("")
+            url = self.settings.get("tts_backend_url", "http://127.0.0.1:5005")
+            if self._health_thread and self._health_thread.isRunning():
+                return
+            self._health_thread = _HealthCheckThread(url, parent=self)
+            self._health_thread.result.connect(self._on_health_result)
+            self._health_thread.start()
         else:
-            self._status_label.setText(
-                "⚠ Kokoro models not found. Go to Settings → Download Models."
+            # Local mode — check model files on disk
+            model_path, voices_path = _resolve_model_paths(
+                self.settings.get("kokoro_model_path") or None,
+                self.settings.get("kokoro_voices_path") or None,
             )
+            if model_path.exists() and voices_path.exists():
+                self._status_label.setText("✅ Kokoro models ready (local mode).")
+                self._status_label.setStyleSheet("color: green;")
+            else:
+                self._status_label.setText(
+                    "⚠ Kokoro models not found. Go to Settings → Download Models."
+                )
+                self._status_label.setStyleSheet("color: orange;")
+
+    def _on_health_result(self, health: dict) -> None:
+        status = health.get("status", "unknown")
+        models_ready = health.get("models_ready", False)
+        url = self.settings.get("tts_backend_url", "http://127.0.0.1:5005")
+
+        if status == "unreachable":
+            self._status_label.setText(
+                f"🔴 TTS service not running at {url}. "
+                "Start it with: uvicorn tts_server:app --port 5005"
+            )
+            self._status_label.setStyleSheet("color: red;")
+        elif status == "ok" and models_ready:
+            self._status_label.setText(f"✅ TTS service ready at {url} (remote mode).")
+            self._status_label.setStyleSheet("color: green;")
+        elif status == "ok" and not models_ready:
+            model_path = health.get("model_path", "")
+            self._status_label.setText(
+                f"⚠ TTS service running but models not found at {model_path}."
+            )
+            self._status_label.setStyleSheet("color: orange;")
+        else:
+            detail = health.get("detail", "")
+            self._status_label.setText(f"⚠ TTS service error: {detail}")
             self._status_label.setStyleSheet("color: orange;")
 
     def _save_voice_settings(self) -> None:
@@ -113,14 +172,33 @@ class TTSPage(BasePage):
         self._save_voice_settings()
         voice = self._voice_combo.currentText()
         speed = self._speed_spin.value()
+        mode = self.settings.get("tts_backend_mode", "local")
         try:
-            engine = TTSEngine(
-                output_dir=self.settings.output_dir,
-                model_path=self.settings.get("kokoro_model_path") or None,
-                voices_path=self.settings.get("kokoro_voices_path") or None,
-            )
-            self.log.log(f"Generating preview for voice '{voice}'…", level="INFO")
-            path = engine.generate_preview(voice=voice, speed=speed)
+            if mode == "remote":
+                from ebook_app.services.tts_client import TTSClient
+
+                client = TTSClient(
+                    output_dir=self.settings.output_dir,
+                    base_url=self.settings.get(
+                        "tts_backend_url", "http://127.0.0.1:5005"
+                    ),
+                )
+                self.log.log(
+                    f"Generating preview via TTS service for voice '{voice}'…",
+                    level="INFO",
+                )
+                path = client.generate_preview(voice=voice, speed=speed)
+            else:
+                engine = TTSEngine(
+                    output_dir=self.settings.output_dir,
+                    model_path=self.settings.get("kokoro_model_path") or None,
+                    voices_path=self.settings.get("kokoro_voices_path") or None,
+                )
+                self.log.log(
+                    f"Generating preview for voice '{voice}'…", level="INFO"
+                )
+                path = engine.generate_preview(voice=voice, speed=speed)
+
             self.log.log(f"Preview saved: {path}", level="SUCCESS")
         except Exception as exc:
             self.log.log(f"Preview failed: {exc}", level="ERROR")
