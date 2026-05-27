@@ -382,10 +382,23 @@ class SettingsPage(BasePage):
                 missing.append("model (.onnx)")
             if not voices_ok:
                 missing.append("voices (.bin)")
-            msg = f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
-            if not package_ok:
-                msg += " Also install local TTS dependencies or use remote backend mode."
-            self._model_status_label.setText(msg)
+            package_warning = (
+                "Also install local TTS dependencies or use remote backend mode."
+                if not package_ok
+                else ""
+            )
+            self._model_status_label.setText(
+                " ".join(
+                    filter(
+                        None,
+                        [
+                            f"⚠ Missing: {', '.join(missing)}.",
+                            "Click Download to fetch them.",
+                            package_warning,
+                        ],
+                    )
+                )
+            )
             self._model_status_label.setStyleSheet("color: orange;")
 
     def _browse_output_dir(self) -> None:
