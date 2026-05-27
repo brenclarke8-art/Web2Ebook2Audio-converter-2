@@ -14,9 +14,11 @@ dependencies = [
     "lxml>=5.0.0",
     "ebooklib>=0.18",
     "deep-translator>=1.11.4",
+    "kokoro-onnx>=1.0.0",
     "onnxruntime>=1.17.0",
     "numpy>=1.26.0",
     "soundfile>=0.12.1",
+    "huggingface_hub>=0.20.0",
 ]
 
 [project.scripts]

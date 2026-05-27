@@ -22,6 +22,8 @@ src/ebook_app/
 │   ├── book_library.py
 │   ├── epub_builder.py
 │   ├── scraper.py
+│   ├── tts_engine_cli.py   # Kokoro-ONNX Python API wrapper
+│   ├── voice_catalog.py    # Full 28-voice catalog
 │   └── ...
 ├── services/           # Service layer
 │   ├── epub_service.py
@@ -38,14 +40,13 @@ src/ebook_app/
 
 - **Python**: 3.10 or higher
 - **Operating System**: Windows, macOS, or Linux
-- **Kokoro-ONNX CLI**: Required for text-to-speech synthesis (see installation instructions)
-- **Disk Space**: ~500MB for application + models, plus space for project outputs
+- **Disk Space**: ~500 MB for model files, plus space for project outputs (no external CLI required)
 
 ## Installation
 
 ### 1. Prerequisites
 
-First, ensure you have Python 3.10+ installed:
+Ensure Python 3.10+ is installed:
 
 ```bash
 python --version  # Should show 3.10 or higher
@@ -60,8 +61,6 @@ cd Web2Ebook2Audio-converter-2
 
 ### 3. (Optional) Create a Virtual Environment
 
-It's recommended to use a virtual environment to avoid dependency conflicts:
-
 ```bash
 # On Windows
 python -m venv venv
@@ -72,63 +71,58 @@ python -m venv venv
 source venv/bin/activate
 ```
 
-### 4. Install Kokoro-ONNX CLI
-
-The application uses Kokoro-ONNX CLI for multi-speaker text-to-speech synthesis.
-
-**Download or build the CLI:**
-
-1. Visit the Kokoro-ONNX repository: https://github.com/thewh1teagle/kokoro-onnx
-2. Download the pre-built binary for your operating system from the releases page
-3. Extract and place the executable in a convenient location (e.g., `/usr/local/bin/kokoro-onnx` on Linux/macOS or `C:\Program Files\kokoro-onnx\kokoro-onnx.exe` on Windows)
-4. Make note of the full path to the executable - you'll need to configure it in the application
-
-**Alternatively, build from source:**
-
-```bash
-# Clone the kokoro-onnx repository
-git clone https://github.com/thewh1teagle/kokoro-onnx.git
-cd kokoro-onnx
-
-# Follow the build instructions in their README
-# The resulting binary will be your kokoro-onnx CLI executable
-```
-
-### 5. Install the Application
+### 4. Install the Application
 
 ```bash
 pip install -e .
 ```
 
-This installs the application in "editable" mode, allowing you to make changes to the source code while still using the installed package.
+This installs all required dependencies including `kokoro-onnx`, `onnxruntime`, `huggingface_hub`, `PySide6`, and others.
 
-### 6. Configure Kokoro CLI Path
+### 5. Download Kokoro ONNX Model Files
 
-After installation, you'll need to configure the path to your kokoro-onnx executable:
+The application uses the [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx) library **as a Python package** — no separate CLI binary is required.
 
-1. Launch the application
+Model files are downloaded automatically from Hugging Face Hub (`hexgrad/Kokoro-82M-ONNX`) and saved to `~/.ebook_audio_studio/models/`. There are two ways to trigger the download:
+
+**Option A — In-app (recommended):**
+
+1. Launch the application: `ebook-audio-studio`
 2. Navigate to the **Settings** page
-3. Enter the full path to your kokoro-onnx executable in the "Kokoro CLI path" field
-4. Click "Save Settings"
+3. Click **"Download Models from Hugging Face"**
+4. Wait for the download to complete — the status indicator turns green when ready
 
-Alternatively, the TTS page also has a field to set the CLI path.
+**Option B — Command line:**
 
-### 7. Verify Installation
-
-```bash
-ebook-audio-studio --help
+```python
+from ebook_app.models.tts_engine_cli import download_kokoro_models
+download_kokoro_models()  # saves to ~/.ebook_audio_studio/models/
 ```
 
-If the command is not found, try:
+**Option C — Manual placement:**
+
+Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
+<https://huggingface.co/hexgrad/Kokoro-82M-ONNX> and either:
+- Place them in `~/.ebook_audio_studio/models/` (auto-discovered), or
+- Set custom paths via **Settings → Model file (.onnx)** and **Settings → Voices file (.bin)**
+
+### 6. Verify Installation
+
+```bash
+ebook-audio-studio
+```
+
+If the command is not found, run directly:
+
 ```bash
 python -m ebook_app.main
 ```
 
+---
+
 ## Usage
 
 ### Starting the Application
-
-Launch the GUI application:
 
 ```bash
 ebook-audio-studio
@@ -136,56 +130,51 @@ ebook-audio-studio
 
 ### Application Workflow
 
-The application follows a project-based workflow with multiple pipeline steps:
+The application follows a project-based workflow:
 
 #### 1. **Create/Load a Project**
-   - On first launch, use the "New Project" button to create a project
+   - On first launch, use the "New Project" button
    - Projects are stored in the output directory with their own subdirectory
-   - Each project maintains state files (`project.json`) for resume support
+   - Each project maintains `project.json` for resume support
 
 #### 2. **Scrape Web Content**
    - Navigate to the **Scraper** page
    - Enter the URL of a web novel table of contents or chapter index
-   - Click "Scrape Index" to extract chapter URLs
-   - Click "Scrape Chapters" to download chapter content
-   - The scraper uses BeautifulSoup for HTML parsing
+   - Click "Scrape Index" to extract chapter URLs, then "Scrape Chapters" to download
 
 #### 3. **(Optional) Translate Content**
    - Navigate to the **Translator** page
    - Select source and target languages
-   - Uses deep-translator for translation
-   - Translation is stored separately from original text
+   - Uses `deep-translator` for translation
 
-#### 4. **Configure Characters & Voices**
+#### 4. **Configure Voices**
    - Navigate to the **TTS** page
-   - Configure the path to kokoro-onnx CLI executable if not already set
-   - Assign Kokoro-ONNX voices to dialogue speakers
-   - Configure default voice for narration
-   - Adjust speech speed (0.5x - 2.0x)
+   - Check the model status indicator — if amber, go to **Settings** first and download models
+   - Select from 28 built-in Kokoro 1.0 voices (American & British English, male & female)
+   - Adjust speech speed (0.5×–2.0×)
 
 #### 5. **Generate Audio**
    - The system parses dialogue using pattern matching
-   - Multi-speaker TTS generates audio with character voices using Kokoro-ONNX CLI
+   - Multi-speaker TTS generates audio using the `kokoro-onnx` Python library directly
    - Audio files are saved in `<project>/pipeline_work/audio/`
 
 #### 6. **Create EPUB3 with Media Overlays**
    - Navigate to the **EPUB Export** page
    - The system performs forced alignment to sync text and audio
    - Generates SMIL files for Media Overlays (EPUB3 read-aloud)
-   - Creates final EPUB3 file with embedded audio and navigation
+   - Creates the final EPUB3 file with embedded audio and navigation
 
 #### 7. **Export & Enjoy**
-   - The final EPUB3 file includes:
-     - Original/translated text content
-     - Embedded audio files (synchronized per chapter)
-     - SMIL Media Overlays for read-aloud support
-     - Proper navigation (nav.xhtml, toc.xhtml)
-     - CSS styling
-   - Open in compatible EPUB3 readers (Thorium Reader, Adobe Digital Editions, etc.)
+   The final EPUB3 file includes:
+   - Original/translated text content
+   - Embedded audio files (synchronised per chapter)
+   - SMIL Media Overlays for read-aloud support
+   - Proper navigation (`nav.xhtml`, `toc.xhtml`) and CSS styling
+   - Open in any EPUB3 reader (Thorium Reader, Adobe Digital Editions, etc.)
 
 ### Pipeline Steps (Advanced)
 
-For programmatic use or automation, the pipeline can be controlled via:
+For programmatic use or automation:
 
 ```python
 from ebook_app.core.settings_manager import SettingsManager
@@ -210,8 +199,6 @@ pipeline.run_all()
 
 ### Project Directory Structure
 
-Each project creates the following structure:
-
 ```
 output/
 └── <project-name>/
@@ -228,65 +215,118 @@ output/
     └── <project-name>.epub       # Final EPUB3 output
 ```
 
+---
+
 ## Configuration
 
-### Settings Location
+### Settings File Location
 
-Application settings are stored in platform-specific locations:
+Application settings are stored at:
 
-- **Windows**: `%APPDATA%/EbookAudioStudio/settings.json`
-- **macOS**: `~/Library/Application Support/EbookAudioStudio/settings.json`
-- **Linux**: `~/.config/EbookAudioStudio/settings.json`
+```
+~/.ebook_audio_studio_settings.json
+```
+
+### Model Files Location
+
+Kokoro ONNX model files are stored at (by default):
+
+```
+~/.ebook_audio_studio/models/
+├── kokoro-v1.0.onnx
+└── voices-v1.0.bin
+```
+
+Custom paths can be set in **Settings → Kokoro ONNX Models**.
 
 ### Configurable Settings
 
-- **Output Directory**: Where projects are created and stored
-- **Default Language**: For translation and TTS
-- **TTS Voice**: Default voice for narration
-- **Speech Speed**: Global speed multiplier
-- **Device**: CPU, CUDA, or MPS for TTS inference
+| Setting | Description | Default |
+|---|---|---|
+| **Output Directory** | Where projects are created | `output` |
+| **TTS Voice** | Default voice for narration | `af_heart` |
+| **Speech Speed** | Global speed multiplier | `1.0` |
+| **Model file (.onnx)** | Path to Kokoro ONNX model | auto (see above) |
+| **Voices file (.bin)** | Path to Kokoro voices file | auto (see above) |
+
+### Available Voices (Kokoro 1.0)
+
+| ID | Gender | Accent |
+|---|---|---|
+| `af_heart` | Female | American English |
+| `af_alloy` | Female | American English |
+| `af_aoede` | Female | American English |
+| `af_bella` | Female | American English |
+| `af_jessica` | Female | American English |
+| `af_kore` | Female | American English |
+| `af_nicole` | Female | American English |
+| `af_nova` | Female | American English |
+| `af_river` | Female | American English |
+| `af_sarah` | Female | American English |
+| `af_sky` | Female | American English |
+| `am_adam` | Male | American English |
+| `am_echo` | Male | American English |
+| `am_eric` | Male | American English |
+| `am_fenrir` | Male | American English |
+| `am_liam` | Male | American English |
+| `am_michael` | Male | American English |
+| `am_onyx` | Male | American English |
+| `am_puck` | Male | American English |
+| `am_santa` | Male | American English |
+| `bf_alice` | Female | British English |
+| `bf_emma` | Female | British English |
+| `bf_isabella` | Female | British English |
+| `bf_lily` | Female | British English |
+| `bm_daniel` | Male | British English |
+| `bm_fable` | Male | British English |
+| `bm_george` | Male | British English |
+| `bm_lewis` | Male | British English |
+
+---
 
 ## Troubleshooting
 
-### "Kokoro CLI not configured" Error
+### Model Files Not Found
 
-Make sure you've configured the path to the kokoro-onnx executable:
-1. Navigate to **Settings** page
-2. Enter the full path to your kokoro-onnx executable
-3. Click "Save Settings"
+The status indicator on the TTS page and Settings page shows amber (⚠) if model files are missing.
 
-You can download kokoro-onnx from: https://github.com/thewh1teagle/kokoro-onnx
+**Fix:** Go to **Settings** and click **"Download Models from Hugging Face"**, or manually place the files in `~/.ebook_audio_studio/models/`.
 
-### Kokoro CLI Executable Not Found
+### `kokoro-onnx` Import Error
 
-Ensure the kokoro-onnx executable:
-- Is downloaded and placed in an accessible location
-- Has execute permissions (on Linux/macOS: `chmod +x /path/to/kokoro-onnx`)
-- Path is correctly configured in Settings
+Make sure the package is installed:
+
+```bash
+pip install kokoro-onnx
+```
 
 ### Application Won't Start
 
 Try running directly with Python:
+
 ```bash
 python -m ebook_app.main
 ```
 
 Check for missing dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ### Audio Generation is Slow
 
-- **Check Kokoro-ONNX CLI configuration**: Ensure you're using the latest version
-- **Process chapters individually**: Instead of running full pipeline at once
-- **Hardware limitations**: Audio generation speed depends on your CPU performance
+- CPU inference is expected to be slower than GPU. On a modern CPU, expect ~1× real-time.
+- `onnxruntime` will automatically use available hardware acceleration (CUDA on NVIDIA, DirectML on Windows, CoreML on Apple Silicon).
+- Process chapters individually rather than running the full pipeline at once.
 
 ### EPUB Won't Open in Reader
 
-- Ensure you're using an EPUB3-compatible reader (Thorium Reader recommended)
-- Some readers don't support Media Overlays (audio synchronization)
-- Try validating the EPUB with EPUBCheck: https://www.w3.org/publishing/epubcheck/
+- Use an EPUB3-compatible reader (Thorium Reader is recommended).
+- Some readers don't support Media Overlays (audio synchronisation).
+- Validate the EPUB with EPUBCheck: <https://www.w3.org/publishing/epubcheck/>
+
+---
 
 ## Development
 
@@ -302,11 +342,11 @@ The project uses Python type hints and follows PEP 8 conventions.
 
 ### Architecture Overview
 
-- **ProjectManager**: Centralized state management for current project
-- **SettingsManager**: Persistent application settings
+- **ProjectManager**: Centralized state management for the current project
+- **SettingsManager**: Persistent application settings (`~/.ebook_audio_studio_settings.json`)
 - **BookLibrary**: Multi-book library management
-- **PipelineController**: Orchestrates end-to-end conversion pipeline
-- **TTSEngine**: Kokoro-ONNX CLI integration with multi-speaker support
+- **PipelineController**: Orchestrates the end-to-end conversion pipeline
+- **TTSEngine**: Wraps `kokoro_onnx.Kokoro` with lazy model loading and multi-speaker support
 - **EPUBBuilder**: EPUB3 generation with Media Overlays
 
 Each project maintains its own directory with intermediate files and state preservation for resume support.

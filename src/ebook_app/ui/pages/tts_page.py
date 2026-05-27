@@ -9,40 +9,31 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QVBoxLayout,
 )
 
+from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, TTSEngine, _resolve_model_paths
+from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG
 from ebook_app.ui.pages._base_page import BasePage
 
-
-_VOICES = [
-    "af_heart", "af_bella", "af_sarah",
-    "am_adam", "am_michael",
-    "bf_emma", "bf_isabella",
-    "bm_george", "bm_lewis",
-]
+_VOICES = list(KOKORO_VOICE_CATALOG.keys())
 
 
 class TTSPage(BasePage):
-    """Page for configuring TTS voice, speed, and Kokoro CLI path.
-
-    TODO: wire to TTSService when implemented.
-    """
+    """Page for configuring TTS voice and speed, and triggering synthesis."""
 
     def _build_ui(self) -> None:
-        # Kokoro CLI path
-        cli_group = QGroupBox("Kokoro CLI")
-        cli_layout = QHBoxLayout(cli_group)
-        cli_layout.addWidget(QLabel("Executable path:"))
-        self._cli_path_input = QLineEdit()
-        self._cli_path_input.setPlaceholderText("/path/to/kokoro-onnx")
-        self._cli_path_input.setText(str(self.settings.get("kokoro_cli_path", "")))
-        cli_layout.addWidget(self._cli_path_input)
-        self._layout.addWidget(cli_group)
+        # ── Model status ───────────────────────────────────────────────
+        status_group = QGroupBox("Kokoro ONNX Status")
+        status_layout = QHBoxLayout(status_group)
+        self._status_label = QLabel()
+        self._refresh_status()
+        status_layout.addWidget(self._status_label)
+        status_layout.addStretch()
+        self._layout.addWidget(status_group)
 
-        # Voice settings
+        # ── Voice Settings ─────────────────────────────────────────────
         voice_group = QGroupBox("Voice Settings")
         vbox = QVBoxLayout(voice_group)
 
@@ -69,7 +60,7 @@ class TTSPage(BasePage):
 
         self._layout.addWidget(voice_group)
 
-        # Action buttons
+        # ── Action buttons ─────────────────────────────────────────────
         btn_row = QHBoxLayout()
         self._tts_batch_btn = QPushButton("Batch TTS (all chapters)")
         self._tts_preview_btn = QPushButton("Preview voice")
@@ -83,15 +74,35 @@ class TTSPage(BasePage):
         self._layout.addStretch()
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _refresh_status(self) -> None:
+        model_path, voices_path = _resolve_model_paths(
+            self.settings.get("kokoro_model_path") or None,
+            self.settings.get("kokoro_voices_path") or None,
+        )
+        if model_path.exists() and voices_path.exists():
+            self._status_label.setText("✅ Kokoro models ready.")
+            self._status_label.setStyleSheet("color: green;")
+        else:
+            self._status_label.setText(
+                "⚠ Kokoro models not found. Go to Settings → Download Models."
+            )
+            self._status_label.setStyleSheet("color: orange;")
+
+    def _save_voice_settings(self) -> None:
+        self.settings.set("tts_voice", self._voice_combo.currentText())
+        self.settings.set("tts_speed", self._speed_spin.value())
+
+    # ------------------------------------------------------------------
     # Handlers
     # ------------------------------------------------------------------
 
     def _on_batch_tts(self) -> None:
-        """Placeholder: synthesise audio for all chapters."""
+        self._save_voice_settings()
         voice = self._voice_combo.currentText()
         speed = self._speed_spin.value()
-        self.settings.set("tts_voice", voice)
-        self.settings.set("tts_speed", speed)
         self.log.log(
             f"Batch TTS — voice='{voice}', speed={speed} (not yet implemented)",
             level="INFO",
@@ -99,6 +110,18 @@ class TTSPage(BasePage):
         # TODO: start TTSService.batch_synthesise(voice, speed)
 
     def _on_preview(self) -> None:
-        """Placeholder: synthesise a short preview sample."""
-        self.log.log("TTS preview not yet implemented.", level="INFO")
-        # TODO: TTSService.preview(voice, speed)
+        self._save_voice_settings()
+        voice = self._voice_combo.currentText()
+        speed = self._speed_spin.value()
+        try:
+            engine = TTSEngine(
+                output_dir=self.settings.output_dir,
+                model_path=self.settings.get("kokoro_model_path") or None,
+                voices_path=self.settings.get("kokoro_voices_path") or None,
+            )
+            self.log.log(f"Generating preview for voice '{voice}'…", level="INFO")
+            path = engine.generate_preview(voice=voice, speed=speed)
+            self.log.log(f"Preview saved: {path}", level="SUCCESS")
+        except Exception as exc:
+            self.log.log(f"Preview failed: {exc}", level="ERROR")
+
