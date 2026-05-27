@@ -350,7 +350,14 @@ class PipelinePage(BasePage):
     # ------------------------------------------------------------------
 
     def _is_busy(self) -> bool:
-        return self._worker is not None and self._worker.isRunning()
+        worker = self._worker
+        if worker is None:
+            return False
+        try:
+            return worker.isRunning()
+        except RuntimeError:
+            self._worker = None
+            return False
 
     def _set_buttons_enabled(self, enabled: bool) -> None:
         self._check_index_btn.setEnabled(enabled)
@@ -391,9 +398,10 @@ class PipelinePage(BasePage):
         self._load_active_project_state()
 
     def _on_worker_finished(self, mode: str, message: str) -> None:
+        worker = self._worker
+        self._worker = None
         self._set_buttons_enabled(True)
         if mode == _PipelineWorker.RUN_TO_REVIEW and self.project_manager:
-            worker = self._worker
             end_chapter = worker._end if worker is not None else 0
             self.project_manager.set_last_processed_chapter(end_chapter)
         self._load_active_project_state()
@@ -407,6 +415,7 @@ class PipelinePage(BasePage):
             )
 
     def _on_worker_failed(self, message: str) -> None:
+        self._worker = None
         self._set_buttons_enabled(True)
         self._load_active_project_state()
         self.log.log(f"Pipeline failed: {message}", level="ERROR")
