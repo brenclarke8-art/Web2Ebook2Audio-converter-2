@@ -114,7 +114,10 @@ class TTSPage(BasePage):
                 return
             # Discard old thread before creating a new one to avoid signal leaks.
             if self._health_thread is not None:
-                self._health_thread.result.disconnect(self._on_health_result)
+                try:
+                    self._health_thread.result.disconnect(self._on_health_result)
+                except RuntimeError:
+                    pass
                 self._health_thread.deleteLater()
             self._health_thread = _HealthCheckThread(url, parent=self)
             self._health_thread.result.connect(self._on_health_result)

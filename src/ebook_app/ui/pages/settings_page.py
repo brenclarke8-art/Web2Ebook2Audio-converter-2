@@ -256,7 +256,10 @@ class SettingsPage(BasePage):
             return
         # Discard old thread before creating a new one to avoid signal leaks.
         if self._svc_health_thread is not None:
-            self._svc_health_thread.result.disconnect(self._on_service_health_result)
+            try:
+                self._svc_health_thread.result.disconnect(self._on_service_health_result)
+            except RuntimeError:
+                pass
             self._svc_health_thread.deleteLater()
         url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
         self._svc_status_label.setText("⏳ Checking…")
