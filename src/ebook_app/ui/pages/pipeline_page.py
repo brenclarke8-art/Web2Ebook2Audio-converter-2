@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ebook_app.ui.pages._base_page import BasePage
+from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 
 
 _STEPS = [
@@ -134,6 +135,10 @@ class _PipelineWorker(QThread):
         ctrl.translate_chapters()
         self.log_message.emit("Parsing dialogue…", "INFO")
         ctrl.parse_dialogue()
+        self.log_message.emit(
+            f"LLM communication log: {ctrl.work_dir / 'llm_communication.jsonl'}",
+            "INFO",
+        )
 
         self.finished_ok.emit(
             self.RUN_TO_REVIEW,
@@ -318,9 +323,9 @@ class PipelinePage(BasePage):
 
         detected_group = QGroupBox("Detected Characters")
         detected_layout = QVBoxLayout(detected_group)
-        self._detected_char_table = QTableWidget(0, 4)
+        self._detected_char_table = QTableWidget(0, 5)
         self._detected_char_table.setHorizontalHeaderLabels(
-            ["Name", "Gender", "Confidence", "Source Chapter(s)"]
+            ["Name", "Gender", "Voice", "Confidence", "Source Chapter(s)"]
         )
         self._detected_char_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
@@ -332,7 +337,10 @@ class PipelinePage(BasePage):
             2, QHeaderView.ResizeMode.ResizeToContents
         )
         self._detected_char_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
+            3, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._detected_char_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch
         )
         detected_layout.addWidget(self._detected_char_table)
 
@@ -673,6 +681,9 @@ class PipelinePage(BasePage):
                                         aggregated[key] = {
                                             "name": name,
                                             "gender": str(char.get("gender", "unknown")).strip() or "unknown",
+                                            "voice": self._default_voice_for_gender(
+                                                str(char.get("gender", "unknown")).strip() or "unknown"
+                                            ),
                                             "confidence": confidence,
                                             "sources": {source} if source else set(),
                                         }
@@ -682,6 +693,10 @@ class PipelinePage(BasePage):
                                             existing["gender"] = (
                                                 str(char.get("gender", "unknown")).strip() or "unknown"
                                             )
+                                            if not str(existing.get("voice", "")).strip():
+                                                existing["voice"] = self._default_voice_for_gender(
+                                                    existing["gender"]
+                                                )
                                         if source:
                                             existing["sources"].add(source)
                     except Exception as exc:
@@ -699,6 +714,8 @@ class PipelinePage(BasePage):
                 aggregated[key] = {
                     "name": name,
                     "gender": str(item.get("gender", "unknown")).strip() or "unknown",
+                    "voice": str(item.get("voice", "")).strip()
+                    or self._default_voice_for_gender(str(item.get("gender", "unknown")).strip()),
                     "confidence": float(item.get("confidence", 0.0)),
                     "sources": {source} if source else set(),
                 }
@@ -709,6 +726,7 @@ class PipelinePage(BasePage):
             self._insert_detected_character_row(
                 name=str(item["name"]),
                 gender=str(item["gender"]),
+                voice=str(item.get("voice", "")),
                 confidence=float(item["confidence"]),
                 source=", ".join(sources),
             )
@@ -718,6 +736,7 @@ class PipelinePage(BasePage):
         *,
         name: str = "",
         gender: str = "unknown",
+        voice: str = "",
         confidence: float = 0.0,
         source: str = "",
     ) -> None:
@@ -725,8 +744,22 @@ class PipelinePage(BasePage):
         self._detected_char_table.insertRow(row)
         self._detected_char_table.setItem(row, 0, QTableWidgetItem(name))
         self._detected_char_table.setItem(row, 1, QTableWidgetItem(gender))
-        self._detected_char_table.setItem(row, 2, QTableWidgetItem(f"{confidence:.2f}"))
-        self._detected_char_table.setItem(row, 3, QTableWidgetItem(source))
+        voice_combo = QComboBox()
+        voice_combo.addItems(KOKORO_VOICE_LIST)
+        selected_voice = voice.strip() or self._default_voice_for_gender(gender)
+        if selected_voice in KOKORO_VOICE_LIST:
+            voice_combo.setCurrentText(selected_voice)
+        self._detected_char_table.setCellWidget(row, 2, voice_combo)
+        self._detected_char_table.setItem(row, 3, QTableWidgetItem(f"{confidence:.2f}"))
+        self._detected_char_table.setItem(row, 4, QTableWidgetItem(source))
+
+    def _default_voice_for_gender(self, gender: str) -> str:
+        gender_lc = (gender or "").strip().lower()
+        if gender_lc == "male":
+            return self.settings.get("default_male_voice", "am_adam")
+        if gender_lc == "female":
+            return self.settings.get("default_female_voice", "af_heart")
+        return self.settings.get("narrator_voice", "af_heart")
 
     def _on_add_detected_character(self) -> None:
         self._insert_detected_character_row()
@@ -745,13 +778,19 @@ class PipelinePage(BasePage):
         for row in range(self._detected_char_table.rowCount()):
             name_item = self._detected_char_table.item(row, 0)
             gender_item = self._detected_char_table.item(row, 1)
-            confidence_item = self._detected_char_table.item(row, 2)
-            source_item = self._detected_char_table.item(row, 3)
+            voice_widget = self._detected_char_table.cellWidget(row, 2)
+            confidence_item = self._detected_char_table.item(row, 3)
+            source_item = self._detected_char_table.item(row, 4)
 
             name = name_item.text().strip() if name_item else ""
             if not name:
                 continue
             gender = (gender_item.text().strip() if gender_item else "unknown") or "unknown"
+            voice = (
+                voice_widget.currentText().strip()
+                if isinstance(voice_widget, QComboBox)
+                else self._default_voice_for_gender(gender)
+            )
             try:
                 confidence = float(confidence_item.text()) if confidence_item else 0.0
             except (TypeError, ValueError):
@@ -764,6 +803,7 @@ class PipelinePage(BasePage):
                 {
                     "name": name,
                     "gender": gender,
+                    "voice": voice,
                     "confidence": clamped,
                     "source_chapter": source,
                 }

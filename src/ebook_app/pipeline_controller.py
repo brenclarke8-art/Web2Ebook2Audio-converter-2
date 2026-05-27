@@ -346,9 +346,11 @@ class PipelineController:
                 return
 
         logger.info("Parsing dialogue for %d chapters...", len(self.translated_chapters))
+        llm_log_path = self.work_dir / "llm_communication.jsonl"
         parser = DialogueParser(
             ollama_url=self.settings.get("ollama_url", ""),
             model=self.settings.get("ollama_model", ""),
+            llm_log_path=llm_log_path,
         )
 
         known_characters = self.settings.get("character_db", []) or []
@@ -398,10 +400,18 @@ class PipelineController:
                     and normalized not in known_names
                     and normalized not in pending_names
                 ):
+                    gender_lc = (detected.gender or "unknown").strip().lower()
+                    if gender_lc == "male":
+                        voice = self.settings.get("default_male_voice", "am_adam")
+                    elif gender_lc == "female":
+                        voice = self.settings.get("default_female_voice", "af_heart")
+                    else:
+                        voice = self.settings.get("narrator_voice", "af_heart")
                     pending.append(
                         {
                             "name": detected.name,
                             "gender": detected.gender,
+                            "voice": voice,
                             "confidence": detected.confidence,
                             "source_chapter": chapter_id,
                         }
@@ -429,6 +439,7 @@ class PipelineController:
         self.review_required = True
 
         logger.info("Dialogue parsing complete.")
+        logger.info("LLM communication log written to %s", llm_log_path)
 
     def multispeaker_tts(self) -> None:
         """Synthesise audio with per-character voices using MultiSpeakerTTS."""
