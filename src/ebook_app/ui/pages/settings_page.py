@@ -382,14 +382,14 @@ class SettingsPage(BasePage):
                 missing.append("model (.onnx)")
             if not voices_ok:
                 missing.append("voices (.bin)")
-            package_warning = (
+            dependency_note = (
                 "Also install local TTS dependencies or use remote backend mode."
                 if not package_ok
                 else ""
             )
             msg = f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
-            if package_warning:
-                msg = f"{msg} {package_warning}"
+            if dependency_note:
+                msg = f"{msg} {dependency_note}"
             self._model_status_label.setText(msg)
             self._model_status_label.setStyleSheet("color: orange;")
 

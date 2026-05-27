@@ -140,7 +140,7 @@ class TTSPage(BasePage):
             elif model_path.exists() and voices_path.exists():
                 self._status_label.setText(
                     "⚠ Models are ready, but kokoro-onnx is missing. Install it, "
-                    "or switch Settings → TTS Backend to remote mode."
+                    "or switch Settings > TTS Backend to remote mode."
                 )
                 self._status_label.setStyleSheet("color: orange;")
             else:
