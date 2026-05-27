@@ -306,7 +306,7 @@ class SettingsPage(BasePage):
         pending_group = QGroupBox("Pending Character Detections")
         pending_vbox = QVBoxLayout(pending_group)
         pending_note = QLabel(
-            "High-confidence LLM character suggestions. Accept to add into Character Database."
+            "High-confidence LLM character suggestions. Accept to add to Character Database."
         )
         pending_note.setWordWrap(True)
         pending_vbox.addWidget(pending_note)

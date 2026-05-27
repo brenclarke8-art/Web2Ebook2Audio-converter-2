@@ -23,7 +23,7 @@ class Segment:
     :param gender:      ``'male'`` | ``'female'`` | ``'unknown'``.
     :param speaker_confidence: Confidence for speaker attribution in [0.0, 1.0].
     :param gender_confidence:  Confidence for gender inference in [0.0, 1.0].
-    :param character_confidence: Confidence this segment belongs to the character.
+    :param character_confidence: Confidence this segment belongs to the character in [0.0, 1.0].
     :param paragraph_id: Unique identifier for SMIL synchronisation.
     """
 
