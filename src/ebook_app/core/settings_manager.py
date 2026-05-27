@@ -73,7 +73,6 @@ class SettingsManager(QObject):
 
     def set(self, key: str, value):
         self.data[key] = value
-        self._settings = self.data
         self.save()
         self.settings_changed.emit(key)
 
