@@ -28,8 +28,10 @@ venv/
 ENV/
 env/
 .venv
+.venv_gui/
 venv_gui/
 tts_service/venv_tts/
+tts_service/.venv_tts/
 
 # IDE
 .vscode/

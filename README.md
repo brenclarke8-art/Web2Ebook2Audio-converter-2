@@ -82,6 +82,37 @@ cd Web2Ebook2Audio-converter-2
 
 Before installing, confirm you are in the repo root (must contain `pyproject.toml` and `tts_service/`).
 
+### Quick setup helpers (recommended)
+
+Use one command to create both virtual environments and install dependencies.
+
+**Windows (PowerShell):**
+
+```powershell
+.\setup_windows.ps1
+```
+
+Optional flags:
+
+```powershell
+.\setup_windows.ps1 -GuiPython 3.10 -TtsPython 3.14 -InstallBrowser
+```
+
+**macOS/Linux:**
+
+```bash
+chmod +x ./setup_unix.sh
+./setup_unix.sh
+```
+
+Optional environment overrides:
+
+```bash
+GUI_PYTHON=python3.10 TTS_PYTHON=python3.14 INSTALL_BROWSER=1 ./setup_unix.sh
+```
+
+If you prefer manual setup, use the steps below.
+
 ### 2) Create and install the GUI environment (required)
 
 **Windows (cmd/PowerShell):**
