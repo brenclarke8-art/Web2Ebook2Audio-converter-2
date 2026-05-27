@@ -160,13 +160,13 @@ class _LlmHealthThread(QThread):
             response.raise_for_status()
             data = response.json()
             models = data.get("models", []) if isinstance(data, dict) else []
-            model_names = {
-                normalized
-                for model in models
-                if isinstance(model, dict)
-                for normalized in [self._normalize_model_name(str(model.get("name", "")))]
-                if normalized
-            }
+            model_names: set[str] = set()
+            for model in models:
+                if not isinstance(model, dict):
+                    continue
+                normalized = self._normalize_model_name(str(model.get("name", "")))
+                if normalized:
+                    model_names.add(normalized)
             selected_model = self._normalize_model_name(self._model)
             model_configured = bool(selected_model)
             model_found = model_configured and (selected_model in model_names)
@@ -877,6 +877,7 @@ class SettingsPage(BasePage):
             try:
                 self._llm_health_thread.result.disconnect(self._on_llm_health_result)
             except RuntimeError:
+                # Signal may already be disconnected if the prior thread was cleaned up.
                 pass
             self._llm_health_thread.deleteLater()
         ollama_url = self._ollama_url_input.text().strip()
