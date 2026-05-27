@@ -96,7 +96,7 @@ class SettingsPage(BasePage):
         status_row.addWidget(self._model_status_label)
         status_row.addStretch()
 
-        self._download_btn = QPushButton("Download Models from Hugging Face")
+        self._download_btn = QPushButton("Download Models from GitHub")
         self._download_btn.clicked.connect(self._on_download_models)
         status_row.addWidget(self._download_btn)
         model_vbox.addLayout(status_row)
@@ -204,4 +204,3 @@ class SettingsPage(BasePage):
         self._download_btn.setEnabled(True)
         self._refresh_model_status()
         self.log.log(f"Model download failed: {error}", level="ERROR")
-

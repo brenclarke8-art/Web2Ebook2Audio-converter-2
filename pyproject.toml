@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ebook-audio-studio"
 version = "0.1.0"
 description = "A PySide6 desktop app that converts web novels into EPUB3 audiobooks with multi-speaker TTS."
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "PySide6>=6.6.0",
     "requests>=2.31.0",
@@ -18,7 +18,6 @@ dependencies = [
     "onnxruntime>=1.17.0",
     "numpy>=1.26.0",
     "soundfile>=0.12.1",
-    "huggingface_hub>=0.20.0",
 ]
 
 [project.scripts]

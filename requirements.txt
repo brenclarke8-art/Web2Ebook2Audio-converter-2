@@ -8,4 +8,3 @@ kokoro-onnx>=1.0.0
 onnxruntime>=1.17.0
 numpy>=1.26.0
 soundfile>=0.12.1
-huggingface_hub>=0.20.0

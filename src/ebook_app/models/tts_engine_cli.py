@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
+import requests
 import soundfile as sf
 
 from .multispeaker_tts import build_normalized_voice_lookup, resolve_voice_mapping
@@ -15,10 +16,14 @@ logger = logging.getLogger(__name__)
 # Default directory where model files are stored / downloaded to.
 DEFAULT_MODELS_DIR = Path.home() / ".ebook_audio_studio" / "models"
 
-# Hugging Face repo and filenames for Kokoro 1.0
-_HF_REPO = "hexgrad/Kokoro-82M-ONNX"
+# Kokoro model release and filenames
+_MODEL_RELEASE_BASE_URL = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+)
 _MODEL_FILENAME = "kokoro-v1.0.onnx"
 _VOICES_FILENAME = "voices-v1.0.bin"
+_MODEL_URL = f"{_MODEL_RELEASE_BASE_URL}/{_MODEL_FILENAME}"
+_VOICES_URL = f"{_MODEL_RELEASE_BASE_URL}/{_VOICES_FILENAME}"
 
 
 def _resolve_model_paths(
@@ -37,42 +42,48 @@ def download_kokoro_models(
     dest_dir: Optional[str | Path] = None,
     progress_callback=None,
 ) -> tuple[Path, Path]:
-    """Download Kokoro 1.0 ONNX model files from Hugging Face Hub.
+    """Download Kokoro 1.0 ONNX model files from the official GitHub release.
 
     Returns ``(model_path, voices_path)`` of the downloaded files.
-    Raises :class:`ImportError` if *huggingface_hub* is not installed.
     """
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise ImportError(
-            "huggingface_hub is required for automatic model download. "
-            "Run: pip install huggingface_hub"
-        ) from exc
 
     dest = Path(dest_dir) if dest_dir else DEFAULT_MODELS_DIR
     dest.mkdir(parents=True, exist_ok=True)
+    model_dest = dest / _MODEL_FILENAME
+    voices_dest = dest / _VOICES_FILENAME
 
     if progress_callback:
-        progress_callback(f"Downloading {_MODEL_FILENAME} from Hugging Face…")
-    model_path = hf_hub_download(
-        repo_id=_HF_REPO,
-        filename=_MODEL_FILENAME,
-        local_dir=str(dest),
-    )
+        progress_callback(f"Downloading {_MODEL_FILENAME} from GitHub release…")
+    _download_file(_MODEL_URL, model_dest)
 
     if progress_callback:
-        progress_callback(f"Downloading {_VOICES_FILENAME} from Hugging Face…")
-    voices_path = hf_hub_download(
-        repo_id=_HF_REPO,
-        filename=_VOICES_FILENAME,
-        local_dir=str(dest),
-    )
+        progress_callback(f"Downloading {_VOICES_FILENAME} from GitHub release…")
+    _download_file(_VOICES_URL, voices_dest)
 
     if progress_callback:
         progress_callback("Model download complete.")
 
-    return Path(model_path), Path(voices_path)
+    return model_dest, voices_dest
+
+
+def _download_file(url: str, dest_path: Path) -> None:
+    temp_path = dest_path.with_suffix(f"{dest_path.suffix}.part")
+    try:
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with temp_path.open("wb") as file_handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        file_handle.write(chunk)
+        temp_path.replace(dest_path)
+    except requests.RequestException as exc:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to download model file from {url}: {exc}") from exc
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
 
 
 class TTSEngine:
@@ -87,7 +98,7 @@ class TTSEngine:
     2. ``~/.ebook_audio_studio/models/`` (default download location).
 
     If the files are absent, call :meth:`download_models` (or use the
-    *Download Models* button in Settings) to fetch them from Hugging Face.
+    *Download Models* button in Settings) to fetch them from GitHub.
     """
 
     def __init__(
@@ -306,4 +317,3 @@ class TTSEngine:
     @staticmethod
     def list_kokoro_voices() -> Dict[str, Dict[str, str]]:
         return KOKORO_VOICE_CATALOG
-

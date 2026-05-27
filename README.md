@@ -38,7 +38,7 @@ src/ebook_app/
 
 ## System Requirements
 
-- **Python**: 3.10 or higher
+- **Python**: 3.14 or higher
 - **Operating System**: Windows, macOS, or Linux
 - **Disk Space**: ~500 MB for model files, plus space for project outputs (no external CLI required)
 
@@ -46,10 +46,10 @@ src/ebook_app/
 
 ### 1. Prerequisites
 
-Ensure Python 3.10+ is installed:
+Ensure Python 3.14+ is installed:
 
 ```bash
-python --version  # Should show 3.10 or higher
+python --version  # Should show 3.14 or higher
 ```
 
 ### 2. Clone the Repository
@@ -77,19 +77,19 @@ source venv/bin/activate
 pip install -e .
 ```
 
-This installs all required dependencies including `kokoro-onnx`, `onnxruntime`, `huggingface_hub`, `PySide6`, and others.
+This installs all required dependencies including `kokoro-onnx`, `onnxruntime`, `PySide6`, and others.
 
 ### 5. Download Kokoro ONNX Model Files
 
 The application uses the [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx) library **as a Python package** — no separate CLI binary is required.
 
-Model files are downloaded automatically from Hugging Face Hub (`hexgrad/Kokoro-82M-ONNX`) and saved to `~/.ebook_audio_studio/models/`. There are two ways to trigger the download:
+Model files are downloaded automatically from the Kokoro ONNX GitHub release (`model-files-v1.0`) and saved to `~/.ebook_audio_studio/models/`. There are two ways to trigger the download:
 
 **Option A — In-app (recommended):**
 
 1. Launch the application: `ebook-audio-studio`
 2. Navigate to the **Settings** page
-3. Click **"Download Models from Hugging Face"**
+3. Click **"Download Models from GitHub"**
 4. Wait for the download to complete — the status indicator turns green when ready
 
 **Option B — Command line:**
@@ -102,7 +102,7 @@ download_kokoro_models()  # saves to ~/.ebook_audio_studio/models/
 **Option C — Manual placement:**
 
 Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
-<https://huggingface.co/hexgrad/Kokoro-82M-ONNX> and either:
+<https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0> and either:
 - Place them in `~/.ebook_audio_studio/models/` (auto-discovered), or
 - Set custom paths via **Settings → Model file (.onnx)** and **Settings → Voices file (.bin)**
 
@@ -290,7 +290,7 @@ Custom paths can be set in **Settings → Kokoro ONNX Models**.
 
 The status indicator on the TTS page and Settings page shows amber (⚠) if model files are missing.
 
-**Fix:** Go to **Settings** and click **"Download Models from Hugging Face"**, or manually place the files in `~/.ebook_audio_studio/models/`.
+**Fix:** Go to **Settings** and click **"Download Models from GitHub"**, or manually place the files in `~/.ebook_audio_studio/models/`.
 
 ### `kokoro-onnx` Import Error
 
