@@ -8,7 +8,7 @@ import numpy as np
 import requests
 import soundfile as sf
 
-from .multispeaker_tts import build_normalized_voice_lookup, resolve_voice_mapping
+from .multispeaker_tts import build_normalized_voice_lookup, resolve_voice_for_segment
 from .voice_catalog import KOKORO_VOICE_CATALOG, get_lang_for_voice
 
 logger = logging.getLogger(__name__)
@@ -205,6 +205,8 @@ class TTSEngine:
         output_filename: str,
         voice_mappings: Dict[str, str],
         *,
+        default_male_voice: str = "am_adam",
+        default_female_voice: str = "af_heart",
         dialogue_pause: float = 0.3,
         lang_code: str = "a",
         speed: float = 1.0,
@@ -228,10 +230,14 @@ class TTSEngine:
                 progress_callback(f"Processing segment {i + 1}/{len(dialogue_segments)}…")
 
             speaker = segment.speaker or "narrator"
-            resolution = resolve_voice_mapping(
-                speaker,
-                voice_mappings,
+            gender = getattr(segment, "gender", "unknown")
+            resolution = resolve_voice_for_segment(
+                speaker=speaker,
+                gender=gender,
+                voice_mappings=voice_mappings,
                 narrator_voice=voice_mappings.get("narrator", "af_heart"),
+                default_male_voice=default_male_voice,
+                default_female_voice=default_female_voice,
                 normalized_lookup=normalized_lookup,
             )
             voice = resolution.voice

@@ -72,6 +72,23 @@ class PipelineController:
         self.audio_files: dict[int, Path] = {}
         self.alignment_data: dict[int, list[AlignmentEntry]] = {}
 
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        return " ".join((name or "").strip().lower().split())
+
+    @staticmethod
+    def _segment_to_dict(segment: Segment) -> dict:
+        return {
+            "text": segment.text,
+            "type": segment.type,
+            "speaker": segment.speaker,
+            "gender": segment.gender,
+            "speaker_confidence": segment.speaker_confidence,
+            "gender_confidence": segment.gender_confidence,
+            "character_confidence": segment.character_confidence,
+            "paragraph_id": segment.paragraph_id,
+        }
+
     # ------------------------------------------------------------------
     # TTS backend factory
     # ------------------------------------------------------------------
@@ -215,23 +232,82 @@ class PipelineController:
                 return
 
         logger.info(f"Parsing dialogue for {len(self.translated_chapters)} chapters...")
-        parser = DialogueParser()
+        parser = DialogueParser(
+            ollama_url=self.settings.get("ollama_url", ""),
+            model=self.settings.get("ollama_model", ""),
+        )
+
+        known_characters = self.settings.get("character_db", []) or []
+        known_names = {
+            self._normalize_name(item.get("name", ""))
+            for item in known_characters
+            if item.get("name")
+        }
+        pending = self.settings.get("pending_character_additions", []) or []
+        pending_names = {
+            self._normalize_name(item.get("name", ""))
+            for item in pending
+            if item.get("name")
+        }
+        threshold = float(self.settings.get("character_confidence_threshold", 0.8))
+
+        aggregated: dict[str, dict] = {}
 
         for i, chapter in enumerate(self.translated_chapters):
             chapter_id = f"ch{i:03d}"
             content = chapter.get("content", "")
-            segments = parser.parse(content, chapter_id=chapter_id)
-            self.dialogue_segments[i] = segments
+            parse_result = parser.parse(content, chapter_id=chapter_id)
+            self.dialogue_segments[i] = parse_result.segments
+
+            chapter_info = {
+                "chapter_index": i,
+                "chapter_id": chapter_id,
+                "title": chapter.get("title", f"Chapter {i + 1}"),
+                "segments": [self._segment_to_dict(s) for s in parse_result.segments],
+                "detected_characters": [
+                    {"name": c.name, "gender": c.gender, "confidence": c.confidence}
+                    for c in parse_result.detected_characters
+                ],
+            }
+            aggregated[str(i)] = chapter_info
+            chapter_dir = self.work_dir / chapter_id
+            chapter_dir.mkdir(parents=True, exist_ok=True)
+            with open(chapter_dir / "chapter_info.json", "w", encoding="utf-8") as f:
+                json.dump(chapter_info, f, indent=2, ensure_ascii=False)
+
+            for detected in parse_result.detected_characters:
+                normalized = self._normalize_name(detected.name)
+                if (
+                    normalized
+                    and detected.confidence >= threshold
+                    and normalized not in known_names
+                    and normalized not in pending_names
+                ):
+                    pending.append(
+                        {
+                            "name": detected.name,
+                            "gender": detected.gender,
+                            "confidence": detected.confidence,
+                            "source_chapter": chapter_id,
+                        }
+                    )
+                    pending_names.add(normalized)
 
         # Save segments to disk
         segments_file = self.work_dir / "dialogue_segments.json"
         segments_data = {
-            str(k): [{"text": s.text, "speaker": s.speaker, "kind": s.kind, "paragraph_id": s.paragraph_id}
+            str(k): [self._segment_to_dict(s)
                      for s in v]
             for k, v in self.dialogue_segments.items()
         }
         with open(segments_file, "w", encoding="utf-8") as f:
             json.dump(segments_data, f, indent=2, ensure_ascii=False)
+
+        chapter_info_file = self.work_dir / "chapter_info.json"
+        with open(chapter_info_file, "w", encoding="utf-8") as f:
+            json.dump(aggregated, f, indent=2, ensure_ascii=False)
+
+        self.settings.set("pending_character_additions", pending)
 
         logger.info(f"Dialogue parsing complete.")
 
@@ -245,16 +321,60 @@ class PipelineController:
                     segments_data = json.load(f)
                     from ebook_app.models.dialogue_parser import Segment
                     self.dialogue_segments = {
-                        int(k): [Segment(**s) for s in v]
+                        int(k): [
+                            Segment(
+                                text=s.get("text", ""),
+                                type=s.get("type", s.get("kind", "narration")),
+                                speaker=s.get("speaker", "narrator"),
+                                gender=s.get("gender", "unknown"),
+                                speaker_confidence=float(s.get("speaker_confidence", 0.0)),
+                                gender_confidence=float(s.get("gender_confidence", 0.0)),
+                                character_confidence=float(s.get("character_confidence", 0.0)),
+                                paragraph_id=s.get("paragraph_id", ""),
+                            )
+                            for s in v
+                        ]
                         for k, v in segments_data.items()
                     }
             else:
                 logger.warning("No dialogue segments available.")
                 return
 
+        if not self.settings.get("multispeaker_enabled", False):
+            logger.info("Multispeaker mode disabled; skipping multispeaker_tts step.")
+            return
+
         logger.info("Synthesizing audio with multispeaker TTS...")
-        # TODO: Implement multispeaker synthesis with character voice mappings
-        logger.info("Multispeaker TTS: not yet fully implemented.")
+        engine = self._make_tts_backend(output_dir=str(self.work_dir / "audio"))
+
+        narrator_voice = self.settings.get("narrator_voice", "af_heart")
+        default_male_voice = self.settings.get("default_male_voice", "am_adam")
+        default_female_voice = self.settings.get("default_female_voice", "af_heart")
+
+        voice_mappings = {"narrator": narrator_voice}
+        for item in self.settings.get("character_db", []) or []:
+            name = (item.get("name") or "").strip()
+            voice = (item.get("voice") or "").strip()
+            if name and voice:
+                voice_mappings[name] = voice
+
+        for i, segments in self.dialogue_segments.items():
+            chapter_id = f"ch{i:03d}"
+            output_filename = f"{chapter_id}_audio.wav"
+            try:
+                audio_path = engine.generate_multi_voice_audio(
+                    dialogue_segments=segments,
+                    output_filename=output_filename,
+                    voice_mappings=voice_mappings,
+                    default_male_voice=default_male_voice,
+                    default_female_voice=default_female_voice,
+                    speed=self.settings.tts_speed,
+                )
+                self.audio_files[i] = audio_path
+            except Exception as exc:
+                logger.error("Multispeaker TTS failed for %s: %s", chapter_id, exc)
+
+        logger.info("Multispeaker TTS complete: %d audio files generated.", len(self.audio_files))
 
     def batch_tts(self) -> None:
         """Synthesise audio for narration-only chapters in a single voice."""

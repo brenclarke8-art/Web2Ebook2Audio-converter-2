@@ -130,6 +130,7 @@ class SegmentItem(BaseModel):
     text: str
     speaker: str = "narrator"
     kind: str = "narration"
+    gender: str = "unknown"
     paragraph_id: str = ""
 
 
@@ -137,6 +138,8 @@ class MultiSynthesizeRequest(BaseModel):
     segments: List[SegmentItem]
     output_filename: str
     voice_mappings: Dict[str, str] = {}
+    default_male_voice: str = "am_adam"
+    default_female_voice: str = "af_heart"
     speed: float = 1.0
     lang: str = "a"
     dialogue_pause: float = 0.3
@@ -271,7 +274,15 @@ def synthesize_multi(req: MultiSynthesizeRequest) -> AudioResponse:
                 continue
 
             speaker = segment.speaker or "narrator"
-            voice = voice_mappings.get(speaker, narrator_voice)
+            voice = voice_mappings.get(speaker)
+            if not voice:
+                gender = (segment.gender or "").strip().lower()
+                if gender == "male":
+                    voice = req.default_male_voice or narrator_voice
+                elif gender == "female":
+                    voice = req.default_female_voice or narrator_voice
+                else:
+                    voice = narrator_voice
 
             if previous_speaker is not None and previous_speaker != speaker and all_audio:
                 all_audio.append(silence)

@@ -24,11 +24,18 @@ class SettingsManager(QObject):
         # LLM / translation API connection
         "llm_api_url": "http://localhost:5000/translate",
         "llm_api_key": "",
+        "ollama_url": "http://127.0.0.1:11434/api/generate",
+        "ollama_model": "mistral",
+        "character_confidence_threshold": 0.8,
         # Multi-speaker TTS
         "multispeaker_enabled": False,
         "narrator_voice": "af_heart",
-        # Character database: list of {name, voice, description} dicts
+        "default_male_voice": "am_adam",
+        "default_female_voice": "af_heart",
+        # Character database: list of {name, voice, gender, description} dicts
         "character_db": [],
+        # Suggested entries from parser to review in Settings UI.
+        "pending_character_additions": [],
     }
 
     def __init__(self):
