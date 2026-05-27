@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -36,6 +37,11 @@ def _resolve_model_paths(
     resolved_model = Path(model_path) if model_path else default_model
     resolved_voices = Path(voices_path) if voices_path else default_voices
     return resolved_model, resolved_voices
+
+
+def is_kokoro_onnx_available() -> bool:
+    """Return whether the kokoro_onnx package can be imported."""
+    return find_spec("kokoro_onnx") is not None
 
 
 def download_kokoro_models(
@@ -141,7 +147,8 @@ class TTSEngine:
             from kokoro_onnx import Kokoro  # type: ignore[import]
         except ImportError as exc:
             raise ImportError(
-                "kokoro-onnx is not installed. Run: pip install kokoro-onnx"
+                "kokoro-onnx is not installed. Install with: pip install kokoro-onnx "
+                "or use remote backend in Settings > TTS Backend."
             ) from exc
 
         if not self._model_path.exists():

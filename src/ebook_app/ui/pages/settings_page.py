@@ -24,7 +24,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, download_kokoro_models
+from ebook_app.models.tts_engine_cli import (
+    DEFAULT_MODELS_DIR,
+    download_kokoro_models,
+    is_kokoro_onnx_available,
+)
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.ui.pages._base_page import BasePage
 
@@ -361,18 +365,32 @@ class SettingsPage(BasePage):
         )
         model_ok = model_path.exists()
         voices_ok = voices_path.exists()
+        package_ok = is_kokoro_onnx_available()
         if model_ok and voices_ok:
-            self._model_status_label.setText("✅ Model files found — ready to use.")
-            self._model_status_label.setStyleSheet("color: green;")
+            if package_ok:
+                self._model_status_label.setText("✅ Model files found — ready to use.")
+                self._model_status_label.setStyleSheet("color: green;")
+            else:
+                self._model_status_label.setText(
+                    "⚠ Model files found, but kokoro-onnx is missing. "
+                    "Install local TTS dependencies or use remote backend mode."
+                )
+                self._model_status_label.setStyleSheet("color: orange;")
         else:
             missing = []
             if not model_ok:
                 missing.append("model (.onnx)")
             if not voices_ok:
                 missing.append("voices (.bin)")
-            self._model_status_label.setText(
-                f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
+            dependency_note = (
+                "Also install local TTS dependencies or use remote backend mode."
+                if not package_ok
+                else ""
             )
+            msg = f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
+            if dependency_note:
+                msg = f"{msg} {dependency_note}"
+            self._model_status_label.setText(msg)
             self._model_status_label.setStyleSheet("color: orange;")
 
     def _browse_output_dir(self) -> None:
