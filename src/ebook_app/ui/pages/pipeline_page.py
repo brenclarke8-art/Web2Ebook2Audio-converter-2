@@ -606,7 +606,7 @@ class PipelinePage(BasePage):
             self._detected_char_table.setRowCount(0)
             return
 
-        selected_idx = self._review_chapter_combo.currentData()
+        selected_chapter_idx = self._review_chapter_combo.currentData()
         chapters = self.project_manager.get_chapters() or []
         self._review_chapters = chapters
 
@@ -621,8 +621,8 @@ class PipelinePage(BasePage):
             self._review_text_view.setPlainText("No scraped chapters found yet.")
         else:
             index_to_use = 0
-            if isinstance(selected_idx, int):
-                found_index = self._review_chapter_combo.findData(selected_idx)
+            if isinstance(selected_chapter_idx, int):
+                found_index = self._review_chapter_combo.findData(selected_chapter_idx)
                 if found_index >= 0:
                     index_to_use = found_index
             self._review_chapter_combo.setCurrentIndex(index_to_use)
@@ -664,7 +664,10 @@ class PipelinePage(BasePage):
                                     if not name:
                                         continue
                                     key = name.lower()
-                                    confidence = float(char.get("confidence", 0.0))
+                                    try:
+                                        confidence = float(char.get("confidence", 0.0))
+                                    except (TypeError, ValueError):
+                                        confidence = 0.0
                                     existing = aggregated.get(key)
                                     if existing is None:
                                         aggregated[key] = {
@@ -701,7 +704,7 @@ class PipelinePage(BasePage):
                 }
 
         self._detected_char_table.setRowCount(0)
-        for item in sorted(aggregated.values(), key=lambda val: str(val["name"]).lower()):
+        for item in sorted(aggregated.values(), key=lambda val: val["name"].lower()):
             sources = sorted(item["sources"])
             self._insert_detected_character_row(
                 name=str(item["name"]),
