@@ -125,12 +125,69 @@ class _ServiceHealthThread(QThread):
         self.result.emit(client.health())
 
 
+class _LlmHealthThread(QThread):
+    result = Signal(dict)
+
+    def __init__(self, ollama_url: str, model: str, parent=None):
+        super().__init__(parent)
+        self._ollama_url = ollama_url.strip()
+        self._model = model.strip()
+
+    def run(self) -> None:
+        from urllib.parse import urlparse, urlunparse
+        import requests
+
+        try:
+            parsed = urlparse(self._ollama_url)
+            if not parsed.scheme or not parsed.netloc:
+                self.result.emit(
+                    {
+                        "status": "unreachable",
+                        "detail": "Invalid Ollama URL.",
+                        "ollama_url": self._ollama_url,
+                    }
+                )
+                return
+
+            tags_url = urlunparse((parsed.scheme, parsed.netloc, "/api/tags", "", "", ""))
+            response = requests.get(tags_url, timeout=8)
+            response.raise_for_status()
+            data = response.json()
+            models = data.get("models", []) if isinstance(data, dict) else []
+            model_names = {
+                str(model.get("name", "")).split(":", 1)[0]
+                for model in models
+                if isinstance(model, dict)
+            }
+            selected_model = self._model.split(":", 1)[0] if self._model else ""
+            model_found = (not selected_model) or (selected_model in model_names)
+            self.result.emit(
+                {
+                    "status": "ok",
+                    "detail": "",
+                    "ollama_url": self._ollama_url,
+                    "tags_url": tags_url,
+                    "model": self._model,
+                    "model_found": model_found,
+                }
+            )
+        except Exception as exc:
+            self.result.emit(
+                {
+                    "status": "unreachable",
+                    "detail": str(exc),
+                    "ollama_url": self._ollama_url,
+                }
+            )
+
+
 class SettingsPage(BasePage):
     """Page for viewing and editing all persisted application settings."""
 
     def __init__(self, **kwargs) -> None:
         self._download_thread: _DownloadThread | None = None
         self._svc_health_thread: _ServiceHealthThread | None = None
+        self._llm_health_thread: _LlmHealthThread | None = None
         self._start_check_timer: QTimer | None = None
         super().__init__(**kwargs)
 
@@ -290,6 +347,23 @@ class SettingsPage(BasePage):
         key_note = QLabel("<i>⚠ API key is stored in plain text in your settings file.</i>")
         key_note.setWordWrap(True)
         llm_form.addRow("", key_note)
+
+        llm_status_row = QHBoxLayout()
+        self._llm_status_label = QLabel()
+        self._llm_status_label.setText("ℹ️ Local LLM connection not checked yet.")
+        self._llm_status_label.setStyleSheet("color: steelblue;")
+        llm_status_row.addWidget(self._llm_status_label)
+        llm_status_row.addStretch()
+        self._check_llm_btn = QPushButton("Check Local LLM")
+        self._check_llm_btn.clicked.connect(self._on_check_llm_connection)
+        llm_status_row.addWidget(self._check_llm_btn)
+        llm_form.addRow("", llm_status_row)
+
+        self._llm_troubleshoot_label = QLabel()
+        self._llm_troubleshoot_label.setWordWrap(True)
+        self._llm_troubleshoot_label.setStyleSheet("color: orange;")
+        self._llm_troubleshoot_label.hide()
+        llm_form.addRow("", self._llm_troubleshoot_label)
 
         inner.addWidget(llm_group)
 
@@ -785,3 +859,58 @@ class SettingsPage(BasePage):
         self._download_btn.setEnabled(True)
         self._refresh_model_status()
         self.log.log(f"Model download failed: {error}", level="ERROR")
+
+    def _on_check_llm_connection(self) -> None:
+        if self._llm_health_thread and self._llm_health_thread.isRunning():
+            return
+        if self._llm_health_thread is not None:
+            try:
+                self._llm_health_thread.result.disconnect(self._on_llm_health_result)
+            except RuntimeError:
+                pass
+            self._llm_health_thread.deleteLater()
+        ollama_url = self._ollama_url_input.text().strip()
+        model = self._ollama_model_input.text().strip()
+        self._llm_status_label.setText("⏳ Checking local LLM connection…")
+        self._llm_status_label.setStyleSheet("")
+        self._llm_troubleshoot_label.hide()
+        self._llm_health_thread = _LlmHealthThread(ollama_url, model, parent=self)
+        self._llm_health_thread.result.connect(self._on_llm_health_result)
+        self._llm_health_thread.start()
+
+    def _on_llm_health_result(self, result: dict) -> None:
+        if result.get("status") == "ok":
+            if result.get("model_found", True):
+                self._llm_status_label.setText("✅ Local LLM reachable and selected model is available.")
+                self._llm_status_label.setStyleSheet("color: green;")
+            else:
+                model = result.get("model", "").strip() or "(blank)"
+                self._llm_status_label.setText(
+                    f"⚠ Local LLM reachable, but model '{model}' was not found."
+                )
+                self._llm_status_label.setStyleSheet("color: orange;")
+            self._llm_troubleshoot_label.hide()
+            return
+
+        self._llm_status_label.setText("🔴 Could not connect to local LLM.")
+        self._llm_status_label.setStyleSheet("color: red;")
+        self._llm_troubleshoot_label.setText(
+            self._build_llm_troubleshoot_text(
+                result.get("ollama_url", "").strip(),
+                result.get("detail", "").strip(),
+            )
+        )
+        self._llm_troubleshoot_label.show()
+
+    @staticmethod
+    def _build_llm_troubleshoot_text(ollama_url: str, detail: str) -> str:
+        target = ollama_url or "the configured Ollama URL"
+        detail_line = f"Details: {detail}" if detail else "Details: Connection failed."
+        return (
+            f"Troubleshooting for {target}:\n"
+            "1) Confirm your local LLM service is running (for Ollama: `ollama serve`).\n"
+            "2) Check that the URL is correct and reachable from this machine.\n"
+            "3) Verify the selected model is installed (for Ollama: `ollama list`).\n"
+            "4) If it still fails, check firewall/proxy settings and retry.\n"
+            f"{detail_line}"
+        )
