@@ -11,7 +11,7 @@ import logging
 import re
 import time
 from typing import Dict, List, Optional, Tuple, Union
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -202,6 +202,9 @@ class BrowserScraper:
         timeout_ms: int = 30000,
         wait_for_js: bool = True,
         remove_overlays: bool = True,
+        manual_navigation: bool = False,
+        manual_navigation_timeout_sec: int = 120,
+        browser_channel: Optional[str] = None,
     ):
         if not PLAYWRIGHT_AVAILABLE:
             raise RuntimeError("Playwright is not installed — BrowserScraper unavailable")
@@ -209,14 +212,28 @@ class BrowserScraper:
         self.timeout_ms = timeout_ms
         self.wait_for_js = wait_for_js
         self.remove_overlays = remove_overlays
+        self.manual_navigation = manual_navigation
+        self.manual_navigation_timeout_sec = max(1, int(manual_navigation_timeout_sec))
+        self.browser_channel = browser_channel or None
 
         self._playwright = None
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
+        self.last_page_url: Optional[str] = None
 
     def __enter__(self):
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self.headless)
+        logger.debug(
+            "Launching browser headless=%s channel=%s timeout_ms=%d manual_navigation=%s",
+            self.headless,
+            self.browser_channel or "chromium-default",
+            self.timeout_ms,
+            self.manual_navigation,
+        )
+        launch_kwargs = {"headless": self.headless}
+        if self.browser_channel:
+            launch_kwargs["channel"] = self.browser_channel
+        self._browser = self._playwright.chromium.launch(**launch_kwargs)
         self._context = self._browser.new_context()
         return self
 
@@ -257,8 +274,21 @@ class BrowserScraper:
         """
         try:
             page.evaluate(overlay_script)
+            logger.debug("Overlay cleanup script executed for page=%s", page.url)
         except Exception as exc:
             logger.warning(f"Failed to remove overlays: {exc}")
+
+    def _await_manual_navigation(self, page: Page, url: str) -> None:
+        if not self.manual_navigation or self.headless:
+            return
+        logger.info(
+            "Manual browser mode active for %s. Navigate/login/dismiss popups, then wait %d seconds for capture.",
+            url,
+            self.manual_navigation_timeout_sec,
+        )
+        page.bring_to_front()
+        page.wait_for_timeout(self.manual_navigation_timeout_sec * 1000)
+        logger.info("Manual navigation window finished; capturing current page at %s", page.url)
 
     def extract_visual_text(
         self,
@@ -277,13 +307,18 @@ class BrowserScraper:
         url: str,
         *,
         visual_order_params: Optional[Dict] = None,
+        manual_navigation: Optional[bool] = None,
     ) -> Union[str, Tuple[str, List[Dict[str, Union[str, int]]]]]:
         if not self._context:
             raise RuntimeError("BrowserScraper context is not initialized")
 
         page = self._context.new_page()
         try:
+            logger.debug("Navigating browser page to %s", url)
             page.goto(url, timeout=self.timeout_ms, wait_until="domcontentloaded")
+            effective_manual_navigation = self.manual_navigation if manual_navigation is None else manual_navigation
+            if effective_manual_navigation and not self.headless:
+                self._await_manual_navigation(page, url)
             if self.wait_for_js:
                 try:
                     page.wait_for_load_state("load", timeout=self.timeout_ms)
@@ -294,6 +329,8 @@ class BrowserScraper:
             if self.remove_overlays:
                 self._remove_overlays(page)
 
+            self.last_page_url = page.url
+            logger.debug("Captured HTML from %s (requested=%s)", self.last_page_url, url)
             html = page.content()
 
             if visual_order_params is not None:
@@ -315,6 +352,7 @@ class WebScraper:
     """
 
     _CSS_ORDER_SCALE_FACTOR = 100
+    _MAX_NUMERIC_PAGE_DIGITS = 4
 
     def __init__(
         self,
@@ -324,6 +362,11 @@ class WebScraper:
         remove_overlays: bool = True,
         browser_timeout: int = 30,
         exclude_selectors: Optional[List[str]] = None,
+        browser_headless: bool = True,
+        manual_navigation: bool = False,
+        manual_navigation_timeout_sec: int = 120,
+        max_index_pages: int = 50,
+        browser_channel: Optional[str] = None,
     ):
         if not PLAYWRIGHT_AVAILABLE:
             raise ImportError(
@@ -338,12 +381,64 @@ class WebScraper:
         self.wait_for_js = wait_for_js
         self.remove_overlays = remove_overlays
         self.browser_timeout = browser_timeout
+        self.browser_headless = browser_headless
+        self.manual_navigation = manual_navigation
+        self.manual_navigation_timeout_sec = max(1, int(manual_navigation_timeout_sec))
+        self.max_index_pages = max(1, int(max_index_pages))
+        self.browser_channel = browser_channel or None
         self.chapters: List[Dict[str, str]] = []
+        self._pagination_keywords = {
+            "next",
+            "siguiente",
+            "suivant",
+            "continue",
+            "older",
+            "more",
+            "page",
+            "pages",
+            ">>",
+            "›",
+            "»",
+        }
+
+        logger.debug(
+            "WebScraper initialized headless=%s manual_navigation=%s timeout=%ss max_index_pages=%d selectors=%d exclude=%d",
+            self.browser_headless,
+            self.manual_navigation,
+            self.browser_timeout,
+            self.max_index_pages,
+            len(self.css_selectors),
+            len(self.exclude_selectors),
+        )
 
     def scrape_chapters(self, urls: List[str]) -> List[Dict[str, str]]:
         return self._scrape_chapters_browser(urls)
 
+    @staticmethod
+    def _canonicalize_url(url: str) -> str:
+        parsed = urlparse(url)
+        normalized_path = parsed.path
+        if normalized_path and normalized_path != "/":
+            normalized_path = normalized_path.rstrip("/")
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                normalized_path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
     def scrape_index_page(self, index_url: str, max_pages: int = 50) -> List[str]:
+        effective_max_pages = max_pages if max_pages > 0 else self.max_index_pages
+        logger.info(
+            "Scraping index pages from %s with max_pages=%d manual_navigation=%s",
+            index_url,
+            effective_max_pages,
+            self.manual_navigation,
+        )
         parsed_index = urlparse(index_url)
         base_url = f"{parsed_index.scheme}://{parsed_index.netloc}"
         host = parsed_index.netloc
@@ -351,43 +446,66 @@ class WebScraper:
         chapter_urls: List[str] = []
         seen_chapters: set[str] = set()
         seen_index_pages: set[str] = set()
-        pages_to_visit = [index_url]
+        pages_to_visit = [self._canonicalize_url(index_url)]
 
         with BrowserScraper(
-            headless=True,
+            headless=self.browser_headless,
             timeout_ms=self.browser_timeout * 1000,
             wait_for_js=self.wait_for_js,
             remove_overlays=self.remove_overlays,
+            manual_navigation=self.manual_navigation,
+            manual_navigation_timeout_sec=self.manual_navigation_timeout_sec,
+            browser_channel=self.browser_channel,
         ) as browser:
             page_count = 0
-            while pages_to_visit and page_count < max_pages:
-                current_page_url = pages_to_visit.pop(0)
+            while pages_to_visit and page_count < effective_max_pages:
+                current_page_url = self._canonicalize_url(pages_to_visit.pop(0))
                 if current_page_url in seen_index_pages:
                     continue
 
                 seen_index_pages.add(current_page_url)
                 page_count += 1
 
-                html = browser.scrape_page(current_page_url)
+                logger.debug(
+                    "Index crawl page %d/%d queued=%d url=%s",
+                    page_count,
+                    effective_max_pages,
+                    len(pages_to_visit),
+                    current_page_url,
+                )
+                html = browser.scrape_page(
+                    current_page_url,
+                    manual_navigation=self.manual_navigation and page_count == 1,
+                )
+                resolved_url = browser.last_page_url or current_page_url
                 soup = BeautifulSoup(html, "html.parser")
 
                 page_chapters, next_page_links = self._extract_chapter_and_pagination_links(
                     soup,
-                    current_page_url,
+                    resolved_url,
                     base_url,
                     host,
                     parsed_index.path,
                 )
+                logger.debug(
+                    "Parsed index page=%s found_chapters=%d next_pages=%d",
+                    resolved_url,
+                    len(page_chapters),
+                    len(next_page_links),
+                )
 
                 for ch in page_chapters:
-                    if ch not in seen_chapters:
-                        seen_chapters.add(ch)
+                    canonical_ch = self._canonicalize_url(ch)
+                    if canonical_ch not in seen_chapters:
+                        seen_chapters.add(canonical_ch)
                         chapter_urls.append(ch)
 
                 for next_link in next_page_links:
-                    if next_link not in seen_index_pages and next_link not in pages_to_visit:
-                        pages_to_visit.append(next_link)
+                    canonical_next = self._canonicalize_url(next_link)
+                    if canonical_next not in seen_index_pages and canonical_next not in pages_to_visit:
+                        pages_to_visit.append(canonical_next)
 
+        logger.info("Index scraping complete: discovered %d unique chapter URLs.", len(chapter_urls))
         return chapter_urls
 
     def _extract_chapter_and_pagination_links(
@@ -404,6 +522,7 @@ class WebScraper:
         current_parsed = urlparse(current_url)
         index_path_clean = index_path.rstrip("/")
 
+        logger.debug("Extracting chapter and pagination links from %s", current_url)
         for a_tag in soup.find_all("a", href=True):
             href = a_tag["href"].strip()
             if not href or href.startswith("#") or href.startswith("javascript:"):
@@ -422,10 +541,13 @@ class WebScraper:
             link_path = urlparse(href).path.lower()
             link_text = a_tag.get_text(strip=True).lower()
 
+            numeric_page_pattern = rf"\d{{1,{self._MAX_NUMERIC_PAGE_DIGITS}}}"
+            is_numeric_page_link = bool(re.fullmatch(numeric_page_pattern, link_text))
             is_pagination = (
-                any(k in link_text for k in ["next", "siguiente", "»", ">", "page"])
+                any(k in link_text for k in self._pagination_keywords)
                 or re.search(r"[?&](page|p)=\d+", href.lower())
                 or re.search(r"/(page|p)/\d+", link_path)
+                or is_numeric_page_link
             )
 
             is_chapter_path = "chapter" in link_path
@@ -443,20 +565,29 @@ class WebScraper:
         return chapter_urls, pagination_urls
 
     def _scrape_chapters_browser(self, urls: List[str]) -> List[Dict[str, str]]:
+        logger.info("Scraping %d chapter pages with browser.", len(urls))
+        self.chapters = []
         with BrowserScraper(
-            headless=True,
+            headless=self.browser_headless,
             timeout_ms=self.browser_timeout * 1000,
             wait_for_js=self.wait_for_js,
             remove_overlays=self.remove_overlays,
+            manual_navigation=self.manual_navigation,
+            manual_navigation_timeout_sec=self.manual_navigation_timeout_sec,
+            browser_channel=self.browser_channel,
         ) as browser:
-            for url in urls:
+            total = len(urls)
+            for idx, url in enumerate(urls, start=1):
                 try:
+                    logger.debug("Scraping chapter %d/%d: %s", idx, total, url)
                     self.chapters.append(self._scrape_single_browser(url, browser))
                 except Exception as exc:
                     logger.error(f"Error scraping {url}: {exc}")
+        logger.info("Chapter scraping complete: %d successful pages.", len(self.chapters))
         return self.chapters
 
     def _scrape_single_browser(self, url: str, browser: BrowserScraper) -> Dict[str, str]:
+        logger.debug("Extracting chapter content from %s (visual_order=%s)", url, self.use_visual_order)
         if self.use_visual_order:
             visual_params = {
                 "css_selectors": self.css_selectors,
