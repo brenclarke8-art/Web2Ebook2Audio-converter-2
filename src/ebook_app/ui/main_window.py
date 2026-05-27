@@ -40,11 +40,16 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         layout.addWidget(self.pages)
 
+        # Logging console dock (must be created before pages so it can be passed in)
+        self.log_console = LogConsole(self)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.log_console)
+
         # Add pages
-        self.scraper_page = ScraperPage()
-        self.translator_page = TranslatorPage()
-        self.tts_page = TTSPage()
-        self.settings_page = SettingsPage()
+        _page_kwargs = {"settings": self.settings, "log": self.log_console}
+        self.scraper_page = ScraperPage(**_page_kwargs)
+        self.translator_page = TranslatorPage(**_page_kwargs)
+        self.tts_page = TTSPage(**_page_kwargs)
+        self.settings_page = SettingsPage(**_page_kwargs)
 
         self.pages.addWidget(self.scraper_page)
         self.pages.addWidget(self.translator_page)
@@ -54,14 +59,10 @@ class MainWindow(QMainWindow):
         # Connect nav buttons
         self.navbar.navigate.connect(self.pages.setCurrentIndex)
 
-        # Logging console dock
-        self.log_console = LogConsole(self)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.log_console)
-
-        self.pipeline_page = PipelinePage()
+        self.pipeline_page = PipelinePage(**_page_kwargs)
         self.pages.addWidget(self.pipeline_page)
 
-        self.chapter_preview_page = ChapterPreviewPage()
+        self.chapter_preview_page = ChapterPreviewPage(**_page_kwargs)
         self.pages.addWidget(self.chapter_preview_page)
 
     def log(self, msg: str):
