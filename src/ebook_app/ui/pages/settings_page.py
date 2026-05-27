@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -210,6 +208,10 @@ class SettingsPage(BasePage):
         self._llm_key_show_btn.toggled.connect(self._on_toggle_api_key_visibility)
         llm_key_row.addWidget(self._llm_key_show_btn)
         llm_form.addRow("API Key:", llm_key_row)
+
+        key_note = QLabel("<i>⚠ API key is stored in plain text in your settings file.</i>")
+        key_note.setWordWrap(True)
+        llm_form.addRow("", key_note)
 
         inner.addWidget(llm_group)
 
