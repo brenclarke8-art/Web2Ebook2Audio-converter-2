@@ -14,12 +14,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ebook_app.models.tts_engine_cli import (
-    DEFAULT_MODELS_DIR,
-    TTSEngine,
-    _resolve_model_paths,
-    is_kokoro_onnx_available,
-)
 from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG
 from ebook_app.ui.pages._base_page import BasePage
 
@@ -42,24 +36,15 @@ class _PreviewThread(QThread):
 
     def run(self) -> None:
         try:
-            mode = self._settings.get("tts_backend_mode", "local")
-            if mode == "remote":
-                from ebook_app.services.tts_client import TTSClient
+            from ebook_app.services.tts_client import TTSClient
 
-                client = TTSClient(
-                    output_dir=self._settings.output_dir,
-                    base_url=self._settings.get(
-                        "tts_backend_url", _DEFAULT_TTS_SERVICE_URL
-                    ),
-                )
-                path = client.generate_preview(voice=self._voice, speed=self._speed)
-            else:
-                engine = TTSEngine(
-                    output_dir=self._settings.output_dir,
-                    model_path=self._settings.get("kokoro_model_path") or None,
-                    voices_path=self._settings.get("kokoro_voices_path") or None,
-                )
-                path = engine.generate_preview(voice=self._voice, speed=self._speed)
+            client = TTSClient(
+                output_dir=self._settings.output_dir,
+                base_url=self._settings.get(
+                    "tts_backend_url", _DEFAULT_TTS_SERVICE_URL
+                ),
+            )
+            path = client.generate_preview(voice=self._voice, speed=self._speed)
             self.preview_ready.emit(str(path))
         except Exception as exc:
             self.error.emit(str(exc))
@@ -147,45 +132,21 @@ class TTSPage(BasePage):
     # ------------------------------------------------------------------
 
     def _refresh_status(self) -> None:
-        mode = self.settings.get("tts_backend_mode", "local")
-
-        if mode == "remote":
-            self._status_label.setText("⏳ Checking TTS service…")
-            self._status_label.setStyleSheet("")
-            url = self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL)
-            if self._health_thread and self._health_thread.isRunning():
-                return
-            # Discard old thread before creating a new one to avoid signal leaks.
-            if self._health_thread is not None:
-                try:
-                    self._health_thread.result.disconnect(self._on_health_result)
-                except RuntimeError:
-                    pass
-                self._health_thread.deleteLater()
-            self._health_thread = _HealthCheckThread(url, parent=self)
-            self._health_thread.result.connect(self._on_health_result)
-            self._health_thread.start()
-        else:
-            # Local mode — check model files on disk
-            model_path, voices_path = _resolve_model_paths(
-                self.settings.get("kokoro_model_path") or None,
-                self.settings.get("kokoro_voices_path") or None,
-            )
-            package_ok = is_kokoro_onnx_available()
-            if model_path.exists() and voices_path.exists() and package_ok:
-                self._status_label.setText("✅ Local TTS ready (models + kokoro-onnx).")
-                self._status_label.setStyleSheet("color: green;")
-            elif model_path.exists() and voices_path.exists():
-                self._status_label.setText(
-                    "⚠ Models are ready, but kokoro-onnx is missing. Install it, "
-                    "or switch Settings > TTS Backend to remote mode."
-                )
-                self._status_label.setStyleSheet("color: orange;")
-            else:
-                self._status_label.setText(
-                    "⚠ Kokoro models not found. Go to Settings → Download Models."
-                )
-                self._status_label.setStyleSheet("color: orange;")
+        self._status_label.setText("⏳ Checking TTS service…")
+        self._status_label.setStyleSheet("")
+        url = self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL)
+        if self._health_thread and self._health_thread.isRunning():
+            return
+        # Discard old thread before creating a new one to avoid signal leaks.
+        if self._health_thread is not None:
+            try:
+                self._health_thread.result.disconnect(self._on_health_result)
+            except RuntimeError:
+                pass
+            self._health_thread.deleteLater()
+        self._health_thread = _HealthCheckThread(url, parent=self)
+        self._health_thread.result.connect(self._on_health_result)
+        self._health_thread.start()
 
     def _on_health_result(self, health: dict) -> None:
         status = health.get("status", "unknown")
@@ -237,9 +198,8 @@ class TTSPage(BasePage):
         self._save_voice_settings()
         voice = self._voice_combo.currentText()
         speed = self._speed_spin.value()
-        mode = self.settings.get("tts_backend_mode", "local")
         self.log.log(
-            f"Generating preview for voice '{voice}' ({'remote' if mode == 'remote' else 'local'})…",
+            f"Generating preview for voice '{voice}' (remote)…",
             level="INFO",
         )
         self._tts_preview_btn.setEnabled(False)

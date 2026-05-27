@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
 from ebook_app.models.tts_engine_cli import (
     DEFAULT_MODELS_DIR,
     download_kokoro_models,
-    is_kokoro_onnx_available,
 )
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.ui.pages._base_page import BasePage
@@ -108,12 +107,8 @@ class SettingsPage(BasePage):
         backend_vbox = QVBoxLayout(backend_group)
         backend_form = QFormLayout()
 
-        self._backend_mode_combo = QComboBox()
-        self._backend_mode_combo.addItems(["local", "remote"])
-        current_mode = self.settings.get("tts_backend_mode", "local")
-        self._backend_mode_combo.setCurrentText(current_mode)
-        self._backend_mode_combo.currentTextChanged.connect(self._on_backend_mode_changed)
-        backend_form.addRow("Backend mode:", self._backend_mode_combo)
+        self._backend_mode_label = QLabel("remote (fixed)")
+        backend_form.addRow("Backend mode:", self._backend_mode_label)
 
         self._backend_url_input = QLineEdit(
             str(self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL))
@@ -140,17 +135,16 @@ class SettingsPage(BasePage):
         backend_vbox.addLayout(svc_status_row)
 
         mode_note = QLabel(
-            "<i>local</i>: imports kokoro-onnx directly (requires Python env with kokoro-onnx)<br>"
-            "<i>remote</i>: calls tts_service/tts_server.py over HTTP (allows separate Python env)"
+            "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
+            "Use Python 3.10 for GUI and run the TTS service in Python 3.14."
         )
         mode_note.setWordWrap(True)
         backend_vbox.addWidget(mode_note)
 
         inner.addWidget(backend_group)
-        self._on_backend_mode_changed(current_mode)  # set initial enabled state
 
         # ── Kokoro ONNX Models ─────────────────────────────────────────
-        model_group = QGroupBox("Kokoro ONNX Models (local mode)")
+        model_group = QGroupBox("Kokoro ONNX Models (for backend service)")
         model_vbox = QVBoxLayout(model_group)
 
         model_form = QFormLayout()
@@ -350,13 +344,6 @@ class SettingsPage(BasePage):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _on_backend_mode_changed(self, mode: str) -> None:
-        is_remote = mode == "remote"
-        self._backend_url_input.setEnabled(is_remote)
-        self._check_svc_btn.setEnabled(is_remote)
-        if not is_remote:
-            self._svc_status_label.setText("")
-
     def _refresh_model_status(self) -> None:
         from ebook_app.models.tts_engine_cli import _resolve_model_paths
         model_path, voices_path = _resolve_model_paths(
@@ -365,31 +352,18 @@ class SettingsPage(BasePage):
         )
         model_ok = model_path.exists()
         voices_ok = voices_path.exists()
-        package_ok = is_kokoro_onnx_available()
         if model_ok and voices_ok:
-            if package_ok:
-                self._model_status_label.setText("✅ Model files found — ready to use.")
-                self._model_status_label.setStyleSheet("color: green;")
-            else:
-                self._model_status_label.setText(
-                    "⚠ Model files found, but kokoro-onnx is missing. "
-                    "Install local TTS dependencies or use remote backend mode."
-                )
-                self._model_status_label.setStyleSheet("color: orange;")
+            self._model_status_label.setText(
+                "✅ Model files found for the remote TTS backend service."
+            )
+            self._model_status_label.setStyleSheet("color: green;")
         else:
             missing = []
             if not model_ok:
                 missing.append("model (.onnx)")
             if not voices_ok:
                 missing.append("voices (.bin)")
-            dependency_note = (
-                "Also install local TTS dependencies or use remote backend mode."
-                if not package_ok
-                else ""
-            )
             msg = f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
-            if dependency_note:
-                msg = f"{msg} {dependency_note}"
             self._model_status_label.setText(msg)
             self._model_status_label.setStyleSheet("color: orange;")
 
@@ -538,7 +512,7 @@ class SettingsPage(BasePage):
 
     def _on_save(self) -> None:
         self.settings.set("output_dir", self._output_dir_input.text().strip())
-        self.settings.set("tts_backend_mode", self._backend_mode_combo.currentText())
+        self.settings.set("tts_backend_mode", "remote")
         self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
         self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
         self.settings.set("kokoro_model_path", self._model_path_input.text().strip())

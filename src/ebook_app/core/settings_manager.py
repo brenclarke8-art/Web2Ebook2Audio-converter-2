@@ -1,7 +1,31 @@
 from __future__ import annotations
+import os
 import json
+import logging
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
+
+
+def _default_app_home() -> Path:
+    """Resolve repository-local runtime home (overridable via env var)."""
+    env_home = os.environ.get("EBOOK_AUDIO_STUDIO_HOME")
+    if env_home:
+        return Path(env_home).expanduser().resolve()
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists() and (parent / "src" / "ebook_app").exists():
+            return parent / ".ebook_audio_studio"
+    logger.warning(
+        "Repository root could not be detected from %s; falling back to current working directory.",
+        here,
+    )
+    return (Path.cwd() / ".ebook_audio_studio").resolve()
+
+
+APP_HOME_DIR = _default_app_home().resolve()
+DEFAULT_SETTINGS_PATH = APP_HOME_DIR / "settings.json"
 
 
 class SettingsManager(QObject):
@@ -12,13 +36,12 @@ class SettingsManager(QObject):
         "tts_speed": 1.0,
         "kokoro_model_path": "",
         "kokoro_voices_path": "",
-        "output_dir": "output",
+        "output_dir": str(APP_HOME_DIR.parent / "output"),
         "theme": "dark",
         "window_width": 1200,
         "window_height": 800,
-        # TTS backend: "local" uses kokoro-onnx directly; "remote" calls the
-        # standalone tts_service/tts_server.py via HTTP.
-        "tts_backend_mode": "local",
+        # TTS backend is remote-only: GUI calls tts_service/tts_server.py via HTTP.
+        "tts_backend_mode": "remote",
         "tts_backend_url": "http://127.0.0.1:5005",
         "tts_autostart_service": False,
         # LLM / translation API connection
@@ -43,7 +66,8 @@ class SettingsManager(QObject):
 
     def __init__(self):
         super().__init__()
-        self.path = Path.home() / ".ebook_audio_studio_settings.json"
+        APP_HOME_DIR.mkdir(parents=True, exist_ok=True)
+        self.path = DEFAULT_SETTINGS_PATH
         self.data = {}
         # Backward-compatible aliases
         self.settings_path = self.path
@@ -70,6 +94,14 @@ class SettingsManager(QObject):
             if key not in self.data:
                 self.data[key] = value
                 changed = True
+        if self.data.get("tts_backend_mode") != "remote":
+            if "tts_backend_mode" in self.data:
+                logger.info(
+                    "Overriding tts_backend_mode=%r to 'remote' (remote-only mode).",
+                    self.data.get("tts_backend_mode"),
+                )
+            self.data["tts_backend_mode"] = "remote"
+            changed = True
 
         self._settings = self.data
         if changed:

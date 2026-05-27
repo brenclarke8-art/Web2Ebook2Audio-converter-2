@@ -16,7 +16,7 @@ The server writes every generated WAV file to a server-managed output
 directory.  The directory is determined by (in order of precedence):
 
 1. The ``TTS_OUTPUT_DIR`` environment variable.
-2. The ``./output`` subdirectory of the server's working directory.
+2. The ``<repo>/output`` directory.
 
 Clients receive the absolute path of the written file in every response and
 are responsible for moving or copying it to their own desired location if
@@ -54,7 +54,14 @@ from pydantic import BaseModel
 # Model directory — mirrors the main app default
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODELS_DIR = Path.home() / ".ebook_audio_studio" / "models"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# EBOOK_AUDIO_STUDIO_HOME may be absolute, relative, or include "~";
+# it is normalized with expanduser()+resolve() below.
+APP_HOME_DIR = Path(
+    os.environ.get("EBOOK_AUDIO_STUDIO_HOME", str(REPO_ROOT / ".ebook_audio_studio"))
+).expanduser().resolve()
+DEFAULT_MODELS_DIR = APP_HOME_DIR / "models"
+DEFAULT_OUTPUT_DIR = (REPO_ROOT / "output").resolve()
 _MODEL_FILENAME = "kokoro-v1.0.onnx"
 _VOICES_FILENAME = "voices-v1.0.bin"
 
@@ -76,7 +83,7 @@ def _server_output_dir() -> Path:
     configuration — never by caller-supplied data — to prevent path traversal.
     """
     env_val = os.environ.get("TTS_OUTPUT_DIR")
-    base = Path(env_val).resolve() if env_val else (Path.cwd() / "output").resolve()
+    base = Path(env_val).expanduser().resolve() if env_val else DEFAULT_OUTPUT_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base
 
