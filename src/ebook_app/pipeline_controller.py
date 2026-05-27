@@ -48,6 +48,8 @@ class PipelineController:
         "epub_export",
     ]
 
+    _OLLAMA_TAGS_PATH = "/api/tags"
+
     def __init__(
         self,
         settings: SettingsManager,
@@ -133,7 +135,7 @@ class PipelineController:
                     f"Invalid Ollama URL {parser.ollama_url!r}. "
                     "Update the Ollama URL in Settings."
                 )
-            tags_url = urlunparse((parsed.scheme, parsed.netloc, "/api/tags", "", "", ""))
+            tags_url = urlunparse((parsed.scheme, parsed.netloc, self._OLLAMA_TAGS_PATH, "", "", ""))
             response = requests.get(tags_url, timeout=5)
             response.raise_for_status()
         except RuntimeError:
@@ -161,7 +163,10 @@ class PipelineController:
         except RuntimeError:
             raise
         except Exception:
-            pass  # Non-critical if tags JSON parsing fails; proceed optimistically.
+            logger.debug(
+                "Could not parse Ollama /api/tags response; skipping model presence check.",
+                exc_info=True,
+            )
 
     def _build_scraper(self):
         scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
