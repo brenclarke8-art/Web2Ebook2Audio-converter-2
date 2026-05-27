@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 # Install when running the GUI in local TTS mode (Python 3.10+ compatible).
 local-tts = [
-    "kokoro-onnx>=1.0.0",
+    "kokoro-onnx>=0.4.4,<1.0.0",
     "onnxruntime>=1.17.0",
 ]
 # Full install: GUI + local TTS engine in a single environment.

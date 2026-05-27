@@ -8,5 +8,5 @@ numpy>=1.26.0
 soundfile>=0.12.1
 # Optional — only needed in "local" TTS mode (same Python env as GUI).
 # If using "remote" mode (tts_service/tts_server.py), these are not required here.
-# kokoro-onnx>=1.0.0
+# kokoro-onnx>=0.4.4,<1.0.0
 # onnxruntime>=1.17.0
