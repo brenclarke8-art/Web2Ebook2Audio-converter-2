@@ -38,7 +38,7 @@ Run-Step "Installing GUI dependencies (editable)" {
 
 if ($InstallBrowser) {
     Run-Step "Installing browser scraping extras in GUI venv" {
-        & "$guiVenv\Scripts\python.exe" -m pip install -e "${repoRoot}.[browser]"
+        & "$guiVenv\Scripts\python.exe" -m pip install -e "${repoRoot}[browser]"
     }
     Run-Step "Installing Playwright Chromium in GUI venv" {
         & "$guiVenv\Scripts\python.exe" -m playwright install chromium

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
@@ -121,6 +121,198 @@ class TextCleaner:
         return TextCleaner.normalize_whitespace(
             TextCleaner.remove_zero_width_chars(text)
         )
+
+
+class HttpWebScraper:
+    """Lightweight scraper that uses requests + BeautifulSoup only (no Playwright).
+
+    Works for plain-HTML sites.  Use :class:`WebScraper` instead when the target
+    site requires JavaScript rendering.
+    """
+
+    def __init__(
+        self,
+        css_selectors: Optional[List[str]] = None,
+        exclude_selectors: Optional[List[str]] = None,
+        request_delay: float = 0.5,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        timeout: int = 20,
+        max_index_pages: int = 50,
+    ):
+        self.css_selectors = css_selectors or []
+        self.exclude_selectors = exclude_selectors or []
+        self.request_delay = request_delay
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.timeout = timeout
+        self.max_index_pages = max(1, int(max_index_pages))
+        self._base = BaseScraper(max_retries=max_retries, retry_delay=retry_delay)
+        self._pagination_keywords = {"next", "siguiente", "suivant", "continue",
+                                     "older", "more", "page", "pages", ">>", "›", "»"}
+
+    # ------------------------------------------------------------------
+    # Public API — same shape as WebScraper so ScrapingService can use either
+    # ------------------------------------------------------------------
+
+    def scrape_index_page(
+        self,
+        index_url: str,
+        max_pages: int = 50,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> List[str]:
+        effective_max = max_pages if max_pages > 0 else self.max_index_pages
+        parsed = urlparse(index_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        host = parsed.netloc
+        index_path = parsed.path.rstrip("/")
+
+        chapter_urls: List[str] = []
+        seen_chapters: set = set()
+        seen_index: set = set()
+        queue = [index_url]
+        page_num = 0
+
+        while queue and page_num < effective_max:
+            current = queue.pop(0)
+            canonical = self._canonicalize(current)
+            if canonical in seen_index:
+                continue
+            seen_index.add(canonical)
+            page_num += 1
+
+            if progress_callback:
+                progress_callback(f"Scraping index page {page_num}/{effective_max}: {current}")
+
+            try:
+                html = self._base.fetch(current, timeout=self.timeout)
+            except Exception as exc:
+                logger.warning("Failed to fetch index page %s: %s", current, exc)
+                continue
+
+            soup = BeautifulSoup(html, "html.parser")
+            chapters, next_pages = self._extract_links(soup, current, base_url, host, index_path)
+
+            for ch in chapters:
+                c = self._canonicalize(ch)
+                if c not in seen_chapters:
+                    seen_chapters.add(c)
+                    chapter_urls.append(ch)
+
+            for np in next_pages:
+                c = self._canonicalize(np)
+                if c not in seen_index:
+                    queue.append(np)
+
+            if self.request_delay > 0:
+                time.sleep(self.request_delay)
+
+        logger.info("HTTP index scrape complete: %d chapter URLs discovered.", len(chapter_urls))
+        return chapter_urls
+
+    def scrape_chapters(
+        self,
+        urls: List[str],
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> List[Dict[str, str]]:
+        total = len(urls)
+        results: List[Dict[str, str]] = []
+        for idx, url in enumerate(urls, start=1):
+            if progress_callback:
+                progress_callback(idx, total, url)
+            try:
+                html = self._base.fetch(url, timeout=self.timeout)
+                soup = BeautifulSoup(html, "html.parser")
+                for tag in soup(["script", "style", "nav", "footer"]):
+                    tag.decompose()
+                for sel in self.exclude_selectors:
+                    try:
+                        for el in soup.select(sel):
+                            el.decompose()
+                    except Exception:
+                        pass
+                title = self._detect_title(soup)
+                content = self._extract_content(soup)
+                results.append({"url": url, "title": title,
+                                 "content": TextCleaner.clean_text(content)})
+                logger.debug("HTTP chapter %d/%d OK: %s", idx, total, url)
+            except Exception as exc:
+                logger.error("HTTP chapter fetch failed %s: %s", url, exc)
+                results.append({"url": url, "title": "Failed to scrape", "content": "", "error": str(exc)})
+            if self.request_delay > 0:
+                time.sleep(self.request_delay)
+        return results
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _canonicalize(url: str) -> str:
+        parsed = urlparse(url)
+        path = parsed.path.rstrip("/") or "/"
+        return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params,
+                           parsed.query, parsed.fragment))
+
+    def _extract_links(
+        self,
+        soup: BeautifulSoup,
+        current_url: str,
+        base_url: str,
+        host: str,
+        index_path: str,
+    ) -> Tuple[List[str], List[str]]:
+        chapter_urls: List[str] = []
+        pagination_urls: List[str] = []
+        cur_parsed = urlparse(current_url)
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if not href or href.startswith("#") or href.startswith("javascript:"):
+                continue
+            if href.startswith("//"):
+                href = cur_parsed.scheme + ":" + href
+            elif href.startswith("/"):
+                href = base_url + href
+            elif not href.startswith("http"):
+                href = urljoin(current_url, href)
+            if urlparse(href).netloc != host:
+                continue
+            link_path = urlparse(href).path.lower()
+            link_text = a.get_text(strip=True).lower()
+            is_pag = (any(k in link_text for k in self._pagination_keywords)
+                      or re.search(r"[?&](page|p)=\d+", href.lower())
+                      or re.search(r"/(page|p)/\d+", link_path)
+                      or bool(re.fullmatch(r"\d{1,4}", link_text)))
+            is_ch = "chapter" in link_path or (
+                bool(re.search(r"/\d+/?$", link_path))
+                and link_path.startswith(index_path)
+                and link_path != index_path + "/")
+            if is_pag:
+                pagination_urls.append(href)
+            elif is_ch:
+                chapter_urls.append(href)
+        return chapter_urls, pagination_urls
+
+    def _extract_content(self, soup: BeautifulSoup) -> str:
+        if self.css_selectors:
+            parts = []
+            for sel in self.css_selectors:
+                for el in soup.select(sel):
+                    parts.append(el.get_text(separator="\n", strip=True))
+            if parts:
+                return "\n\n".join(parts)
+        body = soup.find("body") or soup
+        return body.get_text(separator="\n", strip=True)
+
+    @staticmethod
+    def _detect_title(soup: BeautifulSoup) -> str:
+        for tag in ["h1", "h2", "title", "h3"]:
+            el = soup.find(tag)
+            if el:
+                t = el.get_text(strip=True)
+                if t and len(t) < 200:
+                    return t
+        return "Chapter"
 
 
 class BrowserScraper:
@@ -411,8 +603,12 @@ class WebScraper:
             len(self.exclude_selectors),
         )
 
-    def scrape_chapters(self, urls: List[str]) -> List[Dict[str, str]]:
-        return self._scrape_chapters_browser(urls)
+    def scrape_chapters(
+        self,
+        urls: List[str],
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> List[Dict[str, str]]:
+        return self._scrape_chapters_browser(urls, progress_callback=progress_callback)
 
     @staticmethod
     def _canonicalize_url(url: str) -> str:
@@ -431,7 +627,12 @@ class WebScraper:
             )
         )
 
-    def scrape_index_page(self, index_url: str, max_pages: int = 50) -> List[str]:
+    def scrape_index_page(
+        self,
+        index_url: str,
+        max_pages: int = 50,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> List[str]:
         effective_max_pages = max_pages if max_pages > 0 else self.max_index_pages
         logger.info(
             "Scraping index pages from %s with max_pages=%d manual_navigation=%s",
@@ -466,6 +667,10 @@ class WebScraper:
                 seen_index_pages.add(current_page_url)
                 page_count += 1
 
+                if progress_callback:
+                    progress_callback(
+                        f"Scanning index page {page_count}/{effective_max_pages}: {current_page_url}"
+                    )
                 logger.debug(
                     "Index crawl page %d/%d queued=%d url=%s",
                     page_count,
@@ -564,7 +769,11 @@ class WebScraper:
 
         return chapter_urls, pagination_urls
 
-    def _scrape_chapters_browser(self, urls: List[str]) -> List[Dict[str, str]]:
+    def _scrape_chapters_browser(
+        self,
+        urls: List[str],
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> List[Dict[str, str]]:
         logger.info("Scraping %d chapter pages with browser.", len(urls))
         self.chapters = []
         with BrowserScraper(
@@ -578,11 +787,15 @@ class WebScraper:
         ) as browser:
             total = len(urls)
             for idx, url in enumerate(urls, start=1):
+                if progress_callback:
+                    progress_callback(idx, total, url)
                 try:
                     logger.debug("Scraping chapter %d/%d: %s", idx, total, url)
                     self.chapters.append(self._scrape_single_browser(url, browser))
                 except Exception as exc:
                     logger.error(f"Error scraping {url}: {exc}")
+                    self.chapters.append({"url": url, "title": "Failed to scrape",
+                                          "content": "", "error": str(exc)})
         logger.info("Chapter scraping complete: %d successful pages.", len(self.chapters))
         return self.chapters
 

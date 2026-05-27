@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ebook_app.core.settings_manager import APP_HOME_DIR
 from ebook_app.models.tts_engine_cli import (
     DEFAULT_MODELS_DIR,
     download_kokoro_models,
@@ -32,6 +35,60 @@ from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.ui.pages._base_page import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
+
+# ---------------------------------------------------------------------------
+# Resolve TTS service paths from repository layout
+# ---------------------------------------------------------------------------
+_REPO_ROOT = APP_HOME_DIR.parent
+_TTS_SERVICE_DIR = _REPO_ROOT / "tts_service"
+_TTS_VENV_DIR = _TTS_SERVICE_DIR / ".venv_tts"
+if sys.platform == "win32":
+    _TTS_PYTHON = _TTS_VENV_DIR / "Scripts" / "python.exe"
+else:
+    _TTS_PYTHON = _TTS_VENV_DIR / "bin" / "python"
+
+
+class _TtsServiceManager:
+    """Module-level manager for the TTS server subprocess.
+
+    Using class variables means the process outlives individual page instances
+    (the settings page can be destroyed/recreated without killing the server).
+    """
+
+    _process: subprocess.Popen | None = None  # type: ignore[type-arg]
+
+    @classmethod
+    def start(cls, python_exe: Path, server_dir: Path, host: str, port: int) -> str:
+        """Start the TTS uvicorn server.  Returns one of: 'started', 'already_running', 'error:<msg>'."""
+        if cls.is_running():
+            return "already_running"
+        exe = str(python_exe)
+        if not python_exe.exists():
+            return f"error:TTS venv Python not found at {python_exe}"
+        cmd = [exe, "-m", "uvicorn", "tts_server:app", "--host", host, "--port", str(port)]
+        try:
+            cls._process = subprocess.Popen(
+                cmd,
+                cwd=str(server_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            return "started"
+        except Exception as exc:
+            return f"error:{exc}"
+
+    @classmethod
+    def stop(cls) -> None:
+        if cls._process is not None:
+            try:
+                cls._process.terminate()
+            except Exception:
+                pass
+            cls._process = None
+
+    @classmethod
+    def is_running(cls) -> bool:
+        return cls._process is not None and cls._process.poll() is None
 
 
 class _DownloadThread(QThread):
@@ -74,6 +131,7 @@ class SettingsPage(BasePage):
     def __init__(self, **kwargs) -> None:
         self._download_thread: _DownloadThread | None = None
         self._svc_health_thread: _ServiceHealthThread | None = None
+        self._start_check_timer: QTimer | None = None
         super().__init__(**kwargs)
 
     def _build_ui(self) -> None:
@@ -129,10 +187,21 @@ class SettingsPage(BasePage):
         self._svc_status_label = QLabel()
         svc_status_row.addWidget(self._svc_status_label)
         svc_status_row.addStretch()
+        self._start_svc_btn = QPushButton("▶ Start Service")
+        self._start_svc_btn.setToolTip(
+            "Launch the TTS service using the .venv_tts virtual environment"
+        )
+        self._start_svc_btn.clicked.connect(self._on_start_service)
+        svc_status_row.addWidget(self._start_svc_btn)
+        self._stop_svc_btn = QPushButton("■ Stop Service")
+        self._stop_svc_btn.setToolTip("Terminate the running TTS service process")
+        self._stop_svc_btn.clicked.connect(self._on_stop_service)
+        svc_status_row.addWidget(self._stop_svc_btn)
         self._check_svc_btn = QPushButton("Check Service")
         self._check_svc_btn.clicked.connect(self._on_check_service)
         svc_status_row.addWidget(self._check_svc_btn)
         backend_vbox.addLayout(svc_status_row)
+        self._refresh_service_buttons()
 
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
@@ -580,6 +649,58 @@ class SettingsPage(BasePage):
         for row in rows:
             self._pending_table.removeRow(row)
 
+    def _refresh_service_buttons(self) -> None:
+        running = _TtsServiceManager.is_running()
+        self._start_svc_btn.setEnabled(not running)
+        self._stop_svc_btn.setEnabled(running)
+
+    def _on_start_service(self) -> None:
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            host = parsed.hostname or "127.0.0.1"
+            port = parsed.port or 5005
+        except Exception:
+            host, port = "127.0.0.1", 5005
+
+        self._svc_status_label.setText("⏳ Starting TTS service…")
+        self._svc_status_label.setStyleSheet("")
+        self._start_svc_btn.setEnabled(False)
+
+        result = _TtsServiceManager.start(_TTS_PYTHON, _TTS_SERVICE_DIR, host, port)
+        if result == "already_running":
+            self._svc_status_label.setText("ℹ️ Service was already running.")
+            self._svc_status_label.setStyleSheet("color: steelblue;")
+            self._refresh_service_buttons()
+        elif result.startswith("error:"):
+            msg = result[6:]
+            self._svc_status_label.setText(f"🔴 Could not start service: {msg}")
+            self._svc_status_label.setStyleSheet("color: red;")
+            self.log.log(f"TTS service start failed: {msg}", level="ERROR")
+            self._refresh_service_buttons()
+        else:
+            self._svc_status_label.setText("⏳ Service starting — checking health in 3 s…")
+            self.log.log("TTS service process launched.", level="INFO")
+            self._refresh_service_buttons()
+            # Auto-check health after a short delay to let the server come up
+            if self._start_check_timer is not None:
+                self._start_check_timer.stop()
+                self._start_check_timer.deleteLater()
+                self._start_check_timer = None
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._on_check_service)
+            timer.start(3000)
+            self._start_check_timer = timer
+
+    def _on_stop_service(self) -> None:
+        _TtsServiceManager.stop()
+        self._svc_status_label.setText("⬛ Service stopped.")
+        self._svc_status_label.setStyleSheet("color: gray;")
+        self.log.log("TTS service process terminated.", level="INFO")
+        self._refresh_service_buttons()
+
     def _on_check_service(self) -> None:
         if self._svc_health_thread and self._svc_health_thread.isRunning():
             return
@@ -619,6 +740,7 @@ class SettingsPage(BasePage):
                 f"⚠ Service error: {health.get('detail', '')}"
             )
             self._svc_status_label.setStyleSheet("color: orange;")
+        self._refresh_service_buttons()
 
     def _on_download_models(self) -> None:
         if self._download_thread and self._download_thread.isRunning():
