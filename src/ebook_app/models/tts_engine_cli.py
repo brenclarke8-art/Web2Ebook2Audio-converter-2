@@ -68,13 +68,22 @@ def download_kokoro_models(
 
 def _download_file(url: str, dest_path: Path) -> None:
     temp_path = dest_path.with_suffix(f"{dest_path.suffix}.part")
-    with requests.get(url, stream=True, timeout=60) as response:
-        response.raise_for_status()
-        with temp_path.open("wb") as file_handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    file_handle.write(chunk)
-    temp_path.replace(dest_path)
+    try:
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with temp_path.open("wb") as file_handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        file_handle.write(chunk)
+        temp_path.replace(dest_path)
+    except requests.RequestException as exc:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to download model file from {url}: {exc}") from exc
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
 
 
 class TTSEngine:
