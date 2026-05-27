@@ -136,7 +136,7 @@ class _LlmHealthThread(QThread):
 
     @staticmethod
     def _normalize_model_name(model_name: str) -> str:
-        """Normalize Ollama model names by dropping optional variant tags (e.g. ':latest')."""
+        """Normalize Ollama model names by dropping optional suffixes after the first colon."""
         return (model_name or "").split(":", 1)[0].strip()
 
     def run(self) -> None:
@@ -156,14 +156,16 @@ class _LlmHealthThread(QThread):
                 return
 
             tags_url = urlunparse((parsed.scheme, parsed.netloc, "/api/tags", "", "", ""))
-            response = requests.get(tags_url, timeout=8)
+            response = requests.get(tags_url, timeout=5)
             response.raise_for_status()
             data = response.json()
             models = data.get("models", []) if isinstance(data, dict) else []
             model_names = {
-                self._normalize_model_name(str(model.get("name", "")))
+                normalized
                 for model in models
                 if isinstance(model, dict)
+                for normalized in [self._normalize_model_name(str(model.get("name", "")))]
+                if normalized
             }
             selected_model = self._normalize_model_name(self._model)
             model_configured = bool(selected_model)
