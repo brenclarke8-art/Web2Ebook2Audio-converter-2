@@ -28,6 +28,43 @@ _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
 _VOICES = list(KOKORO_VOICE_CATALOG.keys())
 
 
+class _PreviewThread(QThread):
+    """Background thread for generating a voice preview without blocking the GUI."""
+
+    preview_ready = Signal(str)   # absolute path of the generated WAV
+    error = Signal(str)           # error message
+
+    def __init__(self, settings, voice: str, speed: float, parent=None):
+        super().__init__(parent)
+        self._settings = settings
+        self._voice = voice
+        self._speed = speed
+
+    def run(self) -> None:
+        try:
+            mode = self._settings.get("tts_backend_mode", "local")
+            if mode == "remote":
+                from ebook_app.services.tts_client import TTSClient
+
+                client = TTSClient(
+                    output_dir=self._settings.output_dir,
+                    base_url=self._settings.get(
+                        "tts_backend_url", _DEFAULT_TTS_SERVICE_URL
+                    ),
+                )
+                path = client.generate_preview(voice=self._voice, speed=self._speed)
+            else:
+                engine = TTSEngine(
+                    output_dir=self._settings.output_dir,
+                    model_path=self._settings.get("kokoro_model_path") or None,
+                    voices_path=self._settings.get("kokoro_voices_path") or None,
+                )
+                path = engine.generate_preview(voice=self._voice, speed=self._speed)
+            self.preview_ready.emit(str(path))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class _HealthCheckThread(QThread):
     """Background thread to probe the remote TTS service health endpoint."""
 
@@ -49,6 +86,7 @@ class TTSPage(BasePage):
 
     def __init__(self, **kwargs) -> None:
         self._health_thread: _HealthCheckThread | None = None
+        self._preview_thread: _PreviewThread | None = None
         super().__init__(**kwargs)
 
     def _build_ui(self) -> None:
@@ -193,36 +231,39 @@ class TTSPage(BasePage):
         # TODO: start TTSService.batch_synthesise(voice, speed)
 
     def _on_preview(self) -> None:
+        if self._preview_thread and self._preview_thread.isRunning():
+            self.log.log("Preview is already generating…", level="INFO")
+            return
         self._save_voice_settings()
         voice = self._voice_combo.currentText()
         speed = self._speed_spin.value()
         mode = self.settings.get("tts_backend_mode", "local")
-        try:
-            if mode == "remote":
-                from ebook_app.services.tts_client import TTSClient
+        self.log.log(
+            f"Generating preview for voice '{voice}' ({'remote' if mode == 'remote' else 'local'})…",
+            level="INFO",
+        )
+        self._tts_preview_btn.setEnabled(False)
 
-                client = TTSClient(
-                    output_dir=self.settings.output_dir,
-                    base_url=self.settings.get(
-                        "tts_backend_url", _DEFAULT_TTS_SERVICE_URL
-                    ),
-                )
-                self.log.log(
-                    f"Generating preview via TTS service for voice '{voice}'…",
-                    level="INFO",
-                )
-                path = client.generate_preview(voice=voice, speed=speed)
-            else:
-                engine = TTSEngine(
-                    output_dir=self.settings.output_dir,
-                    model_path=self.settings.get("kokoro_model_path") or None,
-                    voices_path=self.settings.get("kokoro_voices_path") or None,
-                )
-                self.log.log(
-                    f"Generating preview for voice '{voice}'…", level="INFO"
-                )
-                path = engine.generate_preview(voice=voice, speed=speed)
+        # Discard old thread and its connections
+        if self._preview_thread is not None:
+            try:
+                self._preview_thread.preview_ready.disconnect()
+                self._preview_thread.error.disconnect()
+                self._preview_thread.finished.disconnect()
+            except RuntimeError:
+                pass
+            self._preview_thread.deleteLater()
 
-            self.log.log(f"Preview saved: {path}", level="SUCCESS")
-        except Exception as exc:
-            self.log.log(f"Preview failed: {exc}", level="ERROR")
+        self._preview_thread = _PreviewThread(self.settings, voice, speed, parent=self)
+        self._preview_thread.preview_ready.connect(self._on_preview_ready)
+        self._preview_thread.error.connect(self._on_preview_error)
+        self._preview_thread.finished.connect(
+            lambda: self._tts_preview_btn.setEnabled(True)
+        )
+        self._preview_thread.start()
+
+    def _on_preview_ready(self, path: str) -> None:
+        self.log.log(f"Preview saved: {path}", level="SUCCESS")
+
+    def _on_preview_error(self, message: str) -> None:
+        self.log.log(f"Preview failed: {message}", level="ERROR")

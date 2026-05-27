@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -35,12 +36,132 @@ _STEPS = [
 ]
 
 
+class _PipelineWorker(QThread):
+    """Background worker that runs heavy pipeline steps off the main GUI thread.
+
+    Emitting signals is thread-safe in Qt; the connected slots execute on the
+    main thread so UI updates and project-manager writes happen there.
+    """
+
+    step_progress = Signal(str, int)   # step_key, 0-100
+    log_message = Signal(str, str)     # message, level
+    inventory_ready = Signal(dict)     # {raw_count, valid_count, chapter_urls}
+    finished_ok = Signal(str, str)     # mode, human-readable result message
+    failed = Signal(str)               # error message
+
+    # Modes
+    CHECK_INDEX = "check_index"
+    RUN_TO_REVIEW = "run_to_review"
+    CONTINUE_AUDIO = "continue_audio"
+
+    def __init__(self, project_manager, settings, mode: str,
+                 start_ch: int = 1, end_ch: int = 1) -> None:
+        super().__init__()
+        self._pm = project_manager
+        self._settings = settings
+        self._mode = mode
+        self._start = start_ch
+        self._end = end_ch
+
+    def run(self) -> None:
+        try:
+            ctrl = self._pm.create_pipeline_controller(
+                on_progress=lambda k, v: self.step_progress.emit(k, v)
+            )
+            if ctrl is None:
+                self.failed.emit("No project loaded.")
+                return
+
+            if self._mode == self.CHECK_INDEX:
+                self._run_check_index(ctrl)
+            elif self._mode == self.RUN_TO_REVIEW:
+                self._run_to_review(ctrl)
+            elif self._mode == self.CONTINUE_AUDIO:
+                self._run_continue_audio(ctrl)
+            else:
+                self.failed.emit(f"Unknown pipeline mode: {self._mode!r}")
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+    # ------------------------------------------------------------------
+    # Mode implementations
+    # ------------------------------------------------------------------
+
+    def _run_check_index(self, ctrl) -> None:
+        self.log_message.emit("Checking index…", "INFO")
+        ctrl.scrape_index()
+        inventory = ctrl.get_chapter_inventory()
+        self.inventory_ready.emit({
+            "raw_count": inventory["raw_count"],
+            "valid_count": inventory["valid_count"],
+            "chapter_urls": ctrl.chapter_urls,
+        })
+        self.finished_ok.emit(
+            self.CHECK_INDEX,
+            f"Index: raw={inventory['raw_count']}, valid={inventory['valid_count']}.",
+        )
+
+    def _run_to_review(self, ctrl) -> None:
+        ctrl.set_chapter_range(self._start, self._end)
+
+        self.log_message.emit("Scraping index…", "INFO")
+        ctrl.scrape_index()
+        inventory = ctrl.get_chapter_inventory()
+        self.inventory_ready.emit({
+            "raw_count": inventory["raw_count"],
+            "valid_count": inventory["valid_count"],
+            "chapter_urls": ctrl.chapter_urls,
+        })
+
+        if self._end > inventory["valid_count"]:
+            self.failed.emit(
+                "Requested end chapter exceeds currently available valid chapters."
+            )
+            return
+
+        self.log_message.emit("Scraping chapters…", "INFO")
+        ctrl.scrape_chapters()
+        self.log_message.emit("Translating chapters…", "INFO")
+        ctrl.translate_chapters()
+        self.log_message.emit("Parsing dialogue…", "INFO")
+        ctrl.parse_dialogue()
+
+        self.finished_ok.emit(
+            self.RUN_TO_REVIEW,
+            "Chapter processing completed. Review character suggestions in Settings before audio.",
+        )
+
+    def _run_continue_audio(self, ctrl) -> None:
+        ctrl.set_chapter_range(self._start, self._end)
+        multispeaker = bool(self._settings.get("multispeaker_enabled", False))
+
+        if multispeaker:
+            self.log_message.emit("Running multi-speaker TTS…", "INFO")
+            ctrl.multispeaker_tts()
+        else:
+            self.log_message.emit("Running batch TTS…", "INFO")
+            ctrl.batch_tts()
+
+        self.log_message.emit("Running forced alignment…", "INFO")
+        ctrl.forced_alignment()
+        self.log_message.emit("Building SMIL…", "INFO")
+        ctrl.smil_generation()
+        self.log_message.emit("Exporting EPUB3…", "INFO")
+        ctrl.epub_export()
+
+        self.finished_ok.emit(
+            self.CONTINUE_AUDIO,
+            "Audio generation and export complete.",
+        )
+
+
 class PipelinePage(BasePage):
     """Page for running the end-to-end processing pipeline by project."""
 
     def __init__(self, **kwargs) -> None:
         self._projects: list[dict[str, Any]] = []
         self._current_book_id: str | None = None
+        self._worker: _PipelineWorker | None = None
         super().__init__(**kwargs)
         self._reload_projects()
 
@@ -138,11 +259,6 @@ class PipelinePage(BasePage):
             return False
         return True
 
-    def _new_controller(self):
-        if not self.project_manager:
-            return None
-        return self.project_manager.create_pipeline_controller(on_progress=self._update_step)
-
     def _reload_projects(self) -> None:
         if not self.project_manager:
             return
@@ -208,6 +324,67 @@ class PipelinePage(BasePage):
         else:
             self.log.log(f"Failed to load project '{book_id}'.", level="ERROR")
 
+    # ------------------------------------------------------------------
+    # Worker helpers
+    # ------------------------------------------------------------------
+
+    def _is_busy(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def _set_buttons_enabled(self, enabled: bool) -> None:
+        self._check_index_btn.setEnabled(enabled)
+        self._run_selected_btn.setEnabled(enabled)
+        self._continue_audio_btn.setEnabled(enabled)
+
+    def _start_worker(self, worker: _PipelineWorker) -> None:
+        if self._is_busy():
+            self.log.log("A pipeline operation is already running.", level="WARNING")
+            return
+        self._worker = worker
+        worker.step_progress.connect(self._update_step)
+        worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
+        worker.inventory_ready.connect(self._on_inventory_ready)
+        worker.finished_ok.connect(self._on_worker_finished)
+        worker.failed.connect(self._on_worker_failed)
+        worker.finished.connect(worker.deleteLater)
+        self._set_buttons_enabled(False)
+        worker.start()
+
+    def _on_inventory_ready(self, data: dict) -> None:
+        if not self.project_manager:
+            return
+        self.project_manager.set_inventory(
+            raw_chapter_count=data["raw_count"],
+            valid_chapter_count=data["valid_count"],
+            chapter_urls=data.get("chapter_urls"),
+        )
+        self._load_active_project_state()
+
+    def _on_worker_finished(self, mode: str, message: str) -> None:
+        self._set_buttons_enabled(True)
+        if mode == _PipelineWorker.RUN_TO_REVIEW and self.project_manager:
+            worker = self._worker
+            end_chapter = worker._end if worker is not None else 0
+            self.project_manager.set_last_processed_chapter(end_chapter)
+        self._load_active_project_state()
+        self.log.log(message, level="SUCCESS")
+        if mode == _PipelineWorker.RUN_TO_REVIEW:
+            QMessageBox.information(
+                self,
+                "Character Review Required",
+                "Chapter parsing is complete. Review pending character suggestions "
+                "and voices in Settings, then click 'Continue Audio + Export'.",
+            )
+
+    def _on_worker_failed(self, message: str) -> None:
+        self._set_buttons_enabled(True)
+        self._load_active_project_state()
+        self.log.log(f"Pipeline failed: {message}", level="ERROR")
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+
     def _on_check_index(self) -> None:
         if not self._require_project():
             return
@@ -217,22 +394,14 @@ class PipelinePage(BasePage):
             return
         self.settings.set("index_url", index_url)
         self.project_manager.set_index_url(index_url)
-
-        controller = self._new_controller()
-        if controller is None:
-            return
-        controller.scrape_index()
-        inventory = controller.get_chapter_inventory()
-        self.project_manager.set_inventory(
-            raw_chapter_count=inventory["raw_count"],
-            valid_chapter_count=inventory["valid_count"],
-            chapter_urls=controller.chapter_urls,
+        self.log.log("Checking index in background…", level="INFO")
+        self._start_worker(
+            _PipelineWorker(
+                self.project_manager,
+                self.settings,
+                _PipelineWorker.CHECK_INDEX,
+            )
         )
-        self.log.log(
-            f"Index checked: raw={inventory['raw_count']}, valid={inventory['valid_count']}.",
-            level="SUCCESS",
-        )
-        self._load_active_project_state()
 
     def _validate_range(self) -> tuple[int, int] | None:
         valid_count = int(self._valid_count_label.text() or "0")
@@ -259,43 +428,16 @@ class PipelinePage(BasePage):
         self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", False)
         self.project_manager.set_selected_range(start, end)
-
-        controller = self._new_controller()
-        if controller is None:
-            return
-        controller.set_chapter_range(start, end)
-
-        try:
-            controller.scrape_index()
-            inventory = controller.get_chapter_inventory()
-            self.project_manager.set_inventory(
-                raw_chapter_count=inventory["raw_count"],
-                valid_chapter_count=inventory["valid_count"],
-                chapter_urls=controller.chapter_urls,
+        self.log.log("Starting pipeline (scrape → translate → parse)…", level="INFO")
+        self._start_worker(
+            _PipelineWorker(
+                self.project_manager,
+                self.settings,
+                _PipelineWorker.RUN_TO_REVIEW,
+                start_ch=start,
+                end_ch=end,
             )
-            if end > inventory["valid_count"]:
-                self.log.log(
-                    "Requested end chapter exceeds currently available valid chapters.",
-                    level="WARNING",
-                )
-                self._load_active_project_state()
-                return
-            controller.scrape_chapters()
-            controller.translate_chapters()
-            controller.parse_dialogue()
-            self.project_manager.set_last_processed_chapter(end)
-            self._load_active_project_state()
-            self.log.log(
-                "Chapter processing completed. Review character suggestions in Settings before audio.",
-                level="SUCCESS",
-            )
-            QMessageBox.information(
-                self,
-                "Character Review Required",
-                "Chapter parsing is complete. Review pending character suggestions and voices in Settings, then click 'Continue Audio + Export'.",
-            )
-        except Exception as exc:  # pragma: no cover - defensive UI guard
-            self.log.log(f"Pipeline failed before audio stage: {exc}", level="ERROR")
+        )
 
     def _on_continue_audio(self) -> None:
         if not self._require_project():
@@ -303,24 +445,18 @@ class PipelinePage(BasePage):
         selected = self.project_manager.get_selected_range()
         start = max(1, int(selected.get("start", 1)))
         end = max(start, int(selected.get("end", 0)) or start)
-
         self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", True)
-        controller = self._new_controller()
-        if controller is None:
-            return
-        controller.set_chapter_range(start, end)
-        try:
-            if bool(self.settings.get("multispeaker_enabled", False)):
-                controller.multispeaker_tts()
-            else:
-                controller.batch_tts()
-            controller.forced_alignment()
-            controller.smil_generation()
-            controller.epub_export()
-            self.log.log("Audio generation and export complete.", level="SUCCESS")
-        except Exception as exc:  # pragma: no cover - defensive UI guard
-            self.log.log(f"Audio/export stage failed: {exc}", level="ERROR")
+        self.log.log("Starting audio generation and export in background…", level="INFO")
+        self._start_worker(
+            _PipelineWorker(
+                self.project_manager,
+                self.settings,
+                _PipelineWorker.CONTINUE_AUDIO,
+                start_ch=start,
+                end_ch=end,
+            )
+        )
 
     def _update_step(self, key: str, value: int) -> None:
         if key in self._step_bars:

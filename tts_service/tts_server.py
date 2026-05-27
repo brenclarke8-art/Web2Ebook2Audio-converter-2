@@ -31,6 +31,19 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# ---------------------------------------------------------------------------
+# Prevent ONNX Runtime / OpenMP threads from saturating all CPU cores.
+# OMP_WAIT_POLICY=PASSIVE replaces the default spin-wait idle strategy with
+# OS sleep, keeping cores available for the network stack.
+# ---------------------------------------------------------------------------
+_cpu_count: int = os.cpu_count() or 4
+_onnx_threads: str = str(max(1, _cpu_count - 2))
+os.environ.setdefault("OMP_NUM_THREADS", _onnx_threads)
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("MKL_NUM_THREADS", _onnx_threads)
+os.environ.setdefault("OPENBLAS_NUM_THREADS", _onnx_threads)
+os.environ.setdefault("ONNXRUNTIME_THREADPOOL_SIZE", _onnx_threads)
+
 import numpy as np
 import soundfile as sf
 import uvicorn
@@ -80,6 +93,16 @@ def _get_kokoro():
     global _kokoro
     if _kokoro is not None:
         return _kokoro
+
+    # Belt-and-suspenders: apply thread limits even if the top-level block was
+    # somehow bypassed (e.g. when the server is imported rather than run as __main__).
+    _cpus = os.cpu_count() or 4
+    _threads = str(max(1, _cpus - 2))
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+    os.environ.setdefault("OMP_NUM_THREADS", _threads)
+    os.environ.setdefault("MKL_NUM_THREADS", _threads)
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", _threads)
+    os.environ.setdefault("ONNXRUNTIME_THREADPOOL_SIZE", _threads)
 
     try:
         from kokoro_onnx import Kokoro  # type: ignore[import]

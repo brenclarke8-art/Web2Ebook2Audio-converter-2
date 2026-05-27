@@ -143,6 +143,19 @@ class TTSEngine:
         if self._kokoro is not None:
             return self._kokoro
 
+        # Ensure ONNX Runtime / OpenMP thread limits are applied before the
+        # library DLL is loaded.  These must be set before the first import of
+        # onnxruntime (which kokoro_onnx imports internally).  If main.py has
+        # already set them this is a no-op (setdefault never overwrites).
+        import os as _os
+        _cpus = _os.cpu_count() or 4
+        _threads = str(max(1, _cpus - 2))
+        _os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+        _os.environ.setdefault("OMP_NUM_THREADS", _threads)
+        _os.environ.setdefault("MKL_NUM_THREADS", _threads)
+        _os.environ.setdefault("OPENBLAS_NUM_THREADS", _threads)
+        _os.environ.setdefault("ONNXRUNTIME_THREADPOOL_SIZE", _threads)
+
         try:
             from kokoro_onnx import Kokoro  # type: ignore[import]
         except ImportError as exc:
