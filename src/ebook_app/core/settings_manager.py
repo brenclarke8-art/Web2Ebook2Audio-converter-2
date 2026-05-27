@@ -10,7 +10,8 @@ class SettingsManager(QObject):
     DEFAULTS = {
         "tts_voice": "af_heart",
         "tts_speed": 1.0,
-        "kokoro_cli_path": "",
+        "kokoro_model_path": "",
+        "kokoro_voices_path": "",
         "output_dir": "output",
         "theme": "dark",
         "window_width": 1200,
@@ -79,12 +80,20 @@ class SettingsManager(QObject):
         self.set("tts_speed", value)
 
     @property
-    def kokoro_cli_path(self):
-        return self.get("kokoro_cli_path")
+    def kokoro_model_path(self):
+        return self.get("kokoro_model_path")
 
-    @kokoro_cli_path.setter
-    def kokoro_cli_path(self, value):
-        self.set("kokoro_cli_path", value)
+    @kokoro_model_path.setter
+    def kokoro_model_path(self, value):
+        self.set("kokoro_model_path", value)
+
+    @property
+    def kokoro_voices_path(self):
+        return self.get("kokoro_voices_path")
+
+    @kokoro_voices_path.setter
+    def kokoro_voices_path(self, value):
+        self.set("kokoro_voices_path", value)
 
     @property
     def output_dir(self):

@@ -1,134 +1,154 @@
 from __future__ import annotations
 
 import logging
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 import soundfile as sf
 
-from .multispeaker import build_normalized_voice_lookup, resolve_voice_mapping
-from .voice_catalog import KOKORO_VOICE_CATALOG
+from .multispeaker_tts import build_normalized_voice_lookup, resolve_voice_mapping
+from .voice_catalog import KOKORO_VOICE_CATALOG, get_lang_for_voice
 
 logger = logging.getLogger(__name__)
 
+# Default directory where model files are stored / downloaded to.
+DEFAULT_MODELS_DIR = Path.home() / ".ebook_audio_studio" / "models"
+
+# Hugging Face repo and filenames for Kokoro 1.0
+_HF_REPO = "hexgrad/Kokoro-82M-ONNX"
+_MODEL_FILENAME = "kokoro-v1.0.onnx"
+_VOICES_FILENAME = "voices-v1.0.bin"
+
+
+def _resolve_model_paths(
+    model_path: Optional[str],
+    voices_path: Optional[str],
+) -> tuple[Path, Path]:
+    """Return (model_path, voices_path), falling back to the default models dir."""
+    default_model = DEFAULT_MODELS_DIR / _MODEL_FILENAME
+    default_voices = DEFAULT_MODELS_DIR / _VOICES_FILENAME
+    resolved_model = Path(model_path) if model_path else default_model
+    resolved_voices = Path(voices_path) if voices_path else default_voices
+    return resolved_model, resolved_voices
+
+
+def download_kokoro_models(
+    dest_dir: Optional[str | Path] = None,
+    progress_callback=None,
+) -> tuple[Path, Path]:
+    """Download Kokoro 1.0 ONNX model files from Hugging Face Hub.
+
+    Returns ``(model_path, voices_path)`` of the downloaded files.
+    Raises :class:`ImportError` if *huggingface_hub* is not installed.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise ImportError(
+            "huggingface_hub is required for automatic model download. "
+            "Run: pip install huggingface_hub"
+        ) from exc
+
+    dest = Path(dest_dir) if dest_dir else DEFAULT_MODELS_DIR
+    dest.mkdir(parents=True, exist_ok=True)
+
+    if progress_callback:
+        progress_callback(f"Downloading {_MODEL_FILENAME} from Hugging Face…")
+    model_path = hf_hub_download(
+        repo_id=_HF_REPO,
+        filename=_MODEL_FILENAME,
+        local_dir=str(dest),
+    )
+
+    if progress_callback:
+        progress_callback(f"Downloading {_VOICES_FILENAME} from Hugging Face…")
+    voices_path = hf_hub_download(
+        repo_id=_HF_REPO,
+        filename=_VOICES_FILENAME,
+        local_dir=str(dest),
+    )
+
+    if progress_callback:
+        progress_callback("Model download complete.")
+
+    return Path(model_path), Path(voices_path)
+
 
 class TTSEngine:
-    """
-    Backend TTS engine using Kokoro-ONNX CLI.
+    """Backend TTS engine using the kokoro-onnx Python API.
 
-    - Calls external kokoro-onnx executable for audio generation
-    - Single-voice and multi-voice generation
-    - Progress callbacks for GUI integration
+    Generates audio directly via ``kokoro_onnx.Kokoro`` without spawning any
+    external process.  Model files are loaded lazily on first use.
+
+    Model files are looked up in this order:
+
+    1. Explicit *model_path* / *voices_path* constructor arguments.
+    2. ``~/.ebook_audio_studio/models/`` (default download location).
+
+    If the files are absent, call :meth:`download_models` (or use the
+    *Download Models* button in Settings) to fetch them from Hugging Face.
     """
 
     def __init__(
         self,
         output_dir: str = "output",
-        cli_path: Optional[str] = None,
+        model_path: Optional[str] = None,
+        voices_path: Optional[str] = None,
         default_lang_code: str = "a",
+        # Legacy parameter kept for compatibility — ignored when using Python API
+        cli_path: Optional[str] = None,
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.cli_path = cli_path
+        self._model_path, self._voices_path = _resolve_model_paths(model_path, voices_path)
         self.default_lang_code = default_lang_code
 
-        if self.cli_path:
-            self._verify_cli_available()
-
-    def _verify_cli_available(self) -> None:
-        """Check if the kokoro-onnx CLI is available and executable."""
-        if not self.cli_path:
-            raise ValueError("Kokoro CLI path not configured. Please set the path in Settings.")
-
-        cli = Path(self.cli_path)
-        if not cli.exists():
-            raise FileNotFoundError(f"Kokoro CLI not found at: {self.cli_path}")
-
-        if not cli.is_file():
-            raise ValueError(f"Kokoro CLI path is not a file: {self.cli_path}")
-
-        # Try to run with --help to verify it's executable
-        try:
-            result = subprocess.run(
-                [str(cli), "--help"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode != 0:
-                logger.warning(f"Kokoro CLI --help returned non-zero exit code: {result.returncode}")
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Kokoro CLI timed out when checking availability: {self.cli_path}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to execute Kokoro CLI: {e}")
+        self._kokoro = None  # Lazy-initialised
 
     # ------------------------------------------------------------------
-    # CLI execution
+    # Model management
     # ------------------------------------------------------------------
 
-    def _call_cli(
-        self,
-        text: str,
-        output_path: Path,
-        voice: str,
-        speed: float,
-        progress_callback=None,
-    ) -> None:
-        """Call kokoro-onnx CLI to generate audio."""
-        self._verify_cli_available()
+    def models_available(self) -> bool:
+        """Return True if both model files exist on disk."""
+        return self._model_path.exists() and self._voices_path.exists()
 
-        if progress_callback:
-            progress_callback("Generating audio with Kokoro CLI...")
+    def download_models(self, progress_callback=None) -> None:
+        """Download model files and reload the engine."""
+        dest = self._model_path.parent
+        model, voices = download_kokoro_models(dest, progress_callback=progress_callback)
+        self._model_path = model
+        self._voices_path = voices
+        self._kokoro = None  # Force reload
 
-        # Write text to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-            temp_text_file = Path(f.name)
-            f.write(text)
+    def _get_kokoro(self):
+        """Lazily initialise and return the ``Kokoro`` instance."""
+        if self._kokoro is not None:
+            return self._kokoro
 
         try:
-            # Build CLI command
-            # Typical usage: kokoro-onnx --input text.txt --output audio.wav --voice af_heart --speed 1.0
-            cmd = [
-                str(self.cli_path),
-                "--input", str(temp_text_file),
-                "--output", str(output_path),
-                "--voice", voice,
-                "--speed", str(speed),
-            ]
+            from kokoro_onnx import Kokoro  # type: ignore[import]
+        except ImportError as exc:
+            raise ImportError(
+                "kokoro-onnx is not installed. Run: pip install kokoro-onnx"
+            ) from exc
 
-            logger.info(f"Executing: {' '.join(cmd)}")
-
-            # Execute CLI
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
+        if not self._model_path.exists():
+            raise FileNotFoundError(
+                f"Kokoro model file not found: {self._model_path}\n"
+                "Use Settings → Download Models to fetch the model files."
+            )
+        if not self._voices_path.exists():
+            raise FileNotFoundError(
+                f"Kokoro voices file not found: {self._voices_path}\n"
+                "Use Settings → Download Models to fetch the model files."
             )
 
-            if result.returncode != 0:
-                error_msg = f"Kokoro CLI failed with exit code {result.returncode}"
-                if result.stderr:
-                    error_msg += f"\nStderr: {result.stderr}"
-                if result.stdout:
-                    error_msg += f"\nStdout: {result.stdout}"
-                raise RuntimeError(error_msg)
-
-            if not output_path.exists():
-                raise RuntimeError(f"CLI completed but output file not created: {output_path}")
-
-            logger.info(f"Audio generated successfully: {output_path}")
-
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Kokoro CLI timed out during audio generation")
-        finally:
-            # Clean up temp file
-            if temp_text_file.exists():
-                temp_text_file.unlink()
+        logger.info("Loading Kokoro model from %s", self._model_path)
+        self._kokoro = Kokoro(str(self._model_path), str(self._voices_path))
+        return self._kokoro
 
     # ------------------------------------------------------------------
     # Public API
@@ -148,7 +168,6 @@ class TTSEngine:
             text=text,
             output_filename=output_filename,
             voice=voice,
-            lang_code=lang_code,
             speed=speed,
             progress_callback=progress_callback,
         )
@@ -168,7 +187,6 @@ class TTSEngine:
             text=preview_text,
             output_filename=filename,
             voice=voice,
-            lang_code=lang_code,
             speed=speed,
         )
 
@@ -183,15 +201,14 @@ class TTSEngine:
         speed: float = 1.0,
         progress_callback=None,
     ) -> Path:
-        """
-        dialogue_segments: list of objects with .text, .speaker, .is_dialogue
-        """
+        """Synthesise multi-speaker audio by concatenating per-segment audio."""
         all_audio_segments: List[np.ndarray] = []
-        silence_samples = int(24000 * dialogue_pause)
+        sample_rate = 24000
+        silence_samples = int(sample_rate * dialogue_pause)
         silence = np.zeros(silence_samples, dtype=np.float32)
 
         previous_speaker = None
-        warned_non_exact = set()
+        warned_non_exact: set = set()
         normalized_lookup = build_normalized_voice_lookup(voice_mappings)
 
         for i, segment in enumerate(dialogue_segments):
@@ -199,7 +216,7 @@ class TTSEngine:
                 continue
 
             if progress_callback and i % 10 == 0:
-                progress_callback(f"Processing segment {i+1}/{len(dialogue_segments)}...")
+                progress_callback(f"Processing segment {i + 1}/{len(dialogue_segments)}…")
 
             speaker = segment.speaker or "narrator"
             resolution = resolve_voice_mapping(
@@ -224,30 +241,10 @@ class TTSEngine:
                 all_audio_segments.append(silence)
 
             try:
-                # Generate audio for this segment using CLI
-                temp_filename = f"temp_segment_{i}.wav"
-                temp_path = self.output_dir / temp_filename
-
-                self._call_cli(
-                    text=segment.text,
-                    output_path=temp_path,
-                    voice=voice,
-                    speed=speed,
-                    progress_callback=None,  # Avoid nested progress updates
-                )
-
-                # Load the generated audio
-                audio_data, sample_rate = sf.read(str(temp_path))
-                if sample_rate != 24000:
-                    logger.warning(f"Expected sample rate 24000, got {sample_rate}")
-
-                all_audio_segments.append(audio_data.astype(np.float32))
-
-                # Clean up temp file
-                temp_path.unlink()
-
+                samples = self._synthesise(segment.text, voice=voice, speed=speed)
+                all_audio_segments.append(samples)
             except Exception as exc:
-                logger.error(f"Error generating audio for segment {i+1}: {exc}")
+                logger.error("Error generating audio for segment %d: %s", i + 1, exc)
 
             previous_speaker = speaker
 
@@ -255,14 +252,14 @@ class TTSEngine:
             raise ValueError("No audio segments were generated")
 
         if progress_callback:
-            progress_callback("Combining audio segments...")
+            progress_callback("Combining audio segments…")
 
         combined_audio = np.concatenate(all_audio_segments)
         output_path = self.output_dir / output_filename
 
         if progress_callback:
-            progress_callback("Saving audio file...")
-        sf.write(str(output_path), combined_audio, 24000)
+            progress_callback("Saving audio file…")
+        sf.write(str(output_path), combined_audio, sample_rate)
 
         if progress_callback:
             progress_callback("Audio generation complete")
@@ -270,8 +267,15 @@ class TTSEngine:
         return output_path
 
     # ------------------------------------------------------------------
-    # Internal Kokoro generation
+    # Internal helpers
     # ------------------------------------------------------------------
+
+    def _synthesise(self, text: str, *, voice: str, speed: float) -> np.ndarray:
+        """Call kokoro_onnx to produce a float32 audio array."""
+        kokoro = self._get_kokoro()
+        lang = get_lang_for_voice(voice)
+        samples, _sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
+        return np.array(samples, dtype=np.float32)
 
     def _generate_kokoro(
         self,
@@ -279,25 +283,18 @@ class TTSEngine:
         output_filename: str,
         *,
         voice: str,
-        lang_code: str,
         speed: float,
         progress_callback=None,
     ) -> Path:
         if not text or not text.strip():
             raise ValueError("Cannot generate audio: text is empty")
 
-        output_path = self.output_dir / output_filename
-
         if progress_callback:
-            progress_callback("Generating audio...")
+            progress_callback("Generating audio…")
 
-        self._call_cli(
-            text=text,
-            output_path=output_path,
-            voice=voice,
-            speed=speed,
-            progress_callback=progress_callback,
-        )
+        samples = self._synthesise(text, voice=voice, speed=speed)
+        output_path = self.output_dir / output_filename
+        sf.write(str(output_path), samples, 24000)
 
         if progress_callback:
             progress_callback("Audio generation complete")
@@ -311,3 +308,4 @@ class TTSEngine:
     @staticmethod
     def list_kokoro_voices() -> Dict[str, Dict[str, str]]:
         return KOKORO_VOICE_CATALOG
+
