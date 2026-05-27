@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -13,13 +12,19 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, download_kokoro_models
+from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.ui.pages._base_page import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
@@ -68,6 +73,17 @@ class SettingsPage(BasePage):
         super().__init__(**kwargs)
 
     def _build_ui(self) -> None:
+        # Wrap everything in a scroll area so the page stays usable at any height
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        container = QWidget()
+        inner = QVBoxLayout(container)
+        inner.setContentsMargins(0, 0, 8, 0)
+        inner.setSpacing(12)
+        scroll.setWidget(container)
+        self._layout.addWidget(scroll)
+
         # ── General ────────────────────────────────────────────────────
         general_group = QGroupBox("General")
         form = QFormLayout(general_group)
@@ -80,7 +96,7 @@ class SettingsPage(BasePage):
         output_row.addWidget(browse_output)
         form.addRow("Output directory:", output_row)
 
-        self._layout.addWidget(general_group)
+        inner.addWidget(general_group)
 
         # ── TTS Backend ────────────────────────────────────────────────
         backend_group = QGroupBox("TTS Backend")
@@ -125,7 +141,7 @@ class SettingsPage(BasePage):
         mode_note.setWordWrap(True)
         backend_vbox.addWidget(mode_note)
 
-        self._layout.addWidget(backend_group)
+        inner.addWidget(backend_group)
         self._on_backend_mode_changed(current_mode)  # set initial enabled state
 
         # ── Kokoro ONNX Models ─────────────────────────────────────────
@@ -170,7 +186,86 @@ class SettingsPage(BasePage):
         status_row.addWidget(self._download_btn)
         model_vbox.addLayout(status_row)
 
-        self._layout.addWidget(model_group)
+        inner.addWidget(model_group)
+
+        # ── LLM / Translation API Connection ──────────────────────────
+        llm_group = QGroupBox("LLM / Translation API Connection")
+        llm_form = QFormLayout(llm_group)
+
+        self._llm_url_input = QLineEdit(
+            str(self.settings.get("llm_api_url", "http://localhost:5000/translate"))
+        )
+        self._llm_url_input.setPlaceholderText("http://localhost:5000/translate")
+        llm_form.addRow("API URL:", self._llm_url_input)
+
+        self._llm_key_input = QLineEdit(str(self.settings.get("llm_api_key", "")))
+        self._llm_key_input.setPlaceholderText("Leave blank if no key is required")
+        self._llm_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        llm_key_row = QHBoxLayout()
+        llm_key_row.addWidget(self._llm_key_input)
+        self._llm_key_show_btn = QPushButton("Show")
+        self._llm_key_show_btn.setCheckable(True)
+        self._llm_key_show_btn.toggled.connect(self._on_toggle_api_key_visibility)
+        llm_key_row.addWidget(self._llm_key_show_btn)
+        llm_form.addRow("API Key:", llm_key_row)
+
+        key_note = QLabel("<i>⚠ API key is stored in plain text in your settings file.</i>")
+        key_note.setWordWrap(True)
+        llm_form.addRow("", key_note)
+
+        inner.addWidget(llm_group)
+
+        # ── Multi-speaker TTS ──────────────────────────────────────────
+        ms_group = QGroupBox("Multi-speaker TTS")
+        ms_form = QFormLayout(ms_group)
+
+        self._multispeaker_check = QCheckBox("Enable multi-speaker mode")
+        self._multispeaker_check.setChecked(
+            bool(self.settings.get("multispeaker_enabled", False))
+        )
+        ms_form.addRow("", self._multispeaker_check)
+
+        self._narrator_voice_combo = QComboBox()
+        self._narrator_voice_combo.addItems(KOKORO_VOICE_LIST)
+        narrator_voice = self.settings.get("narrator_voice", "af_heart")
+        if narrator_voice in KOKORO_VOICE_LIST:
+            self._narrator_voice_combo.setCurrentText(narrator_voice)
+        ms_form.addRow("Narrator voice:", self._narrator_voice_combo)
+
+        inner.addWidget(ms_group)
+
+        # ── Character Database ─────────────────────────────────────────
+        char_group = QGroupBox("Character Database")
+        char_vbox = QVBoxLayout(char_group)
+
+        char_note = QLabel(
+            "Assign a Kokoro voice to each named character for multi-speaker TTS."
+        )
+        char_note.setWordWrap(True)
+        char_vbox.addWidget(char_note)
+
+        self._char_table = QTableWidget(0, 3)
+        self._char_table.setHorizontalHeaderLabels(["Character Name", "Voice", "Description"])
+        self._char_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._char_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._char_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._char_table.setMinimumHeight(160)
+        char_vbox.addWidget(self._char_table)
+
+        char_btn_row = QHBoxLayout()
+        self._add_char_btn = QPushButton("Add Character")
+        self._add_char_btn.clicked.connect(self._on_add_character)
+        self._remove_char_btn = QPushButton("Remove Selected")
+        self._remove_char_btn.clicked.connect(self._on_remove_character)
+        char_btn_row.addWidget(self._add_char_btn)
+        char_btn_row.addWidget(self._remove_char_btn)
+        char_btn_row.addStretch()
+        char_vbox.addLayout(char_btn_row)
+
+        inner.addWidget(char_group)
+
+        # Populate character table from saved settings
+        self._load_character_db()
 
         # ── Save ───────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -178,9 +273,9 @@ class SettingsPage(BasePage):
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)
         btn_row.addStretch()
-        self._layout.addLayout(btn_row)
+        inner.addLayout(btn_row)
 
-        self._layout.addStretch()
+        inner.addStretch()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -236,6 +331,52 @@ class SettingsPage(BasePage):
             self._voices_path_input.setText(path)
             self._refresh_model_status()
 
+    def _on_toggle_api_key_visibility(self, checked: bool) -> None:
+        if checked:
+            self._llm_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self._llm_key_show_btn.setText("Hide")
+        else:
+            self._llm_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self._llm_key_show_btn.setText("Show")
+
+    def _load_character_db(self) -> None:
+        """Populate the character table from saved settings."""
+        chars = self.settings.get("character_db", [])
+        self._char_table.setRowCount(0)
+        for char in chars:
+            self._insert_character_row(
+                char.get("name", ""),
+                char.get("voice", KOKORO_VOICE_LIST[0] if KOKORO_VOICE_LIST else ""),
+                char.get("description", ""),
+            )
+
+    def _insert_character_row(self, name: str = "", voice: str = "", description: str = "") -> None:
+        row = self._char_table.rowCount()
+        self._char_table.insertRow(row)
+        self._char_table.setItem(row, 0, QTableWidgetItem(name))
+
+        voice_combo = QComboBox()
+        voice_combo.addItems(KOKORO_VOICE_LIST)
+        if voice in KOKORO_VOICE_LIST:
+            voice_combo.setCurrentText(voice)
+        self._char_table.setCellWidget(row, 1, voice_combo)
+
+        self._char_table.setItem(row, 2, QTableWidgetItem(description))
+
+    def _collect_character_db(self) -> list:
+        """Read all rows from the character table and return as a list of dicts."""
+        chars = []
+        for row in range(self._char_table.rowCount()):
+            name_item = self._char_table.item(row, 0)
+            voice_widget = self._char_table.cellWidget(row, 1)
+            desc_item = self._char_table.item(row, 2)
+            name = name_item.text().strip() if name_item else ""
+            voice = voice_widget.currentText() if voice_widget else ""
+            description = desc_item.text().strip() if desc_item else ""
+            if name:
+                chars.append({"name": name, "voice": voice, "description": description})
+        return chars
+
     # ------------------------------------------------------------------
     # Handlers
     # ------------------------------------------------------------------
@@ -247,9 +388,24 @@ class SettingsPage(BasePage):
         self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
         self.settings.set("kokoro_model_path", self._model_path_input.text().strip())
         self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
+        self.settings.set("llm_api_url", self._llm_url_input.text().strip())
+        self.settings.set("llm_api_key", self._llm_key_input.text())
+        self.settings.set("multispeaker_enabled", self._multispeaker_check.isChecked())
+        self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
+        self.settings.set("character_db", self._collect_character_db())
         self.settings.save()
         self._refresh_model_status()
         self.log.log("Settings saved.", level="SUCCESS")
+
+    def _on_add_character(self) -> None:
+        self._insert_character_row()
+
+    def _on_remove_character(self) -> None:
+        selected = self._char_table.selectedItems()
+        if selected:
+            rows = sorted({item.row() for item in selected}, reverse=True)
+            for row in rows:
+                self._char_table.removeRow(row)
 
     def _on_check_service(self) -> None:
         if self._svc_health_thread and self._svc_health_thread.isRunning():
