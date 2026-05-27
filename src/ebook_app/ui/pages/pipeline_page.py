@@ -386,7 +386,7 @@ class PipelinePage(BasePage):
         self.settings.set("scraper_max_index_pages", int(self._max_index_pages_spin.value()))
 
     def _on_scraper_method_changed(self) -> None:
-        use_browser = (self._scraper_method_combo.currentData() or "browser") == "browser"
+        use_browser = self._scraper_method_combo.currentData() == "browser"
         self._browser_gui_check.setEnabled(use_browser)
         self._manual_nav_check.setEnabled(use_browser)
 

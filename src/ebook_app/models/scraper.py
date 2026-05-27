@@ -532,7 +532,11 @@ class BrowserScraper:
             """
         )
         try:
-            page.wait_for_function("() => window.__ebookManualNavConfirmed === true", timeout=0)
+            max_wait_ms = max(60, int(self.manual_navigation_timeout_sec)) * 1000
+            page.wait_for_function(
+                "() => window.__ebookManualNavConfirmed === true",
+                timeout=max_wait_ms,
+            )
             logger.info("Manual navigation confirmed; capturing current page at %s", page.url)
         finally:
             try:
@@ -548,7 +552,7 @@ class BrowserScraper:
                     """
                 )
             except Exception:
-                logger.debug("Manual navigation prompt cleanup skipped for %s", page.url, exc_info=True)
+                logger.warning("Manual navigation prompt cleanup failed for %s", page.url, exc_info=True)
 
     def extract_visual_text(
         self,
