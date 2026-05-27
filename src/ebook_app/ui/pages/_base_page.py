@@ -6,6 +6,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from ebook_app.core.settings_manager import SettingsManager
+from ebook_app.core.project_manager import ProjectManager
 from ebook_app.ui.log_console import LogConsole
 
 
@@ -25,11 +26,13 @@ class BasePage(QWidget):
         *,
         settings: SettingsManager,
         log: LogConsole,
+        project_manager: ProjectManager | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.settings = settings
         self.log = log
+        self.project_manager = project_manager
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(16, 16, 16, 16)

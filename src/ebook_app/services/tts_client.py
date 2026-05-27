@@ -185,6 +185,8 @@ class TTSClient:
         output_filename: str,
         voice_mappings: Dict[str, str],
         *,
+        default_male_voice: str = "am_adam",
+        default_female_voice: str = "af_heart",
         dialogue_pause: float = 0.3,
         lang_code: str = "a",
         speed: float = 1.0,
@@ -198,6 +200,7 @@ class TTSClient:
                 "text": s.text,
                 "speaker": s.speaker,
                 "kind": s.kind,
+                "gender": getattr(s, "gender", "unknown"),
                 "paragraph_id": s.paragraph_id,
             }
             for s in dialogue_segments
@@ -207,6 +210,8 @@ class TTSClient:
             "segments": segments_payload,
             "output_filename": output_filename,
             "voice_mappings": voice_mappings,
+            "default_male_voice": default_male_voice,
+            "default_female_voice": default_female_voice,
             "speed": speed,
             "lang": lang_code,
             "dialogue_pause": dialogue_pause,

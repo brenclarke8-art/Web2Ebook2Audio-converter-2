@@ -67,3 +67,41 @@ def resolve_voice_mapping(
         voice=narrator_voice,
         resolution="fallback",
     )
+
+
+def resolve_voice_for_segment(
+    *,
+    speaker: str,
+    gender: str,
+    voice_mappings: Dict[str, str],
+    narrator_voice: str,
+    default_male_voice: str,
+    default_female_voice: str,
+    normalized_lookup: Dict[str, Tuple[str, str]],
+) -> VoiceResolution:
+    """Resolve voice using speaker mapping, then gender defaults, then narrator."""
+    base = resolve_voice_mapping(
+        speaker,
+        voice_mappings,
+        narrator_voice=narrator_voice,
+        normalized_lookup=normalized_lookup,
+    )
+    if base.resolution in {"exact", "normalized"}:
+        return base
+
+    gender_lc = (gender or "").strip().lower()
+    if gender_lc == "male" and default_male_voice:
+        return VoiceResolution(
+            requested_speaker=base.requested_speaker,
+            matched_speaker="__default_male__",
+            voice=default_male_voice,
+            resolution="fallback_gender",
+        )
+    if gender_lc == "female" and default_female_voice:
+        return VoiceResolution(
+            requested_speaker=base.requested_speaker,
+            matched_speaker="__default_female__",
+            voice=default_female_voice,
+            resolution="fallback_gender",
+        )
+    return base

@@ -10,11 +10,13 @@ class Character:
 
     :param name:        Character's name as it appears in the text.
     :param voice:       Kokoro voice identifier assigned to this character.
-    :param description: Optional short description (e.g. gender, archetype).
+    :param gender:      Optional inferred or user-defined gender label.
+    :param description: Optional short description (e.g. archetype).
     """
 
     name: str
     voice: str
+    gender: str = "unknown"
     description: str = ""
 
 
