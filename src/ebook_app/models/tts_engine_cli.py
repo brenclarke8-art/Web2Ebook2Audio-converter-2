@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -14,8 +15,17 @@ from .voice_catalog import KOKORO_VOICE_CATALOG, get_lang_for_voice
 
 logger = logging.getLogger(__name__)
 
+def _default_models_dir() -> Path:
+    """Resolve repository-local model directory (overridable via env var)."""
+    env_home = os.environ.get("EBOOK_AUDIO_STUDIO_HOME")
+    if env_home:
+        return Path(env_home).expanduser().resolve() / "models"
+    # src/ebook_app/models/tts_engine_cli.py -> repository root at parents[3]
+    return (Path(__file__).resolve().parents[3] / ".ebook_audio_studio" / "models").resolve()
+
+
 # Default directory where model files are stored / downloaded to.
-DEFAULT_MODELS_DIR = Path.home() / ".ebook_audio_studio" / "models"
+DEFAULT_MODELS_DIR = _default_models_dir()
 
 # Kokoro model release and filenames
 _MODEL_RELEASE_BASE_URL = (
@@ -101,7 +111,7 @@ class TTSEngine:
     Model files are looked up in this order:
 
     1. Explicit *model_path* / *voices_path* constructor arguments.
-    2. ``~/.ebook_audio_studio/models/`` (default download location).
+    2. ``<repo>/.ebook_audio_studio/models/`` (default download location).
 
     If the files are absent, call :meth:`download_models` (or use the
     *Download Models* button in Settings) to fetch them from GitHub.

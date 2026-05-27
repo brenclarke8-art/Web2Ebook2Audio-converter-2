@@ -28,6 +28,8 @@ venv/
 ENV/
 env/
 .venv
+venv_gui/
+tts_service/venv_tts/
 
 # IDE
 .vscode/
@@ -44,6 +46,7 @@ pipeline_work/
 *.mp3
 *.wav
 .ebook_audio_studio_settings.json
+.ebook_audio_studio/
 
 # Testing
 .pytest_cache/
