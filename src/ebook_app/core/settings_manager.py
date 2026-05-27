@@ -68,6 +68,9 @@ class SettingsManager(QObject):
         "scraper_wait_for_js": True,
         "scraper_remove_overlays": True,
         "scraper_browser_channel": "",
+        "scraper_delay_ms": 500,
+        "scraper_css_selectors": "",
+        "scraper_exclude_selectors": "",
         # Multi-speaker TTS
         "multispeaker_enabled": False,
         "narrator_voice": "af_heart",
