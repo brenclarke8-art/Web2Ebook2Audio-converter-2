@@ -56,6 +56,13 @@ class SettingsManager(QObject):
         "index_url": "",
         "ollama_url": "http://127.0.0.1:11434/api/generate",
         "ollama_model": "mistral",
+        "dialogue_llm_mode": "full",
+        "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
+        "dialogue_llm_model": "mistral:instruct",
+        "dialogue_llm_timeout": 120,
+        "dialogue_llm_retries": 1,
+        "dialogue_llm_strict_quotes": False,
+        "llm_preflight_check": True,
         "character_confidence_threshold": 0.8,
         "character_review_approved": False,
         "audio_output_mode": "per_chapter",
@@ -114,6 +121,28 @@ class SettingsManager(QObject):
             if key not in self.data:
                 self.data[key] = value
                 changed = True
+
+        dialogue_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
+        legacy_ollama_url = str(self.data.get("ollama_url", "") or "").strip()
+        if not dialogue_url and legacy_ollama_url:
+            self.data["dialogue_llm_url"] = legacy_ollama_url.replace("/api/generate", "/api/chat")
+            changed = True
+        elif dialogue_url.endswith("/api/generate"):
+            self.data["dialogue_llm_url"] = dialogue_url.replace("/api/generate", "/api/chat")
+            changed = True
+
+        dialogue_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
+        legacy_ollama_model = str(self.data.get("ollama_model", "") or "").strip()
+        if not dialogue_model and legacy_ollama_model:
+            self.data["dialogue_llm_model"] = legacy_ollama_model
+            changed = True
+
+        if not legacy_ollama_url and self.data.get("dialogue_llm_url"):
+            self.data["ollama_url"] = str(self.data["dialogue_llm_url"]).replace("/api/chat", "/api/generate")
+            changed = True
+        if not legacy_ollama_model and self.data.get("dialogue_llm_model"):
+            self.data["ollama_model"] = self.data["dialogue_llm_model"]
+            changed = True
         if self.data.get("tts_backend_mode") != "remote":
             if "tts_backend_mode" in self.data:
                 logger.info(

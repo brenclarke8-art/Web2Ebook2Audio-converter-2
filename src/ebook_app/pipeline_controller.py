@@ -132,7 +132,7 @@ class PipelineController:
             parsed = urlparse(parser.ollama_url)
             if not parsed.scheme or not parsed.netloc:
                 raise RuntimeError(
-                    f"Invalid Ollama URL {parser.ollama_url!r}. "
+                    f"Invalid LLM URL {parser.ollama_url!r}. "
                     "Update the Ollama URL in Settings."
                 )
             tags_url = urlunparse((parsed.scheme, parsed.netloc, self._OLLAMA_TAGS_PATH, "", "", ""))
@@ -142,7 +142,7 @@ class PipelineController:
             raise
         except Exception as exc:
             raise RuntimeError(
-                f"Cannot connect to Ollama at {parser.ollama_url!r}. "
+                f"Cannot connect to LLM at {parser.ollama_url!r}. "
                 f"Ensure 'ollama serve' is running. Details: {exc}"
             ) from exc
 
@@ -399,13 +399,20 @@ class PipelineController:
 
         logger.info("Parsing dialogue for %d chapters...", len(self.translated_chapters))
         llm_log_path = self.work_dir / "llm_communication.jsonl"
+        llm_url = self.settings.get("dialogue_llm_url", "") or self.settings.get("ollama_url", "")
+        llm_model = self.settings.get("dialogue_llm_model", "") or self.settings.get("ollama_model", "")
         parser = DialogueParser(
-            ollama_url=self.settings.get("ollama_url", ""),
-            model=self.settings.get("ollama_model", ""),
+            ollama_url=llm_url,
+            model=llm_model,
+            timeout_s=int(self.settings.get("dialogue_llm_timeout", 120)),
+            retries=int(self.settings.get("dialogue_llm_retries", 1)),
+            llm_mode=str(self.settings.get("dialogue_llm_mode", "full")),
+            llm_strict_quotes=bool(self.settings.get("dialogue_llm_strict_quotes", False)),
             llm_log_path=llm_log_path,
         )
 
-        self._preflight_llm_check(parser)
+        if bool(self.settings.get("llm_preflight_check", True)):
+            self._preflight_llm_check(parser)
 
         known_characters = self.settings.get("character_db", []) or []
         known_names = {
