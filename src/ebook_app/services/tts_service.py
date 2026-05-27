@@ -11,8 +11,6 @@ def _make_tts_backend(settings, output_dir: Optional[str] = None):
     from ebook_app.services.tts_client import TTSClient
 
     effective_output_dir = output_dir or settings.output_dir
-    if settings.tts_backend_mode != "remote":
-        settings.tts_backend_mode = "remote"
     return TTSClient(
         output_dir=effective_output_dir,
         base_url=settings.tts_backend_url,

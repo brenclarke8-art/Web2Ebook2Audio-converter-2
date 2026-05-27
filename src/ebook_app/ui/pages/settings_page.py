@@ -107,13 +107,8 @@ class SettingsPage(BasePage):
         backend_vbox = QVBoxLayout(backend_group)
         backend_form = QFormLayout()
 
-        self._backend_mode_combo = QComboBox()
-        self._backend_mode_combo.addItems(["remote"])
-        current_mode = "remote"
-        self._backend_mode_combo.setCurrentText("remote")
-        self._backend_mode_combo.setEnabled(False)
-        self._backend_mode_combo.currentTextChanged.connect(self._on_backend_mode_changed)
-        backend_form.addRow("Backend mode:", self._backend_mode_combo)
+        self._backend_mode_label = QLabel("remote (fixed)")
+        backend_form.addRow("Backend mode:", self._backend_mode_label)
 
         self._backend_url_input = QLineEdit(
             str(self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL))
@@ -147,7 +142,6 @@ class SettingsPage(BasePage):
         backend_vbox.addWidget(mode_note)
 
         inner.addWidget(backend_group)
-        self._on_backend_mode_changed(current_mode)  # set initial enabled state
 
         # ── Kokoro ONNX Models ─────────────────────────────────────────
         model_group = QGroupBox("Kokoro ONNX Models (for backend service)")
@@ -350,10 +344,6 @@ class SettingsPage(BasePage):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _on_backend_mode_changed(self, mode: str) -> None:
-        self._backend_url_input.setEnabled(True)
-        self._check_svc_btn.setEnabled(True)
-
     def _refresh_model_status(self) -> None:
         from ebook_app.models.tts_engine_cli import _resolve_model_paths
         model_path, voices_path = _resolve_model_paths(
@@ -522,7 +512,7 @@ class SettingsPage(BasePage):
 
     def _on_save(self) -> None:
         self.settings.set("output_dir", self._output_dir_input.text().strip())
-        self.settings.set("tts_backend_mode", self._backend_mode_combo.currentText())
+        self.settings.set("tts_backend_mode", "remote")
         self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
         self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
         self.settings.set("kokoro_model_path", self._model_path_input.text().strip())

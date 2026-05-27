@@ -20,8 +20,15 @@ def _default_models_dir() -> Path:
     env_home = os.environ.get("EBOOK_AUDIO_STUDIO_HOME")
     if env_home:
         return Path(env_home).expanduser().resolve() / "models"
-    # src/ebook_app/models/tts_engine_cli.py -> repository root at parents[3]
-    return (Path(__file__).resolve().parents[3] / ".ebook_audio_studio" / "models").resolve()
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists() and (parent / "src" / "ebook_app").exists():
+            return (parent / ".ebook_audio_studio" / "models").resolve()
+    logger.warning(
+        "Repository root could not be detected from %s; falling back to current working directory.",
+        here,
+    )
+    return (Path.cwd() / ".ebook_audio_studio" / "models").resolve()
 
 
 # Default directory where model files are stored / downloaded to.

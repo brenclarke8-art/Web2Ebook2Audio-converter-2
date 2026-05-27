@@ -132,8 +132,6 @@ class TTSPage(BasePage):
     # ------------------------------------------------------------------
 
     def _refresh_status(self) -> None:
-        if self.settings.get("tts_backend_mode") != "remote":
-            self.settings.set("tts_backend_mode", "remote")
         self._status_label.setText("⏳ Checking TTS service…")
         self._status_label.setStyleSheet("")
         url = self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL)
@@ -200,8 +198,6 @@ class TTSPage(BasePage):
         self._save_voice_settings()
         voice = self._voice_combo.currentText()
         speed = self._speed_spin.value()
-        if self.settings.get("tts_backend_mode") != "remote":
-            self.settings.set("tts_backend_mode", "remote")
         self.log.log(
             f"Generating preview for voice '{voice}' (remote)…",
             level="INFO",

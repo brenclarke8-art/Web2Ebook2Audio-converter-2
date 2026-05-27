@@ -1,17 +1,27 @@
 from __future__ import annotations
 import os
 import json
+import logging
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
 
 
 def _default_app_home() -> Path:
     """Resolve repository-local runtime home (overridable via env var)."""
     env_home = os.environ.get("EBOOK_AUDIO_STUDIO_HOME")
     if env_home:
-        return Path(env_home).expanduser()
-    # src/ebook_app/core/settings_manager.py -> repository root at parents[3]
-    return Path(__file__).resolve().parents[3] / ".ebook_audio_studio"
+        return Path(env_home).expanduser().resolve()
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists() and (parent / "src" / "ebook_app").exists():
+            return parent / ".ebook_audio_studio"
+    logger.warning(
+        "Repository root could not be detected from %s; falling back to current working directory.",
+        here,
+    )
+    return (Path.cwd() / ".ebook_audio_studio").resolve()
 
 
 APP_HOME_DIR = _default_app_home().resolve()
@@ -85,6 +95,11 @@ class SettingsManager(QObject):
                 self.data[key] = value
                 changed = True
         if self.data.get("tts_backend_mode") != "remote":
+            if "tts_backend_mode" in self.data:
+                logger.info(
+                    "Overriding tts_backend_mode=%r to 'remote' (remote-only mode).",
+                    self.data.get("tts_backend_mode"),
+                )
             self.data["tts_backend_mode"] = "remote"
             changed = True
 

@@ -55,6 +55,8 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# EBOOK_AUDIO_STUDIO_HOME may be absolute, relative, or include "~";
+# it is normalized with expanduser()+resolve() below.
 APP_HOME_DIR = Path(
     os.environ.get("EBOOK_AUDIO_STUDIO_HOME", str(REPO_ROOT / ".ebook_audio_studio"))
 ).expanduser().resolve()
