@@ -9,6 +9,26 @@ from PySide6.QtCore import QObject, Signal, QThread
 from ebook_app.models.tts_engine_cli import TTSEngine
 
 
+def _make_tts_backend(settings, output_dir: Optional[str] = None):
+    """Return a TTSEngine or TTSClient depending on ``settings.tts_backend_mode``.
+
+    Both share the same public API so callers need not know which is active.
+    """
+    effective_output_dir = output_dir or settings.output_dir
+    if settings.tts_backend_mode == "remote":
+        from ebook_app.services.tts_client import TTSClient
+
+        return TTSClient(
+            output_dir=effective_output_dir,
+            base_url=settings.tts_backend_url,
+        )
+    return TTSEngine(
+        output_dir=effective_output_dir,
+        model_path=settings.kokoro_model_path or None,
+        voices_path=settings.kokoro_voices_path or None,
+    )
+
+
 class TTSThread(QThread):
     progress = Signal(str)
     finished = Signal(Path)
@@ -75,11 +95,7 @@ class TTSService(QObject):
     def __init__(self, settings, parent=None):
         super().__init__(parent)
         self.settings = settings
-        self.engine = TTSEngine(
-            output_dir=self.settings.output_dir,
-            model_path=self.settings.kokoro_model_path or None,
-            voices_path=self.settings.kokoro_voices_path or None,
-        )
+        self.engine = _make_tts_backend(settings)
         self._current_thread = None
 
     def _connect_thread(self, thread: TTSThread) -> None:

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -19,6 +21,8 @@ from PySide6.QtWidgets import (
 
 from ebook_app.models.tts_engine_cli import DEFAULT_MODELS_DIR, download_kokoro_models
 from ebook_app.ui.pages._base_page import BasePage
+
+_DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
 
 
 class _DownloadThread(QThread):
@@ -41,8 +45,27 @@ class _DownloadThread(QThread):
             self.error.emit(str(exc))
 
 
+class _ServiceHealthThread(QThread):
+    result = Signal(dict)
+
+    def __init__(self, url: str, parent=None):
+        super().__init__(parent)
+        self._url = url
+
+    def run(self) -> None:
+        from ebook_app.services.tts_client import TTSClient
+
+        client = TTSClient(base_url=self._url)
+        self.result.emit(client.health())
+
+
 class SettingsPage(BasePage):
     """Page for viewing and editing all persisted application settings."""
+
+    def __init__(self, **kwargs) -> None:
+        self._download_thread: _DownloadThread | None = None
+        self._svc_health_thread: _ServiceHealthThread | None = None
+        super().__init__(**kwargs)
 
     def _build_ui(self) -> None:
         # ── General ────────────────────────────────────────────────────
@@ -59,8 +82,54 @@ class SettingsPage(BasePage):
 
         self._layout.addWidget(general_group)
 
+        # ── TTS Backend ────────────────────────────────────────────────
+        backend_group = QGroupBox("TTS Backend")
+        backend_vbox = QVBoxLayout(backend_group)
+        backend_form = QFormLayout()
+
+        self._backend_mode_combo = QComboBox()
+        self._backend_mode_combo.addItems(["local", "remote"])
+        current_mode = self.settings.get("tts_backend_mode", "local")
+        self._backend_mode_combo.setCurrentText(current_mode)
+        self._backend_mode_combo.currentTextChanged.connect(self._on_backend_mode_changed)
+        backend_form.addRow("Backend mode:", self._backend_mode_combo)
+
+        self._backend_url_input = QLineEdit(
+            str(self.settings.get("tts_backend_url", _DEFAULT_TTS_SERVICE_URL))
+        )
+        self._backend_url_input.setPlaceholderText(_DEFAULT_TTS_SERVICE_URL)
+        backend_form.addRow("Service URL:", self._backend_url_input)
+
+        self._autostart_check = QCheckBox("Auto-start TTS service on launch")
+        self._autostart_check.setChecked(
+            bool(self.settings.get("tts_autostart_service", False))
+        )
+        backend_form.addRow("", self._autostart_check)
+
+        backend_vbox.addLayout(backend_form)
+
+        # Service status row
+        svc_status_row = QHBoxLayout()
+        self._svc_status_label = QLabel()
+        svc_status_row.addWidget(self._svc_status_label)
+        svc_status_row.addStretch()
+        self._check_svc_btn = QPushButton("Check Service")
+        self._check_svc_btn.clicked.connect(self._on_check_service)
+        svc_status_row.addWidget(self._check_svc_btn)
+        backend_vbox.addLayout(svc_status_row)
+
+        mode_note = QLabel(
+            "<i>local</i>: imports kokoro-onnx directly (requires Python env with kokoro-onnx)<br>"
+            "<i>remote</i>: calls tts_service/tts_server.py over HTTP (allows separate Python env)"
+        )
+        mode_note.setWordWrap(True)
+        backend_vbox.addWidget(mode_note)
+
+        self._layout.addWidget(backend_group)
+        self._on_backend_mode_changed(current_mode)  # set initial enabled state
+
         # ── Kokoro ONNX Models ─────────────────────────────────────────
-        model_group = QGroupBox("Kokoro ONNX Models")
+        model_group = QGroupBox("Kokoro ONNX Models (local mode)")
         model_vbox = QVBoxLayout(model_group)
 
         model_form = QFormLayout()
@@ -113,11 +182,16 @@ class SettingsPage(BasePage):
 
         self._layout.addStretch()
 
-        self._download_thread: _DownloadThread | None = None
-
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _on_backend_mode_changed(self, mode: str) -> None:
+        is_remote = mode == "remote"
+        self._backend_url_input.setEnabled(is_remote)
+        self._check_svc_btn.setEnabled(is_remote)
+        if not is_remote:
+            self._svc_status_label.setText("")
 
     def _refresh_model_status(self) -> None:
         from ebook_app.models.tts_engine_cli import _resolve_model_paths
@@ -168,11 +242,54 @@ class SettingsPage(BasePage):
 
     def _on_save(self) -> None:
         self.settings.set("output_dir", self._output_dir_input.text().strip())
+        self.settings.set("tts_backend_mode", self._backend_mode_combo.currentText())
+        self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
+        self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
         self.settings.set("kokoro_model_path", self._model_path_input.text().strip())
         self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
         self.settings.save()
         self._refresh_model_status()
         self.log.log("Settings saved.", level="SUCCESS")
+
+    def _on_check_service(self) -> None:
+        if self._svc_health_thread and self._svc_health_thread.isRunning():
+            return
+        # Discard old thread before creating a new one to avoid signal leaks.
+        if self._svc_health_thread is not None:
+            try:
+                self._svc_health_thread.result.disconnect(self._on_service_health_result)
+            except RuntimeError:
+                pass
+            self._svc_health_thread.deleteLater()
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
+        self._svc_status_label.setText("⏳ Checking…")
+        self._svc_status_label.setStyleSheet("")
+        self._svc_health_thread = _ServiceHealthThread(url, parent=self)
+        self._svc_health_thread.result.connect(self._on_service_health_result)
+        self._svc_health_thread.start()
+
+    def _on_service_health_result(self, health: dict) -> None:
+        status = health.get("status", "unknown")
+        models_ready = health.get("models_ready", False)
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
+
+        if status == "unreachable":
+            self._svc_status_label.setText(f"🔴 Service not reachable at {url}")
+            self._svc_status_label.setStyleSheet("color: red;")
+        elif status == "ok" and models_ready:
+            self._svc_status_label.setText("✅ Service running — models ready.")
+            self._svc_status_label.setStyleSheet("color: green;")
+        elif status == "ok":
+            model_path = health.get("model_path", "")
+            self._svc_status_label.setText(
+                f"⚠ Service running but models missing at {model_path}"
+            )
+            self._svc_status_label.setStyleSheet("color: orange;")
+        else:
+            self._svc_status_label.setText(
+                f"⚠ Service error: {health.get('detail', '')}"
+            )
+            self._svc_status_label.setStyleSheet("color: orange;")
 
     def _on_download_models(self) -> None:
         if self._download_thread and self._download_thread.isRunning():
@@ -204,3 +321,4 @@ class SettingsPage(BasePage):
         self._download_btn.setEnabled(True)
         self._refresh_model_status()
         self.log.log(f"Model download failed: {error}", level="ERROR")
+

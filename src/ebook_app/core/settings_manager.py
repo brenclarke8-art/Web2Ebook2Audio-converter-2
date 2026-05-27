@@ -16,6 +16,11 @@ class SettingsManager(QObject):
         "theme": "dark",
         "window_width": 1200,
         "window_height": 800,
+        # TTS backend: "local" uses kokoro-onnx directly; "remote" calls the
+        # standalone tts_service/tts_server.py via HTTP.
+        "tts_backend_mode": "local",
+        "tts_backend_url": "http://127.0.0.1:5005",
+        "tts_autostart_service": False,
     }
 
     def __init__(self):
@@ -94,6 +99,33 @@ class SettingsManager(QObject):
     @kokoro_voices_path.setter
     def kokoro_voices_path(self, value):
         self.set("kokoro_voices_path", value)
+
+    @property
+    def tts_backend_mode(self):
+        """Return 'local' (direct kokoro-onnx import) or 'remote' (HTTP service)."""
+        return self.get("tts_backend_mode")
+
+    @tts_backend_mode.setter
+    def tts_backend_mode(self, value):
+        self.set("tts_backend_mode", value)
+
+    @property
+    def tts_backend_url(self):
+        """Base URL of the remote TTS service (used when tts_backend_mode='remote')."""
+        return self.get("tts_backend_url")
+
+    @tts_backend_url.setter
+    def tts_backend_url(self, value):
+        self.set("tts_backend_url", value)
+
+    @property
+    def tts_autostart_service(self):
+        """Whether to auto-start the TTS service subprocess on launch."""
+        return self.get("tts_autostart_service")
+
+    @tts_autostart_service.setter
+    def tts_autostart_service(self, value):
+        self.set("tts_autostart_service", value)
 
     @property
     def output_dir(self):

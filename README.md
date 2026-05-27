@@ -36,30 +36,61 @@ src/ebook_app/
 └── main.py            # Application entry point
 ```
 
+## Architecture
+
+### TTS Backend Modes
+
+The application supports two TTS backend modes, selectable in **Settings → TTS Backend**:
+
+| Mode | Description | Python env |
+|------|-------------|------------|
+| `local` | Imports `kokoro-onnx` directly in the GUI process | Single env (Python ≥ 3.10, needs kokoro-onnx) |
+| `remote` | Calls a standalone `tts_service/tts_server.py` over HTTP | Two envs — GUI + TTS service run separately |
+
+```
+┌──────────────────────────┐
+│  GUI (PySide6)           │  ← Python ≥ 3.10, any version PySide6 supports
+│  Scraping, EPUB, preview │
+└───────────┬──────────────┘
+            │ HTTP / JSON  (remote mode only)
+┌───────────▼──────────────┐
+│ TTS Service (FastAPI)    │  ← Any Python version (e.g. 3.14)
+│ kokoro-onnx + ONNX       │
+└──────────────────────────┘
+```
+
+The remote mode is the recommended setup when your GUI Python and kokoro-onnx
+are in different virtual environments (e.g. PySide6 requires Python 3.10/3.12
+while you want Kokoro on Python 3.14).
+
 ## System Requirements
 
-- **Python**: 3.14 or higher
+- **Python**: 3.10 or higher for the GUI; any supported version for the TTS service
 - **Operating System**: Windows, macOS, or Linux
-- **Disk Space**: ~500 MB for model files, plus space for project outputs (no external CLI required)
+- **Disk Space**: ~500 MB for model files, plus space for project outputs
 
 ## Installation
 
-### 1. Prerequisites
+### Option A — Single Environment (local TTS mode)
 
-Ensure Python 3.14+ is installed:
+Use this when your Python version supports both PySide6 and kokoro-onnx.
+
+#### 1. Prerequisites
+
+Ensure Python 3.10+ is installed:
 
 ```bash
-python --version  # Should show 3.14 or higher
+python --version  # Should show 3.10 or higher
 ```
 
-### 2. Clone the Repository
+#### 2. Clone the Repository
 
 ```bash
 git clone https://github.com/brenclarke8-art/Web2Ebook2Audio-converter-2.git
 cd Web2Ebook2Audio-converter-2
 ```
 
-### 3. (Optional) Create a Virtual Environment
+#### 3. Create a Virtual Environment
 
 ```bash
 # On Windows
@@ -71,19 +102,20 @@ python -m venv venv
 source venv/bin/activate
 ```
 
-### 4. Install the Application
+#### 4. Install the Application (GUI + local TTS)
 
 ```bash
-pip install -e .
+python -m pip install --upgrade pip
+python -m pip install -e ".[local-tts]"
 ```
 
-This installs all required dependencies including `kokoro-onnx`, `onnxruntime`, `PySide6`, and others.
+This installs `PySide6`, `kokoro-onnx`, `onnxruntime`, and all other dependencies.
 
-### 5. Download Kokoro ONNX Model Files
+#### 5. Download Kokoro ONNX Model Files
 
 The application uses the [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx) library **as a Python package** — no separate CLI binary is required.
 
-Model files are downloaded automatically from the Kokoro ONNX GitHub release (`model-files-v1.0`) and saved to `~/.ebook_audio_studio/models/`. There are two ways to trigger the download:
+Model files are downloaded and saved to `~/.ebook_audio_studio/models/`.
 
 **Option A — In-app (recommended):**
 
@@ -106,7 +138,7 @@ Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
 - Place them in `~/.ebook_audio_studio/models/` (auto-discovered), or
 - Set custom paths via **Settings → Model file (.onnx)** and **Settings → Voices file (.bin)**
 
-### 6. Verify Installation
+#### 6. Verify Installation
 
 ```bash
 ebook-audio-studio
@@ -117,6 +149,74 @@ If the command is not found, run directly:
 ```bash
 python -m ebook_app.main
 ```
+
+---
+
+### Option B — Hybrid Environment (remote TTS mode)
+
+Use this when PySide6 and kokoro-onnx are incompatible in the same Python
+version (e.g. PySide6 requires Python 3.10/3.12 but you want Kokoro on 3.14).
+
+#### GUI environment (Python 3.10 / 3.12 / any PySide6-compatible version)
+
+```bash
+# Create GUI venv
+py -3.10 -m venv venv_gui
+venv_gui\Scripts\activate        # Windows
+# source venv_gui/bin/activate   # macOS/Linux
+
+python -m pip install --upgrade pip
+python -m pip install -e .       # GUI only — no kokoro-onnx
+```
+
+#### TTS service environment (Python 3.14 or any preferred version)
+
+```bash
+py -3.14 -m venv tts_service/venv_tts
+tts_service\venv_tts\Scripts\activate        # Windows
+# source tts_service/venv_tts/bin/activate   # macOS/Linux
+
+python -m pip install --upgrade pip
+python -m pip install -r tts_service/requirements.txt
+```
+
+#### Optional: Browser scraping support (Playwright)
+
+If the target site requires JavaScript rendering, install Playwright in the GUI
+environment:
+
+```bash
+python -m pip install playwright
+python -m playwright install chromium
+```
+
+#### Start the TTS service
+
+```bash
+# From the tts_service directory with its venv active:
+cd tts_service
+uvicorn tts_server:app --host 127.0.0.1 --port 5005
+```
+
+You can also set custom model paths via environment variables:
+
+```bash
+KOKORO_MODEL_PATH=/path/to/kokoro-v1.0.onnx \
+KOKORO_VOICES_PATH=/path/to/voices-v1.0.bin \
+uvicorn tts_server:app --host 127.0.0.1 --port 5005
+```
+
+#### Configure the GUI to use the service
+
+1. Launch `ebook-audio-studio` (from the GUI venv)
+2. Navigate to **Settings**
+3. Under **TTS Backend**, set **Backend mode** to `remote`
+4. Ensure **Service URL** is `http://127.0.0.1:5005`
+5. Click **Check Service** — the indicator should turn green
+6. Click **Save Settings**
+
+The TTS page will now show the service health status and use the remote backend
+for all voice synthesis.
 
 ---
 
@@ -297,7 +397,7 @@ The status indicator on the TTS page and Settings page shows amber (⚠) if mode
 Make sure the package is installed:
 
 ```bash
-pip install kokoro-onnx
+python -m pip install kokoro-onnx
 ```
 
 ### Application Won't Start
@@ -311,7 +411,7 @@ python -m ebook_app.main
 Check for missing dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 ### Audio Generation is Slow

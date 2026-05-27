@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ebook-audio-studio"
 version = "0.1.0"
 description = "A PySide6 desktop app that converts web novels into EPUB3 audiobooks with multi-speaker TTS."
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.6.0",
     "requests>=2.31.0",
@@ -14,10 +14,19 @@ dependencies = [
     "lxml>=5.0.0",
     "ebooklib>=0.18",
     "deep-translator>=1.11.4",
-    "kokoro-onnx>=1.0.0",
-    "onnxruntime>=1.17.0",
     "numpy>=1.26.0",
     "soundfile>=0.12.1",
+]
+
+[project.optional-dependencies]
+# Install when running the GUI in local TTS mode (Python 3.10+ compatible).
+local-tts = [
+    "kokoro-onnx>=1.0.0",
+    "onnxruntime>=1.17.0",
+]
+# Full install: GUI + local TTS engine in a single environment.
+full = [
+    "ebook-audio-studio[local-tts]",
 ]
 
 [project.scripts]

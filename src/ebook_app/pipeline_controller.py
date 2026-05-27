@@ -73,6 +73,26 @@ class PipelineController:
         self.alignment_data: dict[int, list[AlignmentEntry]] = {}
 
     # ------------------------------------------------------------------
+    # TTS backend factory
+    # ------------------------------------------------------------------
+
+    def _make_tts_backend(self, output_dir: str | None = None):
+        """Return a TTSEngine (local) or TTSClient (remote) per settings."""
+        effective_output_dir = output_dir or str(self.work_dir / "audio")
+        if self.settings.tts_backend_mode == "remote":
+            from ebook_app.services.tts_client import TTSClient
+
+            return TTSClient(
+                output_dir=effective_output_dir,
+                base_url=self.settings.tts_backend_url,
+            )
+        return TTSEngine(
+            output_dir=effective_output_dir,
+            model_path=self.settings.kokoro_model_path or None,
+            voices_path=self.settings.kokoro_voices_path or None,
+        )
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -243,11 +263,7 @@ class PipelineController:
             return
 
         logger.info(f"Batch TTS for {len(self.dialogue_segments)} chapters...")
-        engine = TTSEngine(
-            output_dir=str(self.work_dir / "audio"),
-            model_path=self.settings.kokoro_model_path or None,
-            voices_path=self.settings.kokoro_voices_path or None,
-        )
+        engine = self._make_tts_backend(output_dir=str(self.work_dir / "audio"))
 
         for i, segments in self.dialogue_segments.items():
             chapter_id = f"ch{i:03d}"
