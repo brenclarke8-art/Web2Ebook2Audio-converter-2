@@ -135,6 +135,14 @@ class _PipelineWorker(QThread):
         ctrl.translate_chapters()
         self.log_message.emit("Parsing dialogue…", "INFO")
         ctrl.parse_dialogue()
+        pending = ctrl.settings.get("pending_character_additions", []) or []
+        if not pending:
+            self.log_message.emit(
+                "No new characters were detected during dialogue parsing. "
+                "If this is unexpected, verify your Ollama model is installed "
+                "via Settings → LLM check.",
+                "WARNING",
+            )
         self.log_message.emit(
             f"LLM communication log: {ctrl.work_dir / 'llm_communication.jsonl'}",
             "INFO",
@@ -314,7 +322,7 @@ class PipelinePage(BasePage):
 
         splitter = QSplitter()
 
-        chapter_group = QGroupBox("Scraped Chapter Content")
+        chapter_group = QGroupBox("Chapter Content (parsed · falls back to raw scrape)")
         chapter_layout = QVBoxLayout(chapter_group)
         self._review_text_view = QTextEdit()
         self._review_text_view.setReadOnly(True)
@@ -643,6 +651,37 @@ class PipelinePage(BasePage):
             self._review_text_view.setPlainText("")
             return
         chapter = self._review_chapters[index] or {}
+
+        # Prefer LLM-tagged segments from per-chapter chapter_info.json when available.
+        if self.project_manager:
+            work_dir = self.project_manager.get_work_dir()
+            if work_dir:
+                chapter_id = f"ch{index:03d}"
+                chapter_info_file = work_dir / chapter_id / "chapter_info.json"
+                if chapter_info_file.exists():
+                    try:
+                        with open(chapter_info_file, encoding="utf-8") as fh:
+                            ch_data = json.load(fh)
+                        segments = ch_data.get("segments", [])
+                        if segments:
+                            lines = []
+                            for seg in segments:
+                                speaker = str(seg.get("speaker", "narrator")).upper()
+                                seg_type = str(seg.get("type", "narration")).lower()
+                                text = str(seg.get("text", "")).strip()
+                                if not text:
+                                    continue
+                                if seg_type == "narration":
+                                    lines.append(text)
+                                else:
+                                    lines.append(f"[{speaker}] {text}")
+                            if lines:
+                                self._review_text_view.setPlainText("\n\n".join(lines))
+                                return
+                    except Exception:
+                        pass  # Fall through to raw content on any error.
+
+        # Fall back to raw scraped content.
         content = str(chapter.get("content", "")).strip()
         self._review_text_view.setPlainText(content or "[No content available for this chapter.]")
 

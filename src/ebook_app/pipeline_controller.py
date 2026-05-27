@@ -48,6 +48,8 @@ class PipelineController:
         "epub_export",
     ]
 
+    _OLLAMA_TAGS_PATH = "/api/tags"
+
     def __init__(
         self,
         settings: SettingsManager,
@@ -115,6 +117,56 @@ class PipelineController:
             model_path=self.settings.kokoro_model_path or None,
             voices_path=self.settings.kokoro_voices_path or None,
         )
+
+    def _preflight_llm_check(self, parser) -> None:
+        """Verify Ollama is reachable and the configured model is installed.
+
+        Raises RuntimeError with an actionable message if the check fails,
+        so that parse_dialogue() aborts early instead of silently falling back
+        on every chapter.
+        """
+        import requests
+        from urllib.parse import urlparse, urlunparse
+
+        try:
+            parsed = urlparse(parser.ollama_url)
+            if not parsed.scheme or not parsed.netloc:
+                raise RuntimeError(
+                    f"Invalid Ollama URL {parser.ollama_url!r}. "
+                    "Update the Ollama URL in Settings."
+                )
+            tags_url = urlunparse((parsed.scheme, parsed.netloc, self._OLLAMA_TAGS_PATH, "", "", ""))
+            response = requests.get(tags_url, timeout=5)
+            response.raise_for_status()
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot connect to Ollama at {parser.ollama_url!r}. "
+                f"Ensure 'ollama serve' is running. Details: {exc}"
+            ) from exc
+
+        try:
+            data = response.json()
+            models_raw = data.get("models", []) if isinstance(data, dict) else []
+            available = {
+                str(m.get("name", "")).split(":")[0].strip()
+                for m in models_raw
+                if isinstance(m, dict)
+            }
+            model_base = str(parser.model or "").split(":")[0].strip()
+            if model_base and model_base not in available:
+                raise RuntimeError(
+                    f"Model '{parser.model}' is not installed in Ollama. "
+                    f"Pull it first: ollama pull {parser.model}"
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            logger.debug(
+                "Could not parse Ollama /api/tags response; skipping model presence check.",
+                exc_info=True,
+            )
 
     def _build_scraper(self):
         scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
@@ -352,6 +404,8 @@ class PipelineController:
             model=self.settings.get("ollama_model", ""),
             llm_log_path=llm_log_path,
         )
+
+        self._preflight_llm_check(parser)
 
         known_characters = self.settings.get("character_db", []) or []
         known_names = {
