@@ -68,7 +68,12 @@ This split setup is the supported path: GUI in Python 3.10 and Kokoro service in
 
 ## Installation
 
-### Option A — GUI Environment
+The app runs in remote mode, so you must set up **both** environments:
+
+1. GUI environment (this section)
+2. TTS service environment (next section)
+
+### Step 1 — GUI Environment (required)
 
 #### 1. Prerequisites
 
@@ -112,21 +117,21 @@ The application uses the [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-on
 
 Model files are downloaded and saved to `<repo>/.ebook_audio_studio/models/` by default.
 
-**Option A — In-app (recommended):**
+**Method A — In-app (recommended):**
 
 1. Launch the application: `ebook-audio-studio`
 2. Navigate to the **Settings** page
 3. Click **"Download Models from GitHub"**
 4. Wait for the download to complete — the status indicator turns green when ready
 
-**Option B — Command line:**
+**Method B — Command line:**
 
 ```python
 from ebook_app.models.tts_engine_cli import download_kokoro_models
 download_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models/
 ```
 
-**Option C — Manual placement:**
+**Method C — Manual placement:**
 
 Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
 <https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0> and either:
@@ -147,7 +152,7 @@ python -m ebook_app.main
 
 ---
 
-### Option B — TTS Service Environment
+### Step 2 — TTS Service Environment (required)
 
 This is required for the remote-only setup (GUI Python 3.10, TTS Python 3.14).
 
