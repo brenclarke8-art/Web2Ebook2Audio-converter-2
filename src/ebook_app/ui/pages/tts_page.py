@@ -244,11 +244,12 @@ class TTSPage(BasePage):
         )
         self._tts_preview_btn.setEnabled(False)
 
-        # Discard old thread
+        # Discard old thread and its connections
         if self._preview_thread is not None:
             try:
                 self._preview_thread.preview_ready.disconnect()
                 self._preview_thread.error.disconnect()
+                self._preview_thread.finished.disconnect()
             except RuntimeError:
                 pass
             self._preview_thread.deleteLater()

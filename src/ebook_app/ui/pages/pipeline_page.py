@@ -363,10 +363,9 @@ class PipelinePage(BasePage):
     def _on_worker_finished(self, mode: str, message: str) -> None:
         self._set_buttons_enabled(True)
         if mode == _PipelineWorker.RUN_TO_REVIEW and self.project_manager:
-            selected = self.project_manager.get_selected_range()
-            self.project_manager.set_last_processed_chapter(
-                int(selected.get("end", 0))
-            )
+            worker = self._worker
+            end_chapter = worker._end if worker is not None else 0
+            self.project_manager.set_last_processed_chapter(end_chapter)
         self._load_active_project_state()
         self.log.log(message, level="SUCCESS")
         if mode == _PipelineWorker.RUN_TO_REVIEW:
@@ -388,9 +387,6 @@ class PipelinePage(BasePage):
 
     def _on_check_index(self) -> None:
         if not self._require_project():
-            return
-        if self._is_busy():
-            self.log.log("A pipeline operation is already running.", level="WARNING")
             return
         index_url = self._index_url_input.text().strip()
         if not index_url:
@@ -425,9 +421,6 @@ class PipelinePage(BasePage):
     def _on_run_to_review(self) -> None:
         if not self._require_project():
             return
-        if self._is_busy():
-            self.log.log("A pipeline operation is already running.", level="WARNING")
-            return
         result = self._validate_range()
         if result is None:
             return
@@ -448,9 +441,6 @@ class PipelinePage(BasePage):
 
     def _on_continue_audio(self) -> None:
         if not self._require_project():
-            return
-        if self._is_busy():
-            self.log.log("A pipeline operation is already running.", level="WARNING")
             return
         selected = self.project_manager.get_selected_range()
         start = max(1, int(selected.get("start", 1)))
