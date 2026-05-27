@@ -387,18 +387,10 @@ class SettingsPage(BasePage):
                 if not package_ok
                 else ""
             )
-            self._model_status_label.setText(
-                " ".join(
-                    filter(
-                        None,
-                        [
-                            f"⚠ Missing: {', '.join(missing)}.",
-                            "Click Download to fetch them.",
-                            package_warning,
-                        ],
-                    )
-                )
-            )
+            msg = f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
+            if package_warning:
+                msg = f"{msg} {package_warning}"
+            self._model_status_label.setText(msg)
             self._model_status_label.setStyleSheet("color: orange;")
 
     def _browse_output_dir(self) -> None:
