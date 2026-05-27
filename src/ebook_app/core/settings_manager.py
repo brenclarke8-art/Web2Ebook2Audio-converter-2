@@ -25,8 +25,11 @@ class SettingsManager(QObject):
 
     def __init__(self):
         super().__init__()
-        self.settings_path = Path.home() / ".ebook_audio_studio_settings.json"
-        self._settings = {}
+        self.path = Path.home() / ".ebook_audio_studio_settings.json"
+        self.data = {}
+        # Backward-compatible aliases
+        self.settings_path = self.path
+        self._settings = self.data
         self.load()
 
     # ---------------------------------------------------------
@@ -34,21 +37,30 @@ class SettingsManager(QObject):
     # ---------------------------------------------------------
 
     def load(self):
-        if self.settings_path.exists():
+        if self.path.exists():
             try:
-                self._settings = json.loads(self.settings_path.read_text())
+                with open(self.path, "r", encoding="utf-8") as f:
+                    self.data = json.load(f)
             except Exception:
-                self._settings = {}
+                self.data = {}
         else:
-            self._settings = {}
+            self.data = {}
 
         # Apply defaults for missing keys
+        changed = False
         for key, value in self.DEFAULTS.items():
-            self._settings.setdefault(key, value)
+            if key not in self.data:
+                self.data[key] = value
+                changed = True
+
+        self._settings = self.data
+        if changed:
+            self.save()
 
     def save(self):
         try:
-            self.settings_path.write_text(json.dumps(self._settings, indent=2))
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2)
         except Exception as e:
             print("Failed to save settings:", e)
 
@@ -56,11 +68,12 @@ class SettingsManager(QObject):
     # Get / Set
     # ---------------------------------------------------------
 
-    def get(self, key: str):
-        return self._settings.get(key, self.DEFAULTS.get(key))
+    def get(self, key: str, default=None):
+        return self.data.get(key, default)
 
     def set(self, key: str, value):
-        self._settings[key] = value
+        self.data[key] = value
+        self._settings = self.data
         self.save()
         self.settings_changed.emit(key)
 
