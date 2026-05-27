@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from ebook_app.core.settings_manager import SettingsManager
+from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
 from ebook_app.models.epub_builder import EPUBBuilder
 from ebook_app.models.forced_alignment import ForcedAlignment, AlignmentEntry
@@ -66,11 +67,15 @@ class PipelineController:
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
         self.chapter_urls: list[str] = []
+        self.raw_chapter_urls: list[str] = []
         self.chapters: list[dict] = []
         self.translated_chapters: list[dict] = []
         self.dialogue_segments: dict[int, list[Segment]] = {}
         self.audio_files: dict[int, Path] = {}
         self.alignment_data: dict[int, list[AlignmentEntry]] = {}
+        self.selected_start_chapter: int = 1
+        self.selected_end_chapter: int = 0
+        self.review_required: bool = False
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -131,6 +136,15 @@ class PipelineController:
             if not self._running:
                 logger.info("Pipeline stopped before step '%s'.", key)
                 break
+            if key in {"multispeaker_tts", "batch_tts", "forced_alignment", "smil_generation", "epub_export"}:
+                review_approved = bool(self.settings.get("character_review_approved", False))
+                if not review_approved:
+                    self.review_required = True
+                    logger.info(
+                        "Pipeline paused before '%s': character review approval required.",
+                        key,
+                    )
+                    break
             logger.info("Pipeline step: %s", key)
             self._on_progress(key, 0)
             try:
@@ -146,6 +160,22 @@ class PipelineController:
         """Signal the pipeline to stop after the current step."""
         self._running = False
 
+    def set_chapter_range(self, start_chapter: int, end_chapter: int) -> None:
+        """Set the 1-based chapter range to process."""
+        start = max(1, int(start_chapter))
+        end = max(start, int(end_chapter))
+        self.selected_start_chapter = start
+        self.selected_end_chapter = end
+        with open(self.work_dir / "selected_range.json", "w", encoding="utf-8") as f:
+            json.dump({"start": start, "end": end}, f, indent=2, ensure_ascii=False)
+
+    def get_chapter_inventory(self) -> dict:
+        """Return chapter inventory for current index scrape state."""
+        return {
+            "raw_count": len(self.raw_chapter_urls),
+            "valid_count": len(self.chapter_urls),
+        }
+
     # ------------------------------------------------------------------
     # Pipeline steps
     # ------------------------------------------------------------------
@@ -159,13 +189,24 @@ class PipelineController:
 
         logger.info(f"Scraping index from: {index_url}")
         scraper = WebScraper()
-        self.chapter_urls = scraper.scrape_index_page(index_url)
-        logger.info(f"Found {len(self.chapter_urls)} chapter URLs.")
+        self.raw_chapter_urls = scraper.scrape_index_page(index_url)
+        url_filter = FillerChapterFilter()
+        self.chapter_urls, filtered_urls = url_filter.filter_urls(self.raw_chapter_urls)
+        logger.info(
+            "Found %d chapter URLs (%d valid, %d filtered).",
+            len(self.raw_chapter_urls),
+            len(self.chapter_urls),
+            len(filtered_urls),
+        )
 
         # Save URLs to disk
+        raw_urls_file = self.work_dir / "raw_chapter_urls.json"
+        with open(raw_urls_file, "w", encoding="utf-8") as f:
+            json.dump(self.raw_chapter_urls, f, indent=2, ensure_ascii=False)
+
         urls_file = self.work_dir / "chapter_urls.json"
-        with open(urls_file, "w") as f:
-            json.dump(self.chapter_urls, f, indent=2)
+        with open(urls_file, "w", encoding="utf-8") as f:
+            json.dump(self.chapter_urls, f, indent=2, ensure_ascii=False)
 
     def scrape_chapters(self) -> None:
         """Download all chapter pages listed in the scraped index."""
@@ -173,15 +214,33 @@ class PipelineController:
             # Try loading from disk
             urls_file = self.work_dir / "chapter_urls.json"
             if urls_file.exists():
-                with open(urls_file) as f:
+                with open(urls_file, encoding="utf-8") as f:
                     self.chapter_urls = json.load(f)
             else:
                 logger.warning("No chapter URLs available. Run scrape_index first.")
                 return
 
-        logger.info(f"Scraping {len(self.chapter_urls)} chapters...")
+        if self.selected_end_chapter <= 0:
+            self.selected_end_chapter = len(self.chapter_urls)
+        start_idx = max(0, self.selected_start_chapter - 1)
+        end_idx = min(len(self.chapter_urls), self.selected_end_chapter)
+        selected_urls = self.chapter_urls[start_idx:end_idx]
+        if not selected_urls:
+            logger.warning(
+                "No chapters selected for range %d-%d.",
+                self.selected_start_chapter,
+                self.selected_end_chapter,
+            )
+            return
+
+        logger.info(
+            "Scraping chapters %d-%d (%d chapters).",
+            self.selected_start_chapter,
+            self.selected_end_chapter,
+            len(selected_urls),
+        )
         scraper = WebScraper()
-        self.chapters = scraper.scrape_chapters(self.chapter_urls)
+        self.chapters = scraper.scrape_chapters(selected_urls)
 
         # Save chapters to disk
         chapters_file = self.work_dir / "chapters.json"
@@ -209,13 +268,15 @@ class PipelineController:
             return
 
         logger.info(f"Translating {len(self.chapters)} chapters to {target_lang}...")
-        # For now, copy chapters as-is (TODO: implement real translation)
-        self.translated_chapters = self.chapters.copy()
-
-        # Save translated chapters
         translated_file = self.work_dir / "translated_chapters.json"
-        with open(translated_file, "w", encoding="utf-8") as f:
-            json.dump(self.translated_chapters, f, indent=2, ensure_ascii=False)
+        self.translated_chapters = []
+        total = len(self.chapters)
+        for idx, chapter in enumerate(self.chapters, start=1):
+            # For now, copy chapters as-is (TODO: implement real translation)
+            self.translated_chapters.append(chapter.copy())
+            with open(translated_file, "w", encoding="utf-8") as f:
+                json.dump(self.translated_chapters, f, indent=2, ensure_ascii=False)
+            self._on_progress("translate_chapters", int(idx * 100 / max(total, 1)))
 
         logger.info(f"Translation complete for {len(self.translated_chapters)} chapters.")
 
@@ -253,6 +314,7 @@ class PipelineController:
 
         aggregated: dict[str, dict] = {}
 
+        total = len(self.translated_chapters)
         for i, chapter in enumerate(self.translated_chapters):
             chapter_id = f"ch{i:03d}"
             content = chapter.get("content", "")
@@ -293,6 +355,8 @@ class PipelineController:
                     )
                     pending_names.add(normalized)
 
+            self._on_progress("parse_dialogue", int((i + 1) * 100 / max(total, 1)))
+
         # Save segments to disk
         segments_file = self.work_dir / "dialogue_segments.json"
         segments_data = {
@@ -308,6 +372,8 @@ class PipelineController:
             json.dump(aggregated, f, indent=2, ensure_ascii=False)
 
         self.settings.set("pending_character_additions", pending)
+        self.settings.set("character_review_approved", False)
+        self.review_required = True
 
         logger.info(f"Dialogue parsing complete.")
 
@@ -358,6 +424,27 @@ class PipelineController:
             if name and voice:
                 voice_mappings[name] = voice
 
+        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
+        if audio_mode == "single_file":
+            full_segments: list[Segment] = []
+            for _, segments in sorted(self.dialogue_segments.items()):
+                full_segments.extend(segments)
+            if not full_segments:
+                logger.warning("No dialogue segments available for combined audio.")
+                return
+            output_filename = "book_audio.wav"
+            audio_path = engine.generate_multi_voice_audio(
+                dialogue_segments=full_segments,
+                output_filename=output_filename,
+                voice_mappings=voice_mappings,
+                default_male_voice=default_male_voice,
+                default_female_voice=default_female_voice,
+                speed=self.settings.tts_speed,
+            )
+            self.audio_files = {0: audio_path}
+            logger.info("Multispeaker TTS complete: generated combined book audio.")
+            return
+
         for i, segments in self.dialogue_segments.items():
             chapter_id = f"ch{i:03d}"
             output_filename = f"{chapter_id}_audio.wav"
@@ -384,6 +471,25 @@ class PipelineController:
 
         logger.info(f"Batch TTS for {len(self.dialogue_segments)} chapters...")
         engine = self._make_tts_backend(output_dir=str(self.work_dir / "audio"))
+        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
+
+        if audio_mode == "single_file":
+            full_text_parts: list[str] = []
+            for _, segments in sorted(self.dialogue_segments.items()):
+                full_text_parts.extend(s.text for s in segments if s.text.strip())
+            full_text = "\n\n".join(full_text_parts).strip()
+            if not full_text:
+                logger.warning("No text available to synthesize combined audio.")
+                return
+            audio_path = engine.generate_audio(
+                text=full_text,
+                output_filename="book_audio.wav",
+                voice=self.settings.tts_voice,
+                speed=self.settings.tts_speed,
+            )
+            self.audio_files = {0: audio_path}
+            logger.info("Batch TTS complete: generated combined book audio.")
+            return
 
         for i, segments in self.dialogue_segments.items():
             chapter_id = f"ch{i:03d}"
@@ -415,9 +521,15 @@ class PipelineController:
 
         logger.info("Running forced alignment...")
         aligner = ForcedAlignment()
+        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
 
         for i, audio_path in self.audio_files.items():
-            segments = self.dialogue_segments.get(i, [])
+            if audio_mode == "single_file":
+                segments = []
+                for _, chapter_segments in sorted(self.dialogue_segments.items()):
+                    segments.extend(chapter_segments)
+            else:
+                segments = self.dialogue_segments.get(i, [])
             if not segments:
                 continue
 
@@ -477,6 +589,7 @@ class PipelineController:
             author=author,
             output_dir=str(self.settings.output_dir),
         )
+        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
 
         # Add chapters with audio and SMIL
         for i, chapter in enumerate(self.translated_chapters):
@@ -489,6 +602,8 @@ class PipelineController:
             builder.add_chapter(xhtml_filename, xhtml_content, chapter_title)
 
             # Add audio and SMIL if available
+            if audio_mode == "single_file":
+                continue
             if i in self.audio_files and i in self.alignment_data:
                 audio_path = self.audio_files[i]
                 alignment = self.alignment_data[i]

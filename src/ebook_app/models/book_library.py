@@ -106,6 +106,8 @@ class BookLibrary:
             "title": title,
             "author": author,
             "index_url": index_url,
+            "raw_chapter_count": 0,
+            "valid_chapter_count": 0,
             "last_chapter_count": 0,
             "last_processed_chapter": 0,
             "last_settings": settings or {},
@@ -185,8 +187,34 @@ class BookLibrary:
 
         entry = data[book_id]
         entry["last_chapter_count"] = last_chapter_count
+        entry["valid_chapter_count"] = last_chapter_count
         entry["last_checked"] = datetime.now(timezone.utc).isoformat()
 
+        self._save(data)
+
+    def update_inventory(self, book_id: str, raw_chapter_count: int, valid_chapter_count: int) -> None:
+        """Persist chapter inventory data after scraping the index."""
+        data = self._load()
+        if book_id not in data:
+            return
+
+        entry = data[book_id]
+        now = datetime.now(timezone.utc).isoformat()
+        entry["raw_chapter_count"] = max(0, int(raw_chapter_count))
+        entry["valid_chapter_count"] = max(0, int(valid_chapter_count))
+        entry["last_chapter_count"] = entry["valid_chapter_count"]
+        entry["last_checked"] = now
+        self._save(data)
+
+    def update_last_processed(self, book_id: str, last_processed_chapter: int) -> None:
+        """Persist the latest processed chapter number for a book."""
+        data = self._load()
+        if book_id not in data:
+            return
+
+        entry = data[book_id]
+        entry["last_processed_chapter"] = max(0, int(last_processed_chapter))
+        entry["last_converted"] = datetime.now(timezone.utc).isoformat()
         self._save(data)
 
     def list_books(self) -> List[Dict[str, Any]]:

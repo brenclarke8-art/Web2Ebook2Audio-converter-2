@@ -47,7 +47,11 @@ class MainWindow(QMainWindow):
 
         # Add pages — order must match TopNavBar label indices:
         # 0=Scraper, 1=Translator, 2=TTS, 3=EPUB, 4=Pipeline, 5=Preview, 6=Settings
-        _page_kwargs = {"settings": self.settings, "log": self.log_console}
+        _page_kwargs = {
+            "settings": self.settings,
+            "log": self.log_console,
+            "project_manager": self.project_manager,
+        }
         self.scraper_page = ScraperPage(**_page_kwargs)
         self.translator_page = TranslatorPage(**_page_kwargs)
         self.tts_page = TTSPage(**_page_kwargs)

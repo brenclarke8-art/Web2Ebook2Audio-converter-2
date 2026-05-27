@@ -80,6 +80,11 @@ class ProjectManager(QObject):
             "title": title,
             "author": author,
             "index_url": index_url,
+            "raw_chapter_count": 0,
+            "valid_chapter_count": 0,
+            "last_processed_chapter": 0,
+            "selected_start_chapter": 1,
+            "selected_end_chapter": 0,
             "chapter_urls": [],
             "chapters": [],
             "pipeline_step": None,
@@ -244,6 +249,93 @@ class ProjectManager(QObject):
                 continue
 
         return audio_files
+
+    def set_index_url(self, index_url: str) -> None:
+        """Persist the project's index URL."""
+        if not self.current_project_dir:
+            return
+        self._project_data["index_url"] = index_url
+        self.settings.set("index_url", index_url)
+        self._save_project_state()
+
+    def set_inventory(
+        self,
+        *,
+        raw_chapter_count: int,
+        valid_chapter_count: int,
+        chapter_urls: Optional[List[str]] = None,
+    ) -> None:
+        """Persist index inventory and optional filtered chapter URLs."""
+        if not self.current_book_id:
+            return
+
+        self._project_data["raw_chapter_count"] = max(0, int(raw_chapter_count))
+        self._project_data["valid_chapter_count"] = max(0, int(valid_chapter_count))
+        self._project_data["last_chapter_count"] = max(0, int(valid_chapter_count))
+        if chapter_urls is not None:
+            self._project_data["chapter_urls"] = chapter_urls
+            work_dir = self.get_work_dir()
+            if work_dir:
+                urls_file = work_dir / "chapter_urls.json"
+                with open(urls_file, "w", encoding="utf-8") as f:
+                    json.dump(chapter_urls, f, indent=2, ensure_ascii=False)
+
+        self.library.update_inventory(
+            self.current_book_id,
+            raw_chapter_count=raw_chapter_count,
+            valid_chapter_count=valid_chapter_count,
+        )
+        self._save_project_state()
+        self.chapters_updated.emit()
+
+    def get_inventory(self) -> Dict[str, int]:
+        """Return inventory/progress metrics for the active project."""
+        if not self.current_book_id:
+            return {
+                "raw_chapter_count": 0,
+                "valid_chapter_count": 0,
+                "last_processed_chapter": 0,
+            }
+
+        book = self.library.get_book(self.current_book_id) or {}
+        return {
+            "raw_chapter_count": int(
+                self._project_data.get("raw_chapter_count", book.get("raw_chapter_count", 0))
+            ),
+            "valid_chapter_count": int(
+                self._project_data.get("valid_chapter_count", book.get("valid_chapter_count", 0))
+            ),
+            "last_processed_chapter": int(
+                self._project_data.get(
+                    "last_processed_chapter", book.get("last_processed_chapter", 0)
+                )
+            ),
+        }
+
+    def set_selected_range(self, start_chapter: int, end_chapter: int) -> None:
+        """Persist selected chapter range for the active project."""
+        if not self.current_project_dir:
+            return
+        self._project_data["selected_start_chapter"] = max(1, int(start_chapter))
+        self._project_data["selected_end_chapter"] = max(0, int(end_chapter))
+        self._save_project_state()
+
+    def get_selected_range(self) -> Dict[str, int]:
+        """Return selected chapter range for the active project."""
+        return {
+            "start": int(self._project_data.get("selected_start_chapter", 1)),
+            "end": int(self._project_data.get("selected_end_chapter", 0)),
+        }
+
+    def set_last_processed_chapter(self, chapter_number: int) -> None:
+        """Persist last processed chapter across project and library."""
+        if not self.current_book_id:
+            return
+        chapter_value = max(0, int(chapter_number))
+        self._project_data["last_processed_chapter"] = chapter_value
+        self.library.update_last_processed(self.current_book_id, chapter_value)
+        self._save_project_state()
+        self.chapters_updated.emit()
 
     def update_pipeline_step(self, step: str, progress: int = 0) -> None:
         """Update the current pipeline step and emit signal."""
