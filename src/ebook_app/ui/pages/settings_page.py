@@ -378,12 +378,15 @@ class SettingsPage(BasePage):
         pending_note.setWordWrap(True)
         pending_vbox.addWidget(pending_note)
 
-        self._pending_table = QTableWidget(0, 4)
-        self._pending_table.setHorizontalHeaderLabels(["Name", "Gender", "Confidence", "Source Chapter"])
+        self._pending_table = QTableWidget(0, 5)
+        self._pending_table.setHorizontalHeaderLabels(
+            ["Name", "Gender", "Voice", "Confidence", "Source Chapter"]
+        )
         self._pending_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._pending_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._pending_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._pending_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._pending_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self._pending_table.setMinimumHeight(140)
         pending_vbox.addWidget(self._pending_table)
 
@@ -531,25 +534,30 @@ class SettingsPage(BasePage):
             self._insert_pending_row(
                 name=item.get("name", ""),
                 gender=item.get("gender", "unknown"),
+                voice=item.get("voice", self._default_voice_for_gender(item.get("gender", "unknown"))),
                 confidence=float(item.get("confidence", 0.0)),
                 source=item.get("source_chapter", ""),
             )
 
-    def _insert_pending_row(self, *, name: str, gender: str, confidence: float, source: str) -> None:
+    def _insert_pending_row(
+        self, *, name: str, gender: str, voice: str, confidence: float, source: str
+    ) -> None:
         row = self._pending_table.rowCount()
         self._pending_table.insertRow(row)
         self._pending_table.setItem(row, 0, QTableWidgetItem(name))
         self._pending_table.setItem(row, 1, QTableWidgetItem(gender))
-        self._pending_table.setItem(row, 2, QTableWidgetItem(f"{confidence:.2f}"))
-        self._pending_table.setItem(row, 3, QTableWidgetItem(source))
+        self._pending_table.setItem(row, 2, QTableWidgetItem(voice))
+        self._pending_table.setItem(row, 3, QTableWidgetItem(f"{confidence:.2f}"))
+        self._pending_table.setItem(row, 4, QTableWidgetItem(source))
 
     def _collect_pending_additions(self) -> list:
         pending = []
         for row in range(self._pending_table.rowCount()):
             name_item = self._pending_table.item(row, 0)
             gender_item = self._pending_table.item(row, 1)
-            conf_item = self._pending_table.item(row, 2)
-            source_item = self._pending_table.item(row, 3)
+            voice_item = self._pending_table.item(row, 2)
+            conf_item = self._pending_table.item(row, 3)
+            source_item = self._pending_table.item(row, 4)
             name = name_item.text().strip() if name_item else ""
             if not name:
                 continue
@@ -561,6 +569,9 @@ class SettingsPage(BasePage):
                 {
                     "name": name,
                     "gender": (gender_item.text().strip() if gender_item else "unknown") or "unknown",
+                    "voice": (voice_item.text().strip() if voice_item else "") or self._default_voice_for_gender(
+                        gender_item.text().strip() if gender_item else "unknown"
+                    ),
                     "confidence": confidence,
                     "source_chapter": source_item.text().strip() if source_item else "",
                 }
@@ -624,6 +635,7 @@ class SettingsPage(BasePage):
         for row in rows:
             name_item = self._pending_table.item(row, 0)
             gender_item = self._pending_table.item(row, 1)
+            voice_item = self._pending_table.item(row, 2)
             if not name_item:
                 continue
             name = name_item.text().strip()
@@ -632,9 +644,10 @@ class SettingsPage(BasePage):
             key = name.lower()
             if key not in existing:
                 gender = gender_item.text().strip() if gender_item else "unknown"
+                voice = (voice_item.text().strip() if voice_item else "") or self._default_voice_for_gender(gender)
                 self._insert_character_row(
                     name=name,
-                    voice=self._default_voice_for_gender(gender),
+                    voice=voice,
                     gender=gender,
                     description="Added from LLM suggestion",
                 )

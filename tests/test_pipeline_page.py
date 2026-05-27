@@ -33,13 +33,20 @@ for name in [
     "QComboBox",
     "QFormLayout",
     "QGroupBox",
+    "QHeaderView",
     "QHBoxLayout",
     "QLabel",
     "QLineEdit",
     "QProgressBar",
     "QPushButton",
+    "QSplitter",
     "QSpinBox",
+    "QTabWidget",
+    "QTableWidget",
+    "QTableWidgetItem",
+    "QTextEdit",
     "QVBoxLayout",
+    "QWidget",
 ]:
     setattr(qtwidgets, name, _DummyWidget)
 qtwidgets.QMessageBox = _DummyMessageBox
@@ -95,6 +102,8 @@ def test_on_worker_finished_clears_worker_reference(monkeypatch) -> None:
         ),
         _set_buttons_enabled=lambda enabled: button_states.append(enabled),
         _load_active_project_state=_reload,
+        _refresh_review_data=lambda: None,
+        _tabs=SimpleNamespace(setCurrentIndex=lambda _idx: None),
         log=log,
     )
 
@@ -108,7 +117,7 @@ def test_on_worker_finished_clears_worker_reference(monkeypatch) -> None:
     assert dialogs == [
         (
             "Character Review Required",
-            "Chapter parsing is complete. Review pending character suggestions "
-            "and voices in Settings, then click 'Continue Audio + Export'.",
+            "Chapter parsing is complete. Review scraped text and detected "
+            "characters in the Review tab, then click 'Continue Audio + Export'.",
         )
     ]

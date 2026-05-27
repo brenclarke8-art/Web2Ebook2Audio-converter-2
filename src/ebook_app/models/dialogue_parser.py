@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import logging
+from pathlib import Path
+import re
 from typing import Literal
 
 import requests
@@ -66,6 +69,26 @@ class DialogueParser:
     _DEFAULT_MODEL = "mistral"
     _ALLOWED_TYPES = {"dialogue", "thought", "narration"}
     _ALLOWED_GENDERS = {"male", "female", "unknown"}
+    _UI_NOISE_PATTERNS = (
+        r"\bnext\s+chapter\b",
+        r"\bprevious\s+chapter\b",
+        r"\btable\s+of\s+contents\b",
+        r"\bchapter\s+list\b",
+        r"\bmenu\b",
+        r"\bnavigation\b",
+        r"\bskip\s+to\s+content\b",
+        r"\bsubscribe\b",
+        r"\blog[\s-]?in\b",
+        r"\bsign[\s-]?in\b",
+        r"\bsign[\s-]?up\b",
+        r"\bcomment(s)?\b",
+        r"\bshare\b",
+        r"\breport\b",
+        r"\badvertisement\b",
+        r"^ad[s]?\b",
+        r"\bpatreon\b",
+        r"\bdiscord\b",
+    )
 
     def __init__(
         self,
@@ -73,27 +96,42 @@ class DialogueParser:
         ollama_url: str | None = None,
         model: str | None = None,
         timeout_s: int = 120,
+        llm_log_path: Path | str | None = None,
     ) -> None:
         self.ollama_url = (ollama_url or self._DEFAULT_OLLAMA_URL).strip()
         self.model = (model or self._DEFAULT_MODEL).strip()
         self.timeout_s = timeout_s
+        self.llm_log_path = Path(llm_log_path) if llm_log_path else None
 
     def parse(self, text: str, chapter_id: str = "ch") -> ParseResult:
         """Parse *text* via Ollama and return validated segments/characters."""
-        text = (text or "").strip()
-        if not text:
+        source_text = (text or "").strip()
+        cleaned_text = self._clean_text_for_llm(source_text)
+        if not cleaned_text:
             return ParseResult(
                 segments=[self._fallback_segment("", chapter_id, 0)],
                 detected_characters=[],
             )
 
         try:
+            prompt = self._build_prompt(cleaned_text)
             payload = {
                 "model": self.model,
                 "stream": False,
                 "format": "json",
-                "prompt": self._build_prompt(text),
+                "prompt": prompt,
             }
+            self._append_llm_log(
+                chapter_id=chapter_id,
+                direction="request",
+                payload={
+                    "url": self.ollama_url,
+                    "model": self.model,
+                    "prompt": prompt,
+                    "raw_text": source_text,
+                    "cleaned_text": cleaned_text,
+                },
+            )
             response = requests.post(
                 self.ollama_url,
                 json=payload,
@@ -102,14 +140,72 @@ class DialogueParser:
             response.raise_for_status()
             response_json = response.json()
             llm_text = response_json.get("response", "")
+            self._append_llm_log(
+                chapter_id=chapter_id,
+                direction="response",
+                payload={
+                    "response_json": response_json,
+                    "response_text": llm_text,
+                },
+            )
             llm_data = self._parse_response_json(llm_text)
-            return self._validate_result(llm_data, source_text=text, chapter_id=chapter_id)
+            return self._validate_result(llm_data, source_text=cleaned_text, chapter_id=chapter_id)
         except Exception as exc:
+            self._append_llm_log(
+                chapter_id=chapter_id,
+                direction="error",
+                payload={"error": str(exc)},
+            )
             logger.warning("Dialogue parse failed; falling back to narration: %s", exc)
             return ParseResult(
-                segments=[self._fallback_segment(text, chapter_id, 0)],
+                segments=[self._fallback_segment(cleaned_text, chapter_id, 0)],
                 detected_characters=[],
             )
+
+    @classmethod
+    def _is_noise_line(cls, line: str) -> bool:
+        text = (line or "").strip()
+        if not text:
+            return False
+        lowered = text.lower()
+        if lowered.startswith(("http://", "https://", "www.")):
+            return True
+        if re.fullmatch(r"[^\w]{3,}", lowered):
+            return True
+        for pattern in cls._UI_NOISE_PATTERNS:
+            if re.search(pattern, lowered):
+                return True
+        return False
+
+    @classmethod
+    def _clean_text_for_llm(cls, text: str) -> str:
+        source = (text or "").strip()
+        if not source:
+            return ""
+        source_lines = [line.strip() for line in source.splitlines()]
+        kept_lines = [line for line in source_lines if line and not cls._is_noise_line(line)]
+        if not kept_lines:
+            return source
+        cleaned = "\n".join(kept_lines)
+        cleaned = re.sub(r"[ \t]+", " ", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned or source
+
+    def _append_llm_log(self, *, chapter_id: str, direction: str, payload: dict) -> None:
+        if not self.llm_log_path:
+            return
+        try:
+            self.llm_log_path.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "chapter_id": chapter_id,
+                "direction": direction,
+                "payload": payload,
+            }
+            with open(self.llm_log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.debug("Failed writing LLM communication log.", exc_info=True)
 
     def _build_prompt(self, text: str) -> str:
         schema = {
@@ -132,6 +228,7 @@ class DialogueParser:
                 }
             ],
         }
+        chapter_input_json = json.dumps({"chapter_text": text}, ensure_ascii=False)
         return (
             "You are a chapter segmenter for TTS production.\n"
             "Return JSON only. No markdown or commentary.\n"
@@ -140,7 +237,9 @@ class DialogueParser:
             "Use 'narrator' speaker for narration unless a clear character narrator exists.\n"
             "If uncertain, use gender='unknown' and low confidence values.\n"
             f"Expected JSON schema:\n{json.dumps(schema)}\n\n"
-            f"CHAPTER TEXT:\n{text}"
+            "The chapter input is provided as JSON with one field named 'chapter_text'.\n"
+            "Parse the value exactly as the chapter content.\n"
+            f"CHAPTER INPUT JSON:\n{chapter_input_json}"
         )
 
     @staticmethod

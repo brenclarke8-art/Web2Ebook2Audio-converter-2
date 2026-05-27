@@ -46,6 +46,44 @@ def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
     assert result.detected_characters[0].name == "Alice"
 
 
+def test_dialogue_parser_cleans_ui_noise_before_prompt(monkeypatch):
+    parser = DialogueParser(ollama_url="http://example", model="mistral")
+    captured_payload: dict = {}
+
+    def _fake_post(*_args, **kwargs):
+        captured_payload.update(kwargs.get("json", {}))
+        return _DummyResponse({"response": json.dumps({"segments": [], "detected_characters": []})})
+
+    monkeypatch.setattr("ebook_app.models.dialogue_parser.requests.post", _fake_post)
+    parser.parse(
+        "Next Chapter\nSubscribe now\nActual story line.\nAnother story paragraph.",
+        chapter_id="ch-clean",
+    )
+
+    prompt = str(captured_payload.get("prompt", ""))
+    assert "Next Chapter" not in prompt
+    assert "Subscribe now" not in prompt
+    assert "Actual story line." in prompt
+
+
+def test_dialogue_parser_writes_llm_communication_log(monkeypatch, tmp_path):
+    log_file = tmp_path / "llm_communication.jsonl"
+    parser = DialogueParser(ollama_url="http://example", model="mistral", llm_log_path=log_file)
+
+    def _fake_post(*_args, **_kwargs):
+        return _DummyResponse({"response": json.dumps({"segments": [], "detected_characters": []})})
+
+    monkeypatch.setattr("ebook_app.models.dialogue_parser.requests.post", _fake_post)
+    parser.parse("Story text only.", chapter_id="ch-log")
+
+    lines = [line for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) >= 2
+    records = [json.loads(line) for line in lines]
+    directions = {item.get("direction") for item in records}
+    assert "request" in directions
+    assert "response" in directions
+
+
 def test_dialogue_parser_falls_back_on_invalid_output(monkeypatch):
     parser = DialogueParser(ollama_url="http://example", model="mistral")
 
