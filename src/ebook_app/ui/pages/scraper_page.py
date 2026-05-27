@@ -77,7 +77,10 @@ class ScraperPage(BasePage):
                 "  pip install playwright\n"
                 "  python -m playwright install chromium"
             )
-        self._http_radio.setChecked(True)
+        scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
+        use_browser = scraper_method == "browser" and _BROWSER_SCRAPER_AVAILABLE
+        self._http_radio.setChecked(not use_browser)
+        self._browser_radio.setChecked(use_browser)
         self._http_radio.toggled.connect(self._on_mode_changed)
         mode_row.addWidget(self._http_radio)
         mode_row.addWidget(self._browser_radio)
@@ -243,6 +246,7 @@ class ScraperPage(BasePage):
         url = self._url_input.text().strip()
         if url:
             self.settings.set("index_url", url)
+        self.settings.set("scraper_method", "browser" if self._use_browser() else "http")
         if self._use_browser():
             self.settings.set(
                 "scraper_use_browser_gui", not self._headless_check.isChecked()

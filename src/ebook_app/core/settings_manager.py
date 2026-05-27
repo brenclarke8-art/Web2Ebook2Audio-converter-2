@@ -60,6 +60,7 @@ class SettingsManager(QObject):
         "character_review_approved": False,
         "audio_output_mode": "per_chapter",
         # Browser scraper controls
+        "scraper_method": "browser",
         "scraper_use_browser_gui": False,
         "scraper_manual_navigation": False,
         "scraper_manual_navigation_timeout_sec": 120,

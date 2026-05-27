@@ -234,8 +234,8 @@ uvicorn tts_server:app --host 127.0.0.1 --port 5005
 4. Click **Check Service** — the indicator should turn green
 5. Click **Save Settings**
 
-The TTS page will now show the service health status and use the remote backend
-for all voice synthesis.
+The Pipeline workflow will now use that remote backend for all voice synthesis,
+and Settings can be used to verify service health.
 
 ---
 
@@ -256,34 +256,24 @@ The application follows a project-based workflow:
    - Projects are stored in the output directory with their own subdirectory
    - Each project maintains `project.json` for resume support
 
-#### 2. **Scrape Web Content**
-   - Navigate to the **Scraper** page
-   - Enter the URL of a web novel table of contents or chapter index
-   - Click "Scrape Index" to extract chapter URLs, then "Scrape Chapters" to download
+#### 2. **Run the Pipeline**
+   - Navigate to the **Pipeline** page
+   - Enter the index URL when creating a book project, then load it
+   - Use **Check Index** to verify available chapters
+   - Run **Run to Character Review** to scrape, translate, and parse chapters
 
-#### 3. **(Optional) Translate Content**
-   - Navigate to the **Translator** page
-   - Select source and target languages
-   - Uses `deep-translator` for translation
+#### 3. **Review Characters and Models**
+   - Navigate to **Settings**
+   - Check the model status indicator — if amber, download models first
+   - Review pending character suggestions and voice assignments before audio generation
 
-#### 4. **Configure Voices**
-   - Navigate to the **TTS** page
-   - Check the model status indicator — if amber, go to **Settings** first and download models
-   - Select from 28 built-in Kokoro 1.0 voices (American & British English, male & female)
-   - Adjust speech speed (0.5×–2.0×)
-
-#### 5. **Generate Audio**
-   - The system parses dialogue using pattern matching
-   - Multi-speaker TTS generates audio using the `kokoro-onnx` Python library directly
+#### 4. **Generate Audio + EPUB**
+   - Return to the **Pipeline** page
+   - Click **Continue Audio + Export**
+   - The system generates audio, runs forced alignment, builds SMIL, and exports the EPUB
    - Audio files are saved in `<project>/pipeline_work/audio/`
 
-#### 6. **Create EPUB3 with Media Overlays**
-   - Navigate to the **EPUB Export** page
-   - The system performs forced alignment to sync text and audio
-   - Generates SMIL files for Media Overlays (EPUB3 read-aloud)
-   - Creates the final EPUB3 file with embedded audio and navigation
-
-#### 7. **Export & Enjoy**
+#### 5. **Export & Enjoy**
    The final EPUB3 file includes:
    - Original/translated text content
    - Embedded audio files (synchronised per chapter)
@@ -407,7 +397,7 @@ Custom paths can be set in **Settings → Kokoro ONNX Models**.
 
 ### Model Files Not Found
 
-The status indicator on the TTS page and Settings page shows amber (⚠) if model files are missing.
+The status indicators in Settings show amber (⚠) if model files are missing.
 
 **Fix:** Go to **Settings** and click **"Download Models from GitHub"**, or manually place the files in `<repo>/.ebook_audio_studio/models/`.
 

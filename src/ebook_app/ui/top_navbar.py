@@ -34,7 +34,7 @@ class TopNavBar(QWidget):
 
         self.buttons = []
 
-        labels = ["Scraper", "Translator", "TTS", "EPUB", "Pipeline", "Preview", "Settings"]
+        labels = ["Pipeline", "Settings"]
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
