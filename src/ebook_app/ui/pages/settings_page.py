@@ -334,14 +334,26 @@ class SettingsPage(BasePage):
         llm_form.addRow("API URL:", self._llm_url_input)
 
         self._ollama_url_input = QLineEdit(
-            str(self.settings.get("ollama_url", "http://127.0.0.1:11434/api/generate"))
+            str(
+                self.settings.get(
+                    "dialogue_llm_url",
+                    self.settings.get("ollama_url", "http://127.0.0.1:11434/api/chat"),
+                )
+            )
         )
-        self._ollama_url_input.setPlaceholderText("http://127.0.0.1:11434/api/generate")
-        llm_form.addRow("Ollama URL:", self._ollama_url_input)
+        self._ollama_url_input.setPlaceholderText("http://127.0.0.1:11434/api/chat")
+        llm_form.addRow("Dialogue LLM URL:", self._ollama_url_input)
 
-        self._ollama_model_input = QLineEdit(str(self.settings.get("ollama_model", "mistral")))
-        self._ollama_model_input.setPlaceholderText("mistral")
-        llm_form.addRow("Ollama model:", self._ollama_model_input)
+        self._ollama_model_input = QLineEdit(
+            str(
+                self.settings.get(
+                    "dialogue_llm_model",
+                    self.settings.get("ollama_model", "mistral:instruct"),
+                )
+            )
+        )
+        self._ollama_model_input.setPlaceholderText("mistral:instruct")
+        llm_form.addRow("Dialogue LLM model:", self._ollama_model_input)
 
         self._llm_key_input = QLineEdit(str(self.settings.get("llm_api_key", "")))
         self._llm_key_input.setPlaceholderText("Leave blank if no key is required")
@@ -683,8 +695,10 @@ class SettingsPage(BasePage):
         self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
         self.settings.set("llm_api_url", self._llm_url_input.text().strip())
         self.settings.set("llm_api_key", self._llm_key_input.text())
-        self.settings.set("ollama_url", self._ollama_url_input.text().strip())
-        self.settings.set("ollama_model", self._ollama_model_input.text().strip())
+        dialogue_llm_url = self._ollama_url_input.text().strip()
+        dialogue_llm_model = self._ollama_model_input.text().strip()
+        self.settings.set("dialogue_llm_url", dialogue_llm_url)
+        self.settings.set("dialogue_llm_model", dialogue_llm_model)
         self.settings.set("multispeaker_enabled", self._multispeaker_check.isChecked())
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())

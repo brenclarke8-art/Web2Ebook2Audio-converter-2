@@ -3,6 +3,7 @@ import os
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,13 @@ class SettingsManager(QObject):
         "index_url": "",
         "ollama_url": "http://127.0.0.1:11434/api/generate",
         "ollama_model": "mistral",
+        "dialogue_llm_mode": "full",
+        "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
+        "dialogue_llm_model": "mistral:instruct",
+        "dialogue_llm_timeout": 120,
+        "dialogue_llm_retries": 1,
+        "dialogue_llm_strict_quotes": False,
+        "llm_preflight_check": True,
         "character_confidence_threshold": 0.8,
         "character_review_approved": False,
         "audio_output_mode": "per_chapter",
@@ -114,6 +122,22 @@ class SettingsManager(QObject):
             if key not in self.data:
                 self.data[key] = value
                 changed = True
+
+        dialogue_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
+        legacy_ollama_url = str(self.data.get("ollama_url", "") or "").strip()
+        if not dialogue_url and legacy_ollama_url:
+            self.data["dialogue_llm_url"] = self._migrate_generate_to_chat_url(legacy_ollama_url)
+            changed = True
+        elif dialogue_url.endswith("/api/generate"):
+            self.data["dialogue_llm_url"] = self._migrate_generate_to_chat_url(dialogue_url)
+            changed = True
+
+        dialogue_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
+        legacy_ollama_model = str(self.data.get("ollama_model", "") or "").strip()
+        if not dialogue_model and legacy_ollama_model:
+            self.data["dialogue_llm_model"] = legacy_ollama_model
+            changed = True
+
         if self.data.get("tts_backend_mode") != "remote":
             if "tts_backend_mode" in self.data:
                 logger.info(
@@ -127,6 +151,17 @@ class SettingsManager(QObject):
         if changed:
             logger.debug("Settings were missing keys or needed migration; persisting defaults.")
             self.save()
+
+    @staticmethod
+    def _migrate_generate_to_chat_url(url: str) -> str:
+        clean = (url or "").strip()
+        if not clean:
+            return clean
+        parsed = urlparse(clean)
+        if parsed.path.endswith("/api/generate"):
+            new_path = parsed.path[: -len("/api/generate")] + "/api/chat"
+            return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
+        return clean
 
     def save(self):
         try:
