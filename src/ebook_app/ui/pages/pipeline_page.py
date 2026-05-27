@@ -622,9 +622,9 @@ class PipelinePage(BasePage):
         else:
             index_to_use = 0
             if isinstance(selected_idx, int):
-                restored_index = self._review_chapter_combo.findData(selected_idx)
-                if restored_index >= 0:
-                    index_to_use = restored_index
+                found_index = self._review_chapter_combo.findData(selected_idx)
+                if found_index >= 0:
+                    index_to_use = found_index
             self._review_chapter_combo.setCurrentIndex(index_to_use)
             self._on_review_chapter_changed(index_to_use)
 
@@ -664,7 +664,7 @@ class PipelinePage(BasePage):
                                     if not name:
                                         continue
                                     key = name.lower()
-                                    confidence = float(char.get("confidence", 0.0) or 0.0)
+                                    confidence = float(char.get("confidence", 0.0))
                                     existing = aggregated.get(key)
                                     if existing is None:
                                         aggregated[key] = {
@@ -696,7 +696,7 @@ class PipelinePage(BasePage):
                 aggregated[key] = {
                     "name": name,
                     "gender": str(item.get("gender", "unknown")).strip() or "unknown",
-                    "confidence": float(item.get("confidence", 0.0) or 0.0),
+                    "confidence": float(item.get("confidence", 0.0)),
                     "sources": {source} if source else set(),
                 }
 
