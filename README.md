@@ -234,8 +234,8 @@ uvicorn tts_server:app --host 127.0.0.1 --port 5005
 4. Click **Check Service** — the indicator should turn green
 5. Click **Save Settings**
 
-The TTS page will now show the service health status and use the remote backend
-for all voice synthesis.
+The Pipeline workflow will now use that remote backend for all voice synthesis,
+and Settings can be used to verify service health.
 
 ---
 
@@ -397,7 +397,7 @@ Custom paths can be set in **Settings → Kokoro ONNX Models**.
 
 ### Model Files Not Found
 
-The status indicator on the TTS page and Settings page shows amber (⚠) if model files are missing.
+The status indicators in Settings show amber (⚠) if model files are missing.
 
 **Fix:** Go to **Settings** and click **"Download Models from GitHub"**, or manually place the files in `<repo>/.ebook_audio_studio/models/`.
 
