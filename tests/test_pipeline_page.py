@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 
 class _DummyQThread:
@@ -21,13 +21,13 @@ class _DummyMessageBox:
         pass
 
 
-sys.modules.setdefault("PySide6", types.ModuleType("PySide6"))
-qtcore = types.ModuleType("PySide6.QtCore")
+sys.modules.setdefault("PySide6", ModuleType("PySide6"))
+qtcore = ModuleType("PySide6.QtCore")
 qtcore.QThread = _DummyQThread
 qtcore.Signal = lambda *args, **kwargs: None
 sys.modules["PySide6.QtCore"] = qtcore
 
-qtwidgets = types.ModuleType("PySide6.QtWidgets")
+qtwidgets = ModuleType("PySide6.QtWidgets")
 for name in [
     "QCheckBox",
     "QComboBox",
@@ -45,7 +45,7 @@ for name in [
 qtwidgets.QMessageBox = _DummyMessageBox
 sys.modules["PySide6.QtWidgets"] = qtwidgets
 
-base_page = types.ModuleType("ebook_app.ui.pages._base_page")
+base_page = ModuleType("ebook_app.ui.pages._base_page")
 base_page.BasePage = type("BasePage", (), {})
 sys.modules["ebook_app.ui.pages._base_page"] = base_page
 
