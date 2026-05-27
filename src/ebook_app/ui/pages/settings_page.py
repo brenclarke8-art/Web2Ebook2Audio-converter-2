@@ -62,6 +62,11 @@ class _ServiceHealthThread(QThread):
 class SettingsPage(BasePage):
     """Page for viewing and editing all persisted application settings."""
 
+    def __init__(self, **kwargs) -> None:
+        self._download_thread: _DownloadThread | None = None
+        self._svc_health_thread: _ServiceHealthThread | None = None
+        super().__init__(**kwargs)
+
     def _build_ui(self) -> None:
         # ── General ────────────────────────────────────────────────────
         general_group = QGroupBox("General")
@@ -176,9 +181,6 @@ class SettingsPage(BasePage):
         self._layout.addLayout(btn_row)
 
         self._layout.addStretch()
-
-        self._download_thread: _DownloadThread | None = None
-        self._svc_health_thread: _ServiceHealthThread | None = None
 
     # ------------------------------------------------------------------
     # Helpers

@@ -8,9 +8,20 @@ Run with::
 
 The server loads the Kokoro-ONNX model once at startup and exposes a small
 REST API that the Python 3.10 GUI can call without importing kokoro_onnx
-directly.  All paths in request / response bodies must be absolute and
-accessible from both the server process and the GUI process (they run on the
-same machine, so any local filesystem path works).
+directly.
+
+Output directory
+----------------
+The server writes every generated WAV file to a server-managed output
+directory.  The directory is determined by (in order of precedence):
+
+1. The ``TTS_OUTPUT_DIR`` environment variable.
+2. The ``./output`` subdirectory of the server's working directory.
+
+Clients receive the absolute path of the written file in every response and
+are responsible for moving or copying it to their own desired location if
+needed.  The server never accepts a caller-supplied output path, which
+prevents path-traversal vulnerabilities.
 """
 
 from __future__ import annotations
@@ -39,7 +50,22 @@ _VOICES_FILENAME = "voices-v1.0.bin"
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Ebook Audio Studio — TTS Service", version="1.0.0")
-_kokoro = None  # lazily initialised on first request
+_kokoro = None  # lazily initialized on first request
+
+# ---------------------------------------------------------------------------
+# Server-managed output directory
+# ---------------------------------------------------------------------------
+
+def _server_output_dir() -> Path:
+    """Return the resolved output directory for generated WAV files.
+
+    The directory is created on demand.  It is determined solely by the server
+    configuration — never by caller-supplied data — to prevent path traversal.
+    """
+    env_val = os.environ.get("TTS_OUTPUT_DIR")
+    base = Path(env_val).resolve() if env_val else (Path.cwd() / "output").resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 def _get_model_paths() -> tuple[Path, Path]:
@@ -88,7 +114,6 @@ def _get_kokoro():
 
 class SynthesizeRequest(BaseModel):
     text: str
-    output_dir: str
     output_filename: str
     voice: str = "af_heart"
     speed: float = 1.0
@@ -96,7 +121,6 @@ class SynthesizeRequest(BaseModel):
 
 
 class PreviewRequest(BaseModel):
-    output_dir: str
     voice: str = "af_heart"
     speed: float = 1.0
     lang: str = "a"
@@ -111,7 +135,6 @@ class SegmentItem(BaseModel):
 
 class MultiSynthesizeRequest(BaseModel):
     segments: List[SegmentItem]
-    output_dir: str
     output_filename: str
     voice_mappings: Dict[str, str] = {}
     speed: float = 1.0
@@ -141,24 +164,23 @@ def _synthesise(text: str, *, voice: str, speed: float, lang: str) -> np.ndarray
     return np.array(samples, dtype=np.float32)
 
 
-def _safe_output_path(output_dir: str, filename: str) -> Path:
-    """Resolve *output_dir* / *filename* and guard against path traversal.
-
-    Only the *filename* component of *filename* is used (any directory portion
-    is stripped) so a caller cannot escape the intended output directory.
-    """
-    out_dir = Path(output_dir).resolve()
-    # Strip directory components from the caller-supplied filename so that
-    # e.g. '../../etc/passwd' cannot escape the output directory.
-    safe_name = Path(filename).name
-    if not safe_name or safe_name in (".", ".."):
+def _safe_filename(filename: str) -> str:
+    """Return only the base name component, rejecting empty or traversal names."""
+    name = Path(filename).name
+    if not name or name in (".", ".."):
         raise ValueError(f"Invalid output filename: {filename!r}")
-    return out_dir / safe_name
+    return name
 
 
-def _write_wav(samples: np.ndarray, output_dir: str, filename: str) -> str:
-    out_path = _safe_output_path(output_dir, filename)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+def _write_wav(samples: np.ndarray, filename: str) -> str:
+    """Write *samples* to the server-managed output directory.
+
+    *filename* must be a plain file name (no directory components).  The
+    output directory is determined by :func:`_server_output_dir` and is never
+    influenced by caller-supplied data.
+    """
+    safe_name = _safe_filename(filename)
+    out_path = _server_output_dir() / safe_name
     sf.write(str(out_path), samples, 24000)
     return str(out_path)
 
@@ -198,7 +220,7 @@ def synthesize(req: SynthesizeRequest) -> AudioResponse:
         raise HTTPException(status_code=422, detail="text must not be empty")
     try:
         samples = _synthesise(req.text, voice=req.voice, speed=req.speed, lang=req.lang)
-        path = _write_wav(samples, req.output_dir, req.output_filename)
+        path = _write_wav(samples, req.output_filename)
         return AudioResponse(audio_path=path)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -221,7 +243,7 @@ def preview(req: PreviewRequest) -> AudioResponse:
         samples = _synthesise(
             preview_text, voice=req.voice, speed=req.speed, lang=req.lang
         )
-        path = _write_wav(samples, req.output_dir, filename)
+        path = _write_wav(samples, filename)
         return AudioResponse(audio_path=path)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -262,7 +284,7 @@ def synthesize_multi(req: MultiSynthesizeRequest) -> AudioResponse:
             raise HTTPException(status_code=422, detail="No audio segments were generated")
 
         combined = np.concatenate(all_audio)
-        path = _write_wav(combined, req.output_dir, req.output_filename)
+        path = _write_wav(combined, req.output_filename)
         return AudioResponse(audio_path=path)
     except HTTPException:
         raise

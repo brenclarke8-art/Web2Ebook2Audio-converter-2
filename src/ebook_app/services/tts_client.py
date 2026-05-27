@@ -3,11 +3,21 @@
 Provides a :class:`TTSClient` whose public API mirrors :class:`TTSEngine` so
 the pipeline and UI can swap between local (direct) and remote (HTTP) backends
 without any call-site changes.
+
+Output directory handling
+-------------------------
+The TTS service writes every generated file to its own server-managed output
+directory (configured by ``TTS_OUTPUT_DIR`` on the server side).  The client
+receives the absolute path of the written file and **moves** it into the
+caller-supplied ``output_dir`` so the pipeline's project layout is preserved
+(``pipeline_work/audio/``).  Because client and server run on the same machine,
+``shutil.move`` is always safe and atomic on most platforms.
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -101,7 +111,6 @@ class TTSClient:
 
         payload = {
             "text": text,
-            "output_dir": str(self.output_dir),
             "output_filename": output_filename,
             "voice": voice,
             "speed": speed,
@@ -129,8 +138,11 @@ class TTSClient:
         if progress_callback:
             progress_callback("Audio generation complete")
 
-        audio_path = resp.json()["audio_path"]
-        return Path(audio_path)
+        server_path = Path(resp.json()["audio_path"])
+        dest = self.output_dir / output_filename
+        if server_path != dest:
+            shutil.move(str(server_path), str(dest))
+        return dest
 
     def generate_preview(
         self,
@@ -139,7 +151,6 @@ class TTSClient:
         speed: float = 1.0,
     ) -> Path:
         payload = {
-            "output_dir": str(self.output_dir),
             "voice": voice,
             "speed": speed,
             "lang": lang_code,
@@ -162,7 +173,11 @@ class TTSClient:
                 f"TTS service returned error: {detail}"
             ) from exc
 
-        return Path(resp.json()["audio_path"])
+        server_path = Path(resp.json()["audio_path"])
+        dest = self.output_dir / server_path.name
+        if server_path != dest:
+            shutil.move(str(server_path), str(dest))
+        return dest
 
     def generate_multi_voice_audio(
         self,
@@ -190,7 +205,6 @@ class TTSClient:
 
         payload = {
             "segments": segments_payload,
-            "output_dir": str(self.output_dir),
             "output_filename": output_filename,
             "voice_mappings": voice_mappings,
             "speed": speed,
@@ -218,7 +232,11 @@ class TTSClient:
         if progress_callback:
             progress_callback("Multi-voice audio generation complete")
 
-        return Path(resp.json()["audio_path"])
+        server_path = Path(resp.json()["audio_path"])
+        dest = self.output_dir / output_filename
+        if server_path != dest:
+            shutil.move(str(server_path), str(dest))
+        return dest
 
     # ------------------------------------------------------------------
     # Utility (matches TTSEngine.list_kokoro_voices)

@@ -42,6 +42,10 @@ class _HealthCheckThread(QThread):
 class TTSPage(BasePage):
     """Page for configuring TTS voice and speed, and triggering synthesis."""
 
+    def __init__(self, **kwargs) -> None:
+        self._health_thread: _HealthCheckThread | None = None
+        super().__init__(**kwargs)
+
     def _build_ui(self) -> None:
         # ── Model / Service status ──────────────────────────────────────
         status_group = QGroupBox("TTS Backend Status")
@@ -94,7 +98,6 @@ class TTSPage(BasePage):
         self._layout.addLayout(btn_row)
 
         self._layout.addStretch()
-        self._health_thread: _HealthCheckThread | None = None
 
     # ------------------------------------------------------------------
     # Helpers
