@@ -39,24 +39,42 @@ class SettingsManager(QObject):
     }
 
     DEFAULTS = {
-        "tts_voice": "af_heart",
-        "tts_speed": 1.0,
-        "kokoro_model_path": "",
-        "kokoro_voices_path": "",
-        "output_dir": str(APP_HOME_DIR.parent / "output"),
+        # ------------------------------
+        # UI + Window
+        # ------------------------------
         "theme": "dark",
         "window_width": 1200,
-        "window_height": 800,
-        # TTS backend is remote-only: GUI calls tts_service/tts_server.py via HTTP.
+        "window_height": 800",
+
+        # ------------------------------
+        # Output
+        # ------------------------------
+        "output_dir": str(APP_HOME_DIR.parent / "output"),
+
+        # ------------------------------
+        # TTS Backend (remote-only)
+        # ------------------------------
         "tts_backend_mode": "remote",
         "tts_backend_url": "http://127.0.0.1:5005",
         "tts_autostart_service": False,
-        # LLM / translation API connection
+
+        # Default single-voice TTS
+        "tts_voice": "af_heart",
+        "tts_speed": 1.0,
+
+        # Kokoro local model paths (unused in remote mode)
+        "kokoro_model_path": "",
+        "kokoro_voices_path": "",
+
+        # ------------------------------
+        # LLM / Dialogue Parsing
+        # ------------------------------
         "llm_api_url": "http://localhost:5000/translate",
         "llm_api_key": "",
         "index_url": "",
         "ollama_url": "http://127.0.0.1:11434/api/generate",
         "ollama_model": "mistral",
+
         "dialogue_llm_mode": "full",
         "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
         "dialogue_llm_model": "mistral:instruct",
@@ -64,10 +82,21 @@ class SettingsManager(QObject):
         "dialogue_llm_retries": 1,
         "dialogue_llm_strict_quotes": False,
         "llm_preflight_check": True,
+
+        # ------------------------------
+        # Character Confidence
+        # ------------------------------
         "character_confidence_threshold": 0.8,
         "character_review_approved": False,
+
+        # ------------------------------
+        # Audio Output Mode
+        # ------------------------------
         "audio_output_mode": "per_chapter",
-        # Browser scraper controls
+
+        # ------------------------------
+        # Scraper
+        # ------------------------------
         "scraper_method": "browser",
         "scraper_use_browser_gui": False,
         "scraper_manual_navigation": False,
@@ -80,15 +109,31 @@ class SettingsManager(QObject):
         "scraper_delay_ms": 500,
         "scraper_css_selectors": "",
         "scraper_exclude_selectors": "",
+
+        # ------------------------------
         # Multi-speaker TTS
+        # ------------------------------
         "multispeaker_enabled": False,
         "narrator_voice": "af_heart",
         "default_male_voice": "am_adam",
         "default_female_voice": "af_heart",
-        # Character database: list of {name, voice, gender, description} dicts
+
+        # Character DB + pending additions
         "character_db": [],
-        # Suggested entries from parser to review in Settings UI.
         "pending_character_additions": [],
+
+        # ------------------------------
+        # NEW PIPELINE SETTINGS
+        # ------------------------------
+
+        # Phase 4 — Cleaned Text Review
+        "clean_review_mode": "semi",              # skip | semi | full
+        "clean_review_sample_chapters": 3,        # N chapters for semi mode
+
+        # Phase 6 — Smart Dialogue Review
+        "dialogue_review_mode": "smart",          # smart | always
+        "speaker_conf_threshold": 0.8,
+        "character_conf_threshold": 0.8,
     }
 
     def __init__(self):
@@ -96,7 +141,6 @@ class SettingsManager(QObject):
         APP_HOME_DIR.mkdir(parents=True, exist_ok=True)
         self.path = DEFAULT_SETTINGS_PATH
         self.data = {}
-        # Backward-compatible aliases
         self.settings_path = self.path
         self._settings = self.data
         self.load()
@@ -116,13 +160,14 @@ class SettingsManager(QObject):
         else:
             self.data = {}
 
-        # Apply defaults for missing keys
+        # Apply defaults
         changed = False
         for key, value in self.DEFAULTS.items():
             if key not in self.data:
                 self.data[key] = value
                 changed = True
 
+        # Migrate old URLs
         dialogue_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
         legacy_ollama_url = str(self.data.get("ollama_url", "") or "").strip()
         if not dialogue_url and legacy_ollama_url:
@@ -138,18 +183,13 @@ class SettingsManager(QObject):
             self.data["dialogue_llm_model"] = legacy_ollama_model
             changed = True
 
+        # Force remote TTS
         if self.data.get("tts_backend_mode") != "remote":
-            if "tts_backend_mode" in self.data:
-                logger.info(
-                    "Overriding tts_backend_mode=%r to 'remote' (remote-only mode).",
-                    self.data.get("tts_backend_mode"),
-                )
             self.data["tts_backend_mode"] = "remote"
             changed = True
 
         self._settings = self.data
         if changed:
-            logger.debug("Settings were missing keys or needed migration; persisting defaults.")
             self.save()
 
     @staticmethod
@@ -165,7 +205,6 @@ class SettingsManager(QObject):
 
     def save(self):
         try:
-            logger.debug("Saving settings to %s", self.path)
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2)
         except Exception as e:
@@ -225,7 +264,6 @@ class SettingsManager(QObject):
 
     @property
     def tts_backend_mode(self):
-        """Return 'local' (direct kokoro-onnx import) or 'remote' (HTTP service)."""
         return self.get("tts_backend_mode")
 
     @tts_backend_mode.setter
@@ -234,7 +272,6 @@ class SettingsManager(QObject):
 
     @property
     def tts_backend_url(self):
-        """Base URL of the remote TTS service (used when tts_backend_mode='remote')."""
         return self.get("tts_backend_url")
 
     @tts_backend_url.setter
@@ -243,7 +280,6 @@ class SettingsManager(QObject):
 
     @property
     def tts_autostart_service(self):
-        """Whether to auto-start the TTS service subprocess on launch."""
         return self.get("tts_autostart_service")
 
     @tts_autostart_service.setter

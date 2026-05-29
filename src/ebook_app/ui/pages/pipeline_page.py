@@ -33,24 +33,23 @@ from ebook_app.ui.pages._base_page import BasePage
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 
 
+# ----------------------------------------------------------------------
+# NEW PIPELINE STEPS (UI progress bars)
+# ----------------------------------------------------------------------
 _STEPS = [
     ("scrape_index", "1. Scrape index"),
     ("scrape_chapters", "2. Scrape chapters"),
-    ("translate_chapters", "3. Translate"),
-    ("parse_dialogue", "4. Parse dialogue"),
-    ("multispeaker_tts", "5. Multi-speaker TTS"),
-    ("batch_tts", "6. Batch TTS"),
-    ("forced_alignment", "7. Forced alignment"),
-    ("smil_generation", "8. Build SMIL"),
-    ("epub_export", "9. Export EPUB3"),
+    ("clean_chapters", "3. Clean chapters"),
+    ("plan_clean_review", "4. Plan cleaned-text review"),
+    ("llm_semantic_analysis", "5. LLM semantic analysis"),
+    ("normalize_llm_output", "6. Normalize LLM output"),
+    ("smart_review_dialogue", "7. Smart review (dialogue + characters)"),
+    ("tts_generate", "8. Generate audio"),
+    ("epub_build", "9. Build EPUB3"),
 ]
-
-
 class _PipelineWorker(QThread):
-    """Background worker that runs heavy pipeline steps off the main GUI thread.
-
-    Emitting signals is thread-safe in Qt; the connected slots execute on the
-    main thread so UI updates and project-manager writes happen there.
+    """
+    Background worker that runs the new pipeline phases off the main GUI thread.
     """
 
     step_progress = Signal(str, int)   # step_key, 0-100
@@ -93,9 +92,9 @@ class _PipelineWorker(QThread):
         except Exception as exc:
             self.failed.emit(str(exc))
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
     # Mode implementations
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
 
     def _run_check_index(self, ctrl) -> None:
         self.log_message.emit("Checking index…", "INFO")
@@ -108,12 +107,13 @@ class _PipelineWorker(QThread):
         })
         self.finished_ok.emit(
             self.CHECK_INDEX,
-            f"Index: raw={inventory['raw_count']}, valid={inventory['valid_count']}.",
+            f"Index: raw={inventory['raw_count']}, valid={inventory['valid_count']}."
         )
 
     def _run_to_review(self, ctrl) -> None:
         ctrl.set_chapter_range(self._start, self._end)
 
+        # Phase 1–2
         self.log_message.emit("Scraping index…", "INFO")
         ctrl.scrape_index()
         inventory = ctrl.get_chapter_inventory()
@@ -124,58 +124,63 @@ class _PipelineWorker(QThread):
         })
 
         if self._end > inventory["valid_count"]:
-            self.failed.emit(
-                "Requested end chapter exceeds currently available valid chapters."
-            )
+            self.failed.emit("Requested end chapter exceeds available valid chapters.")
             return
 
         self.log_message.emit("Scraping chapters…", "INFO")
         ctrl.scrape_chapters()
-        self.log_message.emit("Translating chapters…", "INFO")
-        ctrl.translate_chapters()
-        self.log_message.emit("Parsing dialogue…", "INFO")
-        ctrl.parse_dialogue()
-        pending = ctrl.settings.get("pending_character_additions", []) or []
-        if not pending:
+
+        # Phase 3–4
+        self.log_message.emit("Cleaning chapters…", "INFO")
+        ctrl.clean_chapters()
+
+        self.log_message.emit("Planning cleaned-text review…", "INFO")
+        ctrl.plan_clean_review()
+
+        # Phase 5–6
+        self.log_message.emit("Running LLM semantic analysis…", "INFO")
+        ctrl.llm_semantic_analysis()
+
+        self.log_message.emit("Normalizing LLM output…", "INFO")
+        ctrl.normalize_llm_output()
+
+        self.log_message.emit("Smart reviewing dialogue…", "INFO")
+        ctrl.smart_review_dialogue()
+
+        # Check if any chapters require manual review
+        review_plan_path = ctrl.work_dir / "semantic_review_plan.json"
+        needs_review = []
+        if review_plan_path.exists():
+            with open(review_plan_path, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+                needs_review = plan.get("needs_review", [])
+
+        if needs_review:
             self.log_message.emit(
-                "No new characters were detected during dialogue parsing. "
-                "If this is unexpected, verify your Ollama model is installed "
-                "via Settings → LLM check.",
-                "WARNING",
+                f"Chapters requiring manual review: {needs_review}",
+                "WARNING"
             )
-        self.log_message.emit(
-            f"LLM communication log: {ctrl.work_dir / 'llm_communication.jsonl'}",
-            "INFO",
-        )
 
         self.finished_ok.emit(
             self.RUN_TO_REVIEW,
-            "Chapter processing completed. Review character suggestions in Settings before audio.",
+            "Processing complete. Review detected characters in the Review tab before audio."
         )
 
     def _run_continue_audio(self, ctrl) -> None:
         ctrl.set_chapter_range(self._start, self._end)
-        multispeaker = bool(self._settings.get("multispeaker_enabled", False))
 
-        if multispeaker:
-            self.log_message.emit("Running multi-speaker TTS…", "INFO")
-            ctrl.multispeaker_tts()
-        else:
-            self.log_message.emit("Running batch TTS…", "INFO")
-            ctrl.batch_tts()
+        # Phase 7
+        self.log_message.emit("Generating TTS audio…", "INFO")
+        ctrl.tts_generate()
 
-        self.log_message.emit("Running forced alignment…", "INFO")
-        ctrl.forced_alignment()
-        self.log_message.emit("Building SMIL…", "INFO")
-        ctrl.smil_generation()
-        self.log_message.emit("Exporting EPUB3…", "INFO")
-        ctrl.epub_export()
+        # Phase 8
+        self.log_message.emit("Building EPUB3…", "INFO")
+        ctrl.epub_build()
 
         self.finished_ok.emit(
             self.CONTINUE_AUDIO,
-            "Audio generation and export complete.",
+            "Audio generation and EPUB export complete."
         )
-
 
 class PipelinePage(BasePage):
     """Page for running the end-to-end processing pipeline by project."""
@@ -191,9 +196,16 @@ class PipelinePage(BasePage):
     def _build_ui(self) -> None:
         self._tabs = QTabWidget()
         self._layout.addWidget(self._tabs)
+
+        # --------------------------------------------------------------
+        # PIPELINE TAB
+        # --------------------------------------------------------------
         pipeline_tab = QWidget()
         pipeline_layout = QVBoxLayout(pipeline_tab)
 
+        # -------------------------
+        # Project selection
+        # -------------------------
         project_group = QGroupBox("Book Library")
         project_layout = QVBoxLayout(project_group)
 
@@ -201,33 +213,44 @@ class PipelinePage(BasePage):
         select_row.addWidget(QLabel("Active book:"))
         self._project_combo = QComboBox()
         select_row.addWidget(self._project_combo)
+
         self._load_project_btn = QPushButton("Load")
         self._load_project_btn.clicked.connect(self._on_load_project)
         select_row.addWidget(self._load_project_btn)
+
         self._refresh_projects_btn = QPushButton("Refresh")
         self._refresh_projects_btn.clicked.connect(self._reload_projects)
         select_row.addWidget(self._refresh_projects_btn)
+
         project_layout.addLayout(select_row)
 
+        # Create project form
         create_form = QFormLayout()
         self._new_title_input = QLineEdit()
         self._new_author_input = QLineEdit()
         self._index_url_input = QLineEdit()
         self._create_project_btn = QPushButton("Create Book Project")
         self._create_project_btn.clicked.connect(self._on_create_project)
+
         create_form.addRow("Title:", self._new_title_input)
         create_form.addRow("Author:", self._new_author_input)
         create_form.addRow("Index URL:", self._index_url_input)
         create_form.addRow("", self._create_project_btn)
+
         project_layout.addLayout(create_form)
         pipeline_layout.addWidget(project_group)
 
+        # -------------------------
+        # Inventory + chapter range
+        # -------------------------
         inventory_group = QGroupBox("Index Inventory & Range")
         inventory_layout = QFormLayout(inventory_group)
+
         self._raw_count_label = QLabel("0")
         self._valid_count_label = QLabel("0")
         self._last_processed_label = QLabel("0")
         self._last_checked_label = QLabel("-")
+
         inventory_layout.addRow("Raw chapter URLs:", self._raw_count_label)
         inventory_layout.addRow("Valid chapters:", self._valid_count_label)
         inventory_layout.addRow("Last processed chapter:", self._last_processed_label)
@@ -236,12 +259,15 @@ class PipelinePage(BasePage):
         self._start_spin = QSpinBox()
         self._start_spin.setRange(1, 100000)
         self._start_spin.setValue(1)
+
         self._end_spin = QSpinBox()
         self._end_spin.setRange(1, 100000)
         self._end_spin.setValue(1)
+
         inventory_layout.addRow("Start chapter:", self._start_spin)
         inventory_layout.addRow("End chapter:", self._end_spin)
 
+        # Scraper options
         self._browser_gui_check = QCheckBox("Use visible browser (non-headless)")
         self._browser_gui_check.setChecked(bool(self.settings.get("scraper_use_browser_gui", False)))
         inventory_layout.addRow("Browser mode:", self._browser_gui_check)
@@ -249,6 +275,7 @@ class PipelinePage(BasePage):
         self._scraper_method_combo = QComboBox()
         self._scraper_method_combo.addItem("Browser (JS/login pages)", "browser")
         self._scraper_method_combo.addItem("HTTP (fast, no JS)", "http")
+
         scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
         method_index = self._scraper_method_combo.findData(scraper_method)
         self._scraper_method_combo.setCurrentIndex(method_index if method_index >= 0 else 0)
@@ -264,6 +291,7 @@ class PipelinePage(BasePage):
         self._max_index_pages_spin.setValue(int(self.settings.get("scraper_max_index_pages", 50)))
         inventory_layout.addRow("Max index pages:", self._max_index_pages_spin)
 
+        # Audio mode
         self._audio_mode_combo = QComboBox()
         self._audio_mode_combo.addItems(["per_chapter", "single_file"])
         current_mode = self.settings.get("audio_output_mode", "per_chapter")
@@ -272,21 +300,33 @@ class PipelinePage(BasePage):
         )
         inventory_layout.addRow("Audio output mode:", self._audio_mode_combo)
 
+        # -------------------------
+        # Action buttons
+        # -------------------------
         action_row = QHBoxLayout()
+
         self._check_index_btn = QPushButton("Check Index")
         self._check_index_btn.clicked.connect(self._on_check_index)
-        self._run_selected_btn = QPushButton("Run to Character Review")
+
+        self._run_selected_btn = QPushButton("Run to Review (Scrape → Clean → Semantic)")
         self._run_selected_btn.clicked.connect(self._on_run_to_review)
+
         self._continue_audio_btn = QPushButton("Continue Audio + Export")
         self._continue_audio_btn.clicked.connect(self._on_continue_audio)
+
         action_row.addWidget(self._check_index_btn)
         action_row.addWidget(self._run_selected_btn)
         action_row.addWidget(self._continue_audio_btn)
+
         inventory_layout.addRow("", action_row)
         pipeline_layout.addWidget(inventory_group)
 
+        # -------------------------
+        # Pipeline step progress bars
+        # -------------------------
         steps_group = QGroupBox("Pipeline Steps")
         steps_layout = QVBoxLayout(steps_group)
+
         self._step_bars: dict[str, QProgressBar] = {}
         for key, label in _STEPS:
             row = QHBoxLayout()
@@ -297,80 +337,115 @@ class PipelinePage(BasePage):
             self._step_bars[key] = bar
             row.addWidget(bar)
             steps_layout.addLayout(row)
+
         pipeline_layout.addWidget(steps_group)
         pipeline_layout.addStretch()
+
         self._on_scraper_method_changed()
 
+        # --------------------------------------------------------------
+        # REVIEW TAB
+        # --------------------------------------------------------------
         review_tab = QWidget()
         self._build_review_tab(review_tab)
 
         self._tabs.addTab(pipeline_tab, "Pipeline")
         self._tabs.addTab(review_tab, "Review")
 
-    def _build_review_tab(self, tab: QWidget) -> None:
-        outer = QVBoxLayout(tab)
 
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("Chapter:"))
-        self._review_chapter_combo = QComboBox()
-        self._review_chapter_combo.currentIndexChanged.connect(self._on_review_chapter_changed)
-        controls.addWidget(self._review_chapter_combo, 1)
-        self._review_refresh_btn = QPushButton("Refresh")
-        self._review_refresh_btn.clicked.connect(self._refresh_review_data)
-        controls.addWidget(self._review_refresh_btn)
-        outer.addLayout(controls)
+def _build_review_tab(self, tab: QWidget) -> None:
+    outer = QVBoxLayout(tab)
 
-        splitter = QSplitter()
+    # --------------------------------------------------------------
+    # Chapter selector + refresh
+    # --------------------------------------------------------------
+    controls = QHBoxLayout()
+    controls.addWidget(QLabel("Chapter:"))
 
-        chapter_group = QGroupBox("Chapter Content (parsed · falls back to raw scrape)")
-        chapter_layout = QVBoxLayout(chapter_group)
-        self._review_text_view = QTextEdit()
-        self._review_text_view.setReadOnly(True)
-        chapter_layout.addWidget(self._review_text_view)
-        splitter.addWidget(chapter_group)
+    self._review_chapter_combo = QComboBox()
+    self._review_chapter_combo.currentIndexChanged.connect(self._on_review_chapter_changed)
+    controls.addWidget(self._review_chapter_combo, 1)
 
-        detected_group = QGroupBox("Detected Characters")
-        detected_layout = QVBoxLayout(detected_group)
-        self._detected_char_table = QTableWidget(0, 5)
-        self._detected_char_table.setHorizontalHeaderLabels(
-            ["Name", "Gender", "Voice", "Confidence", "Source Chapter(s)"]
-        )
-        self._detected_char_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        self._detected_char_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._detected_char_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._detected_char_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._detected_char_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Stretch
-        )
-        detected_layout.addWidget(self._detected_char_table)
+    self._review_refresh_btn = QPushButton("Refresh")
+    self._review_refresh_btn.clicked.connect(self._refresh_review_data)
+    controls.addWidget(self._review_refresh_btn)
 
-        detected_btns = QHBoxLayout()
-        self._detected_add_btn = QPushButton("Add Character")
-        self._detected_add_btn.clicked.connect(self._on_add_detected_character)
-        self._detected_remove_btn = QPushButton("Remove Selected")
-        self._detected_remove_btn.clicked.connect(self._on_remove_detected_character)
-        self._detected_save_btn = QPushButton("Save Character Edits")
-        self._detected_save_btn.clicked.connect(self._on_save_detected_characters)
-        detected_btns.addWidget(self._detected_add_btn)
-        detected_btns.addWidget(self._detected_remove_btn)
-        detected_btns.addWidget(self._detected_save_btn)
-        detected_btns.addStretch()
-        detected_layout.addLayout(detected_btns)
-        splitter.addWidget(detected_group)
+    outer.addLayout(controls)
 
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        outer.addWidget(splitter)
+    # --------------------------------------------------------------
+    # Splitter: Left = cleaned/semantic text, Right = characters
+    # --------------------------------------------------------------
+    splitter = QSplitter()
 
-        self._review_text_view.setPlainText("Run 'Run to Character Review' to load scraped chapter content.")
+    # -------------------------
+    # LEFT SIDE: Chapter text
+    # -------------------------
+    chapter_group = QGroupBox("Chapter Content (cleaned → semantic → final)")
+    chapter_layout = QVBoxLayout(chapter_group)
+
+    self._review_text_view = QTextEdit()
+    self._review_text_view.setReadOnly(True)
+    chapter_layout.addWidget(self._review_text_view)
+
+    splitter.addWidget(chapter_group)
+
+    # -------------------------
+    # RIGHT SIDE: Detected characters
+    # -------------------------
+    detected_group = QGroupBox("Detected Characters (LLM + DB)")
+    detected_layout = QVBoxLayout(detected_group)
+
+    self._detected_char_table = QTableWidget(0, 5)
+    self._detected_char_table.setHorizontalHeaderLabels(
+        ["Name", "Gender", "Voice", "Confidence", "Source Chapter(s)"]
+    )
+
+    # Column sizing
+    self._detected_char_table.horizontalHeader().setSectionResizeMode(
+        0, QHeaderView.ResizeMode.Stretch
+    )
+    self._detected_char_table.horizontalHeader().setSectionResizeMode(
+        1, QHeaderView.ResizeMode.ResizeToContents
+    )
+    self._detected_char_table.horizontalHeader().setSectionResizeMode(
+        2, QHeaderView.ResizeMode.ResizeToContents
+    )
+    self._detected_char_table.horizontalHeader().setSectionResizeMode(
+        3, QHeaderView.ResizeMode.ResizeToContents
+    )
+    self._detected_char_table.horizontalHeader().setSectionResizeMode(
+        4, QHeaderView.ResizeMode.Stretch
+    )
+
+    detected_layout.addWidget(self._detected_char_table)
+
+    # Buttons for character editing
+    detected_btns = QHBoxLayout()
+    self._detected_add_btn = QPushButton("Add Character")
+    self._detected_add_btn.clicked.connect(self._on_add_detected_character)
+
+    self._detected_remove_btn = QPushButton("Remove Selected")
+    self._detected_remove_btn.clicked.connect(self._on_remove_detected_character)
+
+    self._detected_save_btn = QPushButton("Save Character Edits")
+    self._detected_save_btn.clicked.connect(self._on_save_detected_characters)
+
+    detected_btns.addWidget(self._detected_add_btn)
+    detected_btns.addWidget(self._detected_remove_btn)
+    detected_btns.addWidget(self._detected_save_btn)
+    detected_btns.addStretch()
+
+    detected_layout.addLayout(detected_btns)
+    splitter.addWidget(detected_group)
+
+    splitter.setStretchFactor(0, 3)
+    splitter.setStretchFactor(1, 2)
+    outer.addWidget(splitter)
+
+    # Default message
+    self._review_text_view.setPlainText(
+        "Run 'Run to Review' to load cleaned and semantic chapter content."
+    )
 
     def _require_project(self) -> bool:
         if not self.project_manager:
@@ -409,6 +484,7 @@ class PipelinePage(BasePage):
         self._valid_count_label.setText(str(inventory.get("valid_chapter_count", 0)))
         self._last_processed_label.setText(str(inventory.get("last_processed_chapter", 0)))
         self._last_checked_label.setText(str(book.get("last_checked") or "-"))
+
         scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
         method_idx = self._scraper_method_combo.findData(scraper_method)
         self._scraper_method_combo.setCurrentIndex(method_idx if method_idx >= 0 else 0)
@@ -417,12 +493,15 @@ class PipelinePage(BasePage):
         valid_count = max(1, int(inventory.get("valid_chapter_count", 1)))
         self._start_spin.setRange(1, valid_count)
         self._end_spin.setRange(1, valid_count)
+
         start = max(1, int(selected_range.get("start", 1)))
         end = int(selected_range.get("end", 0)) or valid_count
         start = min(start, valid_count)
         end = min(max(start, end), valid_count)
+
         self._start_spin.setValue(start)
         self._end_spin.setValue(end)
+
         self._refresh_review_data()
 
     def _on_create_project(self) -> None:
@@ -510,19 +589,23 @@ class PipelinePage(BasePage):
         worker = self._worker
         self._worker = None
         self._set_buttons_enabled(True)
+
         if mode == _PipelineWorker.RUN_TO_REVIEW and self.project_manager:
             end_chapter = worker._end if worker is not None else 0
             self.project_manager.set_last_processed_chapter(end_chapter)
+
         self._load_active_project_state()
         self.log.log(message, level="SUCCESS")
+
         if mode == _PipelineWorker.RUN_TO_REVIEW:
             self._refresh_review_data()
             self._tabs.setCurrentIndex(1)
             QMessageBox.information(
                 self,
-                "Character Review Required",
-                "Chapter parsing is complete. Review scraped text and detected "
-                "characters in the Review tab, then click 'Continue Audio + Export'.",
+                "Review Required",
+                "Text + semantic processing is complete.\n\n"
+                "Review cleaned text and detected characters in the Review tab,\n"
+                "then click 'Continue Audio + Export' to generate audio and EPUB.",
             )
 
     def _on_worker_failed(self, message: str) -> None:
@@ -530,7 +613,6 @@ class PipelinePage(BasePage):
         self._set_buttons_enabled(True)
         self._load_active_project_state()
         self.log.log(f"Pipeline failed: {message}", level="ERROR")
-
     # ------------------------------------------------------------------
     # Button handlers
     # ------------------------------------------------------------------
@@ -576,11 +658,14 @@ class PipelinePage(BasePage):
         if result is None:
             return
         start, end = result
+
         self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", False)
         self._persist_scraper_options()
         self.project_manager.set_selected_range(start, end)
-        self.log.log("Starting pipeline (scrape → translate → parse)…", level="INFO")
+
+        self.log.log("Starting pipeline (scrape → clean → semantic)…", level="INFO")
+
         self._start_worker(
             _PipelineWorker(
                 self.project_manager,
@@ -597,9 +682,12 @@ class PipelinePage(BasePage):
         selected = self.project_manager.get_selected_range()
         start = max(1, int(selected.get("start", 1)))
         end = max(start, int(selected.get("end", 0)) or start)
+
         self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", True)
-        self.log.log("Starting audio generation and export in background…", level="INFO")
+
+        self.log.log("Starting audio generation and EPUB build…", level="INFO")
+
         self._start_worker(
             _PipelineWorker(
                 self.project_manager,
@@ -610,15 +698,29 @@ class PipelinePage(BasePage):
             )
         )
 
+    # ------------------------------------------------------------------
+    # Progress bar update
+    # ------------------------------------------------------------------
+
     def _update_step(self, key: str, value: int) -> None:
         if key in self._step_bars:
             self._step_bars[key].setValue(value)
 
+    # ------------------------------------------------------------------
+    # Review Tab Data Loading
+    # ------------------------------------------------------------------
+
     def _refresh_review_data(self) -> None:
+        """
+        Loads chapter list + triggers loading of cleaned/semantic text
+        and detected characters.
+        """
         if not self.project_manager or not self.project_manager.current_book_id:
             self._review_chapter_combo.clear()
             self._review_chapters = []
-            self._review_text_view.setPlainText("Load or create a book project to review chapter content.")
+            self._review_text_view.setPlainText(
+                "Load or create a book project to review chapter content."
+            )
             self._detected_char_table.setRowCount(0)
             return
 
@@ -626,6 +728,7 @@ class PipelinePage(BasePage):
         chapters = self.project_manager.get_chapters() or []
         self._review_chapters = chapters
 
+        # Populate chapter dropdown
         self._review_chapter_combo.blockSignals(True)
         self._review_chapter_combo.clear()
         for i, chapter in enumerate(chapters):
@@ -633,142 +736,166 @@ class PipelinePage(BasePage):
             self._review_chapter_combo.addItem(f"{i + 1}. {title}", i)
         self._review_chapter_combo.blockSignals(False)
 
-        if self._review_chapter_combo.count() == 0:
+        if not chapters:
             self._review_text_view.setPlainText("No scraped chapters found yet.")
         else:
             index_to_use = 0
             if isinstance(selected_chapter_idx, int):
-                found_index = self._review_chapter_combo.findData(selected_chapter_idx)
-                if found_index >= 0:
-                    index_to_use = found_index
+                found = self._review_chapter_combo.findData(selected_chapter_idx)
+                if found >= 0:
+                    index_to_use = found
             self._review_chapter_combo.setCurrentIndex(index_to_use)
             self._on_review_chapter_changed(index_to_use)
 
         self._load_detected_characters()
 
     def _on_review_chapter_changed(self, index: int) -> None:
+        """
+        Loads cleaned text → cleaned_final → semantic segments → final segments.
+        """
         if index < 0 or index >= len(self._review_chapters):
             self._review_text_view.setPlainText("")
             return
-        chapter = self._review_chapters[index] or {}
 
-        # Prefer LLM-tagged segments from per-chapter chapter_info.json when available.
-        if self.project_manager:
-            work_dir = self.project_manager.get_work_dir()
-            if work_dir:
-                chapter_id = f"ch{index:03d}"
-                chapter_info_file = work_dir / chapter_id / "chapter_info.json"
-                if chapter_info_file.exists():
-                    try:
-                        with open(chapter_info_file, encoding="utf-8") as fh:
-                            ch_data = json.load(fh)
-                        segments = ch_data.get("segments", [])
-                        if segments:
-                            lines = []
-                            for seg in segments:
-                                speaker = str(seg.get("speaker", "narrator")).upper()
-                                seg_type = str(seg.get("type", "narration")).lower()
-                                text = str(seg.get("text", "")).strip()
-                                if not text:
-                                    continue
-                                if seg_type == "narration":
-                                    lines.append(text)
-                                else:
-                                    lines.append(f"[{speaker}] {text}")
-                            if lines:
-                                self._review_text_view.setPlainText("\n\n".join(lines))
-                                return
-                    except Exception:
-                        pass  # Fall through to raw content on any error.
+        chapter = self._review_chapters[index]
+        work_dir = self.project_manager.get_work_dir()
+        chapter_id = f"ch{index:03d}"
 
-        # Fall back to raw scraped content.
+        # --------------------------------------------------------------
+        # 1. cleaned_final.txt (user-approved cleaned text)
+        # --------------------------------------------------------------
+        cleaned_final = work_dir / f"{chapter_id}_cleaned_final.txt"
+        if cleaned_final.exists():
+            self._review_text_view.setPlainText(cleaned_final.read_text(encoding="utf-8"))
+            return
+
+        # --------------------------------------------------------------
+        # 2. cleaned.txt (deterministic cleaned text)
+        # --------------------------------------------------------------
+        cleaned_basic = work_dir / f"{chapter_id}_cleaned.txt"
+        if cleaned_basic.exists():
+            self._review_text_view.setPlainText(cleaned_basic.read_text(encoding="utf-8"))
+            return
+
+        # --------------------------------------------------------------
+        # 3. semantic segments (chapter_info.json)
+        # --------------------------------------------------------------
+        chapter_info_file = work_dir / chapter_id / "chapter_info.json"
+        if chapter_info_file.exists():
+            try:
+                ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
+                segments = ch_data.get("segments", [])
+                if segments:
+                    lines = []
+                    for seg in segments:
+                        text = seg.get("text", "").strip()
+                        if not text:
+                            continue
+                        if seg.get("type") == "narration":
+                            lines.append(text)
+                        else:
+                            speaker = seg.get("speaker", "narrator").upper()
+                            lines.append(f"[{speaker}] {text}")
+                    self._review_text_view.setPlainText("\n\n".join(lines))
+                    return
+            except Exception:
+                pass
+
+        # --------------------------------------------------------------
+        # 4. fallback: raw scraped content
+        # --------------------------------------------------------------
         content = str(chapter.get("content", "")).strip()
         self._review_text_view.setPlainText(content or "[No content available for this chapter.]")
 
+    # ------------------------------------------------------------------
+    # Character Loading (Phase 6)
+    # ------------------------------------------------------------------
+
     def _load_detected_characters(self) -> None:
+        """
+        Loads characters from:
+        - chXXX_llm_normalized.json
+        - pending_character_additions
+        - character_db
+        """
         aggregated: dict[str, dict[str, Any]] = {}
-        if self.project_manager:
-            work_dir = self.project_manager.get_work_dir()
-            if work_dir:
-                chapter_info_file = work_dir / "chapter_info.json"
-                if chapter_info_file.exists():
-                    try:
-                        with open(chapter_info_file, encoding="utf-8") as f:
-                            chapter_info = json.load(f)
-                        if isinstance(chapter_info, dict):
-                            for chapter_data in chapter_info.values():
-                                if not isinstance(chapter_data, dict):
-                                    continue
-                                source = str(
-                                    chapter_data.get("title")
-                                    or chapter_data.get("chapter_id")
-                                    or ""
-                                ).strip()
-                                for char in chapter_data.get("detected_characters", []):
-                                    if not isinstance(char, dict):
-                                        continue
-                                    name = str(char.get("name", "")).strip()
-                                    if not name:
-                                        continue
-                                    key = name.lower()
-                                    try:
-                                        confidence = float(char.get("confidence", 0.0))
-                                    except (TypeError, ValueError):
-                                        confidence = 0.0
-                                    existing = aggregated.get(key)
-                                    if existing is None:
-                                        aggregated[key] = {
-                                            "name": name,
-                                            "gender": str(char.get("gender", "unknown")).strip() or "unknown",
-                                            "voice": self._default_voice_for_gender(
-                                                str(char.get("gender", "unknown")).strip() or "unknown"
-                                            ),
-                                            "confidence": confidence,
-                                            "sources": {source} if source else set(),
-                                        }
-                                    else:
-                                        if confidence > existing["confidence"]:
-                                            existing["confidence"] = confidence
-                                            existing["gender"] = (
-                                                str(char.get("gender", "unknown")).strip() or "unknown"
-                                            )
-                                            if not str(existing.get("voice", "")).strip():
-                                                existing["voice"] = self._default_voice_for_gender(
-                                                    existing["gender"]
-                                                )
-                                        if source:
-                                            existing["sources"].add(source)
-                    except Exception as exc:
-                        self.log.log(f"Failed loading detected characters: {exc}", level="WARNING")
+        work_dir = self.project_manager.get_work_dir()
 
-        if not aggregated:
-            for item in self.settings.get("pending_character_additions", []) or []:
-                if not isinstance(item, dict):
+        # --------------------------------------------------------------
+        # Load normalized characters from each chapter
+        # --------------------------------------------------------------
+        if work_dir:
+            for idx in range(len(self._review_chapters)):
+                chapter_id = f"ch{idx:03d}"
+                norm_path = work_dir / f"{chapter_id}_llm_normalized.json"
+                if not norm_path.exists():
                     continue
-                name = str(item.get("name", "")).strip()
-                if not name:
-                    continue
-                key = name.lower()
-                source = str(item.get("source_chapter", "")).strip()
-                aggregated[key] = {
-                    "name": name,
-                    "gender": str(item.get("gender", "unknown")).strip() or "unknown",
-                    "voice": str(item.get("voice", "")).strip()
-                    or self._default_voice_for_gender(str(item.get("gender", "unknown")).strip()),
-                    "confidence": float(item.get("confidence", 0.0)),
-                    "sources": {source} if source else set(),
-                }
 
+                try:
+                    data = json.loads(norm_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                for char in data.get("characters", []):
+                    name = str(char.get("name", "")).strip()
+                    if not name:
+                        continue
+
+                    key = name.lower()
+                    gender = str(char.get("gender", "unknown")).strip()
+                    confidence = float(char.get("confidence", 0.0))
+
+                    existing = aggregated.get(key)
+                    if existing is None:
+                        aggregated[key] = {
+                            "name": name,
+                            "gender": gender,
+                            "voice": self._default_voice_for_gender(gender),
+                            "confidence": confidence,
+                            "sources": {chapter_id},
+                        }
+                    else:
+                        existing["sources"].add(chapter_id)
+                        if confidence > existing["confidence"]:
+                            existing["confidence"] = confidence
+                            existing["gender"] = gender
+
+        # --------------------------------------------------------------
+        # Add pending characters
+        # --------------------------------------------------------------
+        for item in self.settings.get("pending_character_additions", []) or []:
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            key = name.lower()
+            gender = str(item.get("gender", "unknown")).strip()
+            voice = str(item.get("voice", "")).strip() or self._default_voice_for_gender(gender)
+            confidence = float(item.get("confidence", 0.0))
+            source = str(item.get("source_chapter", "")).strip()
+
+            aggregated[key] = {
+                "name": name,
+                "gender": gender,
+                "voice": voice,
+                "confidence": confidence,
+                "sources": {source} if source else set(),
+            }
+
+        # --------------------------------------------------------------
+        # Populate table
+        # --------------------------------------------------------------
         self._detected_char_table.setRowCount(0)
-        for item in sorted(aggregated.values(), key=lambda val: val["name"].lower()):
-            sources = sorted(item["sources"])
+        for item in sorted(aggregated.values(), key=lambda v: v["name"].lower()):
             self._insert_detected_character_row(
-                name=str(item["name"]),
-                gender=str(item["gender"]),
-                voice=str(item.get("voice", "")),
-                confidence=float(item["confidence"]),
-                source=", ".join(sources),
+                name=item["name"],
+                gender=item["gender"],
+                voice=item["voice"],
+                confidence=item["confidence"],
+                source=", ".join(sorted(item["sources"])),
             )
+    # ------------------------------------------------------------------
+    # Character table helpers (Phase 6)
+    # ------------------------------------------------------------------
 
     def _insert_detected_character_row(
         self,
@@ -779,20 +906,43 @@ class PipelinePage(BasePage):
         confidence: float = 0.0,
         source: str = "",
     ) -> None:
+        """
+        Inserts a row into the detected-character table.
+        Voice column uses a dropdown populated from KOKORO_VOICE_LIST.
+        """
         row = self._detected_char_table.rowCount()
         self._detected_char_table.insertRow(row)
+
+        # Name
         self._detected_char_table.setItem(row, 0, QTableWidgetItem(name))
+
+        # Gender
         self._detected_char_table.setItem(row, 1, QTableWidgetItem(gender))
+
+        # Voice dropdown
         voice_combo = QComboBox()
         voice_combo.addItems(KOKORO_VOICE_LIST)
+
         selected_voice = voice.strip() or self._default_voice_for_gender(gender)
         if selected_voice in KOKORO_VOICE_LIST:
             voice_combo.setCurrentText(selected_voice)
+
         self._detected_char_table.setCellWidget(row, 2, voice_combo)
-        self._detected_char_table.setItem(row, 3, QTableWidgetItem(f"{confidence:.2f}"))
+
+        # Confidence
+        conf_item = QTableWidgetItem(f"{float(confidence):.2f}")
+        self._detected_char_table.setItem(row, 3, conf_item)
+
+        # Source chapters
         self._detected_char_table.setItem(row, 4, QTableWidgetItem(source))
 
     def _default_voice_for_gender(self, gender: str) -> str:
+        """
+        Returns the default voice for a given gender, using settings:
+        - default_male_voice
+        - default_female_voice
+        - narrator_voice (fallback)
+        """
         gender_lc = (gender or "").strip().lower()
         if gender_lc == "male":
             return self.settings.get("default_male_voice", "am_adam")
@@ -800,20 +950,36 @@ class PipelinePage(BasePage):
             return self.settings.get("default_female_voice", "af_heart")
         return self.settings.get("narrator_voice", "af_heart")
 
+    # ------------------------------------------------------------------
+    # Character editing actions
+    # ------------------------------------------------------------------
+
     def _on_add_detected_character(self) -> None:
+        """
+        Adds a blank row for manual character entry.
+        """
         self._insert_detected_character_row()
 
     def _on_remove_detected_character(self) -> None:
+        """
+        Removes selected rows from the detected-character table.
+        """
         selected = self._detected_char_table.selectedItems()
         if not selected:
             return
+
         rows = sorted({item.row() for item in selected}, reverse=True)
         for row in rows:
             self._detected_char_table.removeRow(row)
 
     def _on_save_detected_characters(self) -> None:
+        """
+        Saves the detected characters into settings.pending_character_additions.
+        These will be merged into the character DB during Phase 6.
+        """
         pending = []
         clamped_rows = 0
+
         for row in range(self._detected_char_table.rowCount()):
             name_item = self._detected_char_table.item(row, 0)
             gender_item = self._detected_char_table.item(row, 1)
@@ -824,20 +990,27 @@ class PipelinePage(BasePage):
             name = name_item.text().strip() if name_item else ""
             if not name:
                 continue
+
             gender = (gender_item.text().strip() if gender_item else "unknown") or "unknown"
+
             voice = (
                 voice_widget.currentText().strip()
                 if isinstance(voice_widget, QComboBox)
                 else self._default_voice_for_gender(gender)
             )
+
+            # Confidence clamping
             try:
                 confidence = float(confidence_item.text()) if confidence_item else 0.0
             except (TypeError, ValueError):
                 confidence = 0.0
+
             clamped = max(0.0, min(1.0, confidence))
-            if confidence < 0.0 or confidence > 1.0:
+            if confidence != clamped:
                 clamped_rows += 1
+
             source = source_item.text().strip() if source_item else ""
+
             pending.append(
                 {
                     "name": name,
@@ -847,12 +1020,15 @@ class PipelinePage(BasePage):
                     "source_chapter": source,
                 }
             )
+
+        # Save to settings
         self.settings.set("pending_character_additions", pending)
         self.settings.save()
+
         if clamped_rows:
             self.log.log(
-                f"Saved review character edits ({clamped_rows} confidence value(s) clamped to 0..1).",
+                f"Saved character edits ({clamped_rows} confidence values clamped to 0..1).",
                 level="WARNING",
             )
-            return
-        self.log.log("Saved review character edits.", level="SUCCESS")
+        else:
+            self.log.log("Saved character edits.", level="SUCCESS")

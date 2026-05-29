@@ -944,3 +944,90 @@ class SettingsPage(BasePage):
             "4) If it still fails, check firewall/proxy settings and retry.\n"
             f"{detail_line}"
         )
+    # ------------------------------------------------------------------
+    # Save settings
+    # ------------------------------------------------------------------
+
+    def _on_save(self) -> None:
+        # General
+        self.settings.set("output_dir", self._output_dir_input.text().strip())
+        self.settings.set("tts_backend_mode", "remote")
+        self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
+        self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
+
+        # Kokoro model paths
+        self.settings.set("kokoro_model_path", self._model_path_input.text().strip())
+        self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
+
+        # LLM settings
+        self.settings.set("llm_api_url", self._llm_url_input.text().strip())
+        self.settings.set("llm_api_key", self._llm_key_input.text())
+        self.settings.set("dialogue_llm_url", self._ollama_url_input.text().strip())
+        self.settings.set("dialogue_llm_model", self._ollama_model_input.text().strip())
+
+        # Multi-speaker defaults
+        self.settings.set("multispeaker_enabled", self._multispeaker_check.isChecked())
+        self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
+        self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
+        self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
+        self.settings.set(
+            "character_confidence_threshold",
+            float(self._char_confidence_spin.value()),
+        )
+
+        # Character DB + pending additions
+        self.settings.set("character_db", self._collect_character_db())
+        self.settings.set("pending_character_additions", self._collect_pending_additions())
+
+        # Persist to disk
+        self.settings.save()
+        self.log.log("Settings saved successfully.", level="SUCCESS")
+
+    # ------------------------------------------------------------------
+    # Pending character actions
+    # ------------------------------------------------------------------
+
+    def _on_accept_pending_character(self) -> None:
+        selected = self._pending_table.selectedItems()
+        if not selected:
+            return
+
+        rows = sorted({item.row() for item in selected}, reverse=True)
+        for row in rows:
+            name_item = self._pending_table.item(row, 0)
+            gender_item = self._pending_table.item(row, 1)
+            voice_item = self._pending_table.item(row, 2)
+
+            name = name_item.text().strip() if name_item else ""
+            gender = gender_item.text().strip() if gender_item else "unknown"
+            voice = voice_item.text().strip() if voice_item else self._default_voice_for_gender(gender)
+
+            if name:
+                self._insert_character_row(
+                    name=name,
+                    voice=voice,
+                    gender=gender,
+                    description="",
+                )
+
+            self._pending_table.removeRow(row)
+
+        self.settings.set("pending_character_additions", self._collect_pending_additions())
+        self.settings.set("character_db", self._collect_character_db())
+        self.settings.save()
+
+        self.log.log("Accepted selected pending characters.", level="SUCCESS")
+
+    def _on_reject_pending_character(self) -> None:
+        selected = self._pending_table.selectedItems()
+        if not selected:
+            return
+
+        rows = sorted({item.row() for item in selected}, reverse=True)
+        for row in rows:
+            self._pending_table.removeRow(row)
+
+        self.settings.set("pending_character_additions", self._collect_pending_additions())
+        self.settings.save()
+
+        self.log.log("Rejected selected pending characters.", level="INFO")

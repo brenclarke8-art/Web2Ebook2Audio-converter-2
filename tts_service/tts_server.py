@@ -29,12 +29,10 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 # ---------------------------------------------------------------------------
 # Prevent ONNX Runtime / OpenMP threads from saturating all CPU cores.
-# OMP_WAIT_POLICY=PASSIVE replaces the default spin-wait idle strategy with
-# OS sleep, keeping cores available for the network stack.
 # ---------------------------------------------------------------------------
 _cpu_count: int = os.cpu_count() or 4
 _onnx_threads: str = str(max(1, _cpu_count - 2))
@@ -55,8 +53,6 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-# EBOOK_AUDIO_STUDIO_HOME may be absolute, relative, or include "~";
-# it is normalized with expanduser()+resolve() below.
 APP_HOME_DIR = Path(
     os.environ.get("EBOOK_AUDIO_STUDIO_HOME", str(REPO_ROOT / ".ebook_audio_studio"))
 ).expanduser().resolve()
@@ -77,11 +73,6 @@ _kokoro = None  # lazily initialized on first request
 # ---------------------------------------------------------------------------
 
 def _server_output_dir() -> Path:
-    """Return the resolved output directory for generated WAV files.
-
-    The directory is created on demand.  It is determined solely by the server
-    configuration — never by caller-supplied data — to prevent path traversal.
-    """
     env_val = os.environ.get("TTS_OUTPUT_DIR")
     base = Path(env_val).expanduser().resolve() if env_val else DEFAULT_OUTPUT_DIR
     base.mkdir(parents=True, exist_ok=True)
@@ -101,8 +92,7 @@ def _get_kokoro():
     if _kokoro is not None:
         return _kokoro
 
-    # Belt-and-suspenders: apply thread limits even if the top-level block was
-    # somehow bypassed (e.g. when the server is imported rather than run as __main__).
+    # Re-apply thread limits
     _cpus = os.cpu_count() or 4
     _threads = str(max(1, _cpus - 2))
     os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
@@ -140,7 +130,6 @@ def _get_kokoro():
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
-
 
 class SynthesizeRequest(BaseModel):
     text: str
@@ -186,10 +175,22 @@ class HealthResponse(BaseModel):
     voices_path: str
 
 
+# --- NEW: segment-level TTS models -----------------------------------------
+
+class SegmentTTSRequest(BaseModel):
+    text: str
+    voice: str = "af_heart"
+    speed: float = 1.0
+    lang: str = "a"
+
+
+class SegmentTTSResponse(BaseModel):
+    audio_path: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _synthesise(text: str, *, voice: str, speed: float, lang: str) -> np.ndarray:
     kokoro = _get_kokoro()
@@ -198,7 +199,6 @@ def _synthesise(text: str, *, voice: str, speed: float, lang: str) -> np.ndarray
 
 
 def _safe_filename(filename: str) -> str:
-    """Return only the base name component, rejecting empty or traversal names."""
     name = Path(filename).name
     if not name or name in (".", ".."):
         raise ValueError(f"Invalid output filename: {filename!r}")
@@ -206,12 +206,6 @@ def _safe_filename(filename: str) -> str:
 
 
 def _write_wav(samples: np.ndarray, filename: str) -> str:
-    """Write *samples* to the server-managed output directory.
-
-    *filename* must be a plain file name (no directory components).  The
-    output directory is determined by :func:`_server_output_dir` and is never
-    influenced by caller-supplied data.
-    """
     safe_name = _safe_filename(filename)
     out_path = _server_output_dir() / safe_name
     sf.write(str(out_path), samples, 24000)
@@ -221,7 +215,6 @@ def _write_wav(samples: np.ndarray, filename: str) -> str:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
@@ -238,10 +231,7 @@ def health() -> HealthResponse:
 @app.get("/voices")
 def voices() -> dict:
     try:
-        # Import the voice catalog from the installed ebook_app package if
-        # available; otherwise return an empty dict.
         from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG  # type: ignore[import]
-
         return {"voices": KOKORO_VOICE_CATALOG}
     except ImportError:
         return {"voices": {}}
@@ -269,15 +259,38 @@ def preview(req: PreviewRequest) -> AudioResponse:
         "This is a preview of the selected voice at the current speed setting. "
         "Listen carefully to determine if this suits your needs."
     )
-    # Use integer centiseconds to avoid decimal points / OS-unsafe chars in name.
     speed_tag = int(req.speed * 100)
     filename = f"preview_{req.voice}_{speed_tag}.wav"
     try:
-        samples = _synthesise(
-            preview_text, voice=req.voice, speed=req.speed, lang=req.lang
-        )
+        samples = _synthesise(preview_text, voice=req.voice, speed=req.speed, lang=req.lang)
         path = _write_wav(samples, filename)
         return AudioResponse(audio_path=path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# --- NEW: segment-level TTS endpoint ---------------------------------------
+
+@app.post("/synthesize_segment", response_model=SegmentTTSResponse)
+def synthesize_segment(req: SegmentTTSRequest) -> SegmentTTSResponse:
+    """
+    Generate TTS audio for a single semantic segment.
+    Used by the GUI for segment-level preview.
+    """
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=422, detail="text must not be empty")
+
+    speed_tag = int(req.speed * 100)
+    filename = f"segment_{uuid.uuid4().hex}_{req.voice}_{speed_tag}.wav"
+
+    try:
+        samples = _synthesise(req.text, voice=req.voice, speed=req.speed, lang=req.lang)
+        path = _write_wav(samples, filename)
+        return SegmentTTSResponse(audio_path=path)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
@@ -292,7 +305,6 @@ def synthesize_multi(req: MultiSynthesizeRequest) -> AudioResponse:
     silence_samples = int(sample_rate * req.dialogue_pause)
     silence = np.zeros(silence_samples, dtype=np.float32)
 
-    # Build normalized speaker → voice lookup
     voice_mappings = req.voice_mappings
     narrator_voice = voice_mappings.get("narrator", "af_heart")
     all_audio: list[np.ndarray] = []

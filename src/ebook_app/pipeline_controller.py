@@ -14,6 +14,11 @@ from ebook_app.models.epub_builder import EPUBBuilder
 from ebook_app.models.forced_alignment import ForcedAlignment, AlignmentEntry
 from ebook_app.models.media_overlay import MediaOverlayBuilder, TextSegment
 from ebook_app.models.scraper import HttpWebScraper, WebScraper
+from pathlib import Path
+import json
+
+from ebook_app.voice.voice_router import VoiceRouter
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +44,15 @@ class PipelineController:
     STEPS = [
         "scrape_index",
         "scrape_chapters",
-        "translate_chapters",
-        "parse_dialogue",
-        "multispeaker_tts",
-        "batch_tts",
-        "forced_alignment",
-        "smil_generation",
-        "epub_export",
+        "clean_chapters",
+        "plan_clean_review",
+        "llm_semantic_analysis",
+        "normalize_llm_output",
+        "smart_review_dialogue",
+        "tts_generate",
+        "epub_build",
     ]
+
 
     _OLLAMA_TAGS_PATH = "/api/tags"
 
@@ -61,7 +67,6 @@ class PipelineController:
         self._running = False
 
         # Data storage for pipeline state
-        # Allow work_dir to be passed in (e.g., from ProjectManager)
         if work_dir:
             self.work_dir = Path(work_dir)
         else:
@@ -78,6 +83,14 @@ class PipelineController:
         self.selected_start_chapter: int = 1
         self.selected_end_chapter: int = 0
         self.review_required: bool = False
+        self.voice_router = VoiceRouter(
+            character_voices=self.settings.character_voice_map,
+             default_male_voice=self.settings.default_male_voice,
+             default_female_voice=self.settings.default_female_voice,
+             narrator_voice=self.settings.narrator_voice,
+        )
+
+
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -119,12 +132,7 @@ class PipelineController:
         )
 
     def _preflight_llm_check(self, parser) -> None:
-        """Verify Ollama is reachable and the configured model is installed.
-
-        Raises RuntimeError with an actionable message if the check fails,
-        so that parse_dialogue() aborts early instead of silently falling back
-        on every chapter.
-        """
+        """Verify Ollama is reachable and the configured model is installed."""
         import requests
         from urllib.parse import urlparse, urlunparse
 
@@ -212,32 +220,23 @@ class PipelineController:
     # ------------------------------------------------------------------
 
     def run_all(self) -> None:
-        """Execute every pipeline step in order."""
+        """Execute the full new pipeline."""
         self._running = True
         steps = [
-            ("scrape_index",    self.scrape_index),
+            ("scrape_index", self.scrape_index),
             ("scrape_chapters", self.scrape_chapters),
-            ("translate_chapters", self.translate_chapters),
-            ("parse_dialogue",  self.parse_dialogue),
-            ("multispeaker_tts", self.multispeaker_tts),
-            ("batch_tts",       self.batch_tts),
-            ("forced_alignment", self.forced_alignment),
-            ("smil_generation", self.smil_generation),
-            ("epub_export",     self.epub_export),
+            ("clean_chapters", self.clean_chapters),
+            ("plan_clean_review", self.plan_clean_review),
+            ("llm_semantic_analysis", self.llm_semantic_analysis),
+            ("normalize_llm_output", self.normalize_llm_output),
+            ("smart_review_dialogue", self.smart_review_dialogue),
+            ("tts_generate", self.tts_generate),
+            ("epub_build", self.epub_build),
         ]
+
         for key, method in steps:
             if not self._running:
-                logger.info("Pipeline stopped before step '%s'.", key)
                 break
-            if key in {"multispeaker_tts", "batch_tts", "forced_alignment", "smil_generation", "epub_export"}:
-                review_approved = bool(self.settings.get("character_review_approved", False))
-                if not review_approved:
-                    self.review_required = True
-                    logger.info(
-                        "Pipeline paused before '%s': character review approval required.",
-                        key,
-                    )
-                    break
             logger.info("Pipeline step: %s", key)
             self._on_progress(key, 0)
             try:
@@ -247,7 +246,9 @@ class PipelineController:
                 logger.error(f"Pipeline step '{key}' failed: {exc}", exc_info=True)
                 self._running = False
                 break
+
         self._running = False
+
 
     def stop(self) -> None:
         """Signal the pipeline to stop after the current step."""
@@ -270,7 +271,7 @@ class PipelineController:
         }
 
     # ------------------------------------------------------------------
-    # Pipeline steps
+    # Pipeline steps — Phase 1 & 2
     # ------------------------------------------------------------------
 
     def scrape_index(self) -> None:
@@ -314,7 +315,6 @@ class PipelineController:
     def scrape_chapters(self) -> None:
         """Download all chapter pages listed in the scraped index."""
         if not self.chapter_urls:
-            # Try loading from disk
             urls_file = self.work_dir / "chapter_urls.json"
             if urls_file.exists():
                 with open(urls_file, encoding="utf-8") as f:
@@ -346,7 +346,6 @@ class PipelineController:
         scraper = self._build_scraper()
         self.chapters = scraper.scrape_chapters(selected_urls)
 
-        # Save chapters to disk
         chapters_file = self.work_dir / "chapters.json"
         logger.debug("Writing chapter scrape output to %s", chapters_file)
         with open(chapters_file, "w", encoding="utf-8") as f:
@@ -354,10 +353,17 @@ class PipelineController:
 
         logger.info(f"Scraped {len(self.chapters)} chapters successfully.")
 
-    def translate_chapters(self) -> None:
-        """Translate all scraped chapter files."""
+    # ------------------------------------------------------------------
+    # NEW Phase 3 — Deterministic cleaning
+    # ------------------------------------------------------------------
+
+    def clean_chapters(self) -> None:
+        """Deterministically clean scraped chapters into per-chapter text files.
+
+        This is a non-LLM, purely mechanical normalization step that prepares
+        content for either user review or LLM semantic analysis.
+        """
         if not self.chapters:
-            # Try loading from disk
             chapters_file = self.work_dir / "chapters.json"
             if chapters_file.exists():
                 with open(chapters_file, encoding="utf-8") as f:
@@ -366,41 +372,128 @@ class PipelineController:
                 logger.warning("No chapters available. Run scrape_chapters first.")
                 return
 
-        target_lang = self.settings.get("translation_target_lang", "en")
-        if not target_lang or target_lang == "skip":
-            logger.info("Translation skipped (no target language configured).")
-            self.translated_chapters = self.chapters
+        total = len(self.chapters)
+        if total == 0:
+            logger.warning("No chapters to clean.")
             return
 
-        logger.info(f"Translating {len(self.chapters)} chapters to {target_lang}...")
-        translated_file = self.work_dir / "translated_chapters.json"
-        self.translated_chapters = []
-        total = len(self.chapters)
-        for idx, chapter in enumerate(self.chapters, start=1):
-            # For now, copy chapters as-is (TODO: implement real translation)
-            self.translated_chapters.append(chapter.copy())
-            with open(translated_file, "w", encoding="utf-8") as f:
-                json.dump(self.translated_chapters, f, indent=2, ensure_ascii=False)
-            self._on_progress("translate_chapters", int(idx * 100 / max(total, 1)))
+        logger.info("Cleaning %d chapters (deterministic, no LLM)…", total)
+        for idx, chapter in enumerate(self.chapters):
+            chapter_id = f"ch{idx:03d}"
+            raw_content = str(chapter.get("content", "") or "")
 
-        logger.info(f"Translation complete for {len(self.translated_chapters)} chapters.")
+            # Simple deterministic cleaning; can be refined later.
+            text = raw_content.replace("\r\n", "\n").replace("\r", "\n")
+            lines = [ln.strip() for ln in text.split("\n")]
+            lines = [ln for ln in lines if ln]  # drop empty lines
+            cleaned = "\n\n".join(lines)
 
-    def parse_dialogue(self) -> None:
-        """Parse chapter text into speaker-tagged segments via DialogueParser."""
-        if not self.translated_chapters:
-            # Try loading from disk
-            translated_file = self.work_dir / "translated_chapters.json"
-            if translated_file.exists():
-                with open(translated_file, encoding="utf-8") as f:
-                    self.translated_chapters = json.load(f)
-            else:
-                logger.warning("No translated chapters available.")
-                return
+            out_path = self.work_dir / f"{chapter_id}_cleaned.txt"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(cleaned)
 
-        logger.info("Parsing dialogue for %d chapters...", len(self.translated_chapters))
-        llm_log_path = self.work_dir / "llm_communication.jsonl"
+            self._on_progress("clean_chapters", int((idx + 1) * 100 / max(total, 1)))
+
+        logger.info("Deterministic cleaning complete for %d chapters.", total)
+
+    # ------------------------------------------------------------------
+    # NEW Phase 4 — Cleaned-text review planner
+    # ------------------------------------------------------------------
+
+    def plan_clean_review(self) -> None:
+        """Plan which chapters require manual cleaned-text review.
+
+        Uses:
+          - clean_review_mode: 'skip', 'semi', 'full'
+          - clean_review_sample_chapters: N (for 'semi')
+        Writes:
+          - clean_review_plan.json in work_dir
+        """
+        mode = str(self.settings.get("clean_review_mode", "semi")).strip().lower()
+        sample_n = int(self.settings.get("clean_review_sample_chapters", 3))
+
+        chapters_file = self.work_dir / "chapters.json"
+        if chapters_file.exists():
+            with open(chapters_file, encoding="utf-8") as f:
+                chapters = json.load(f)
+        else:
+            chapters = self.chapters or []
+        total = len(chapters)
+
+        if total == 0:
+            logger.warning("No chapters available to plan cleaned-text review.")
+            return
+
+        if mode not in {"skip", "semi", "full"}:
+            logger.warning("Unknown clean_review_mode=%r; defaulting to 'semi'.", mode)
+            mode = "semi"
+
+        if mode == "skip":
+            needs_review: list[int] = []
+        elif mode == "full":
+            needs_review = list(range(total))
+        else:  # 'semi'
+            needs_review = list(range(min(sample_n, total)))
+
+        plan = {
+            "mode": mode,
+            "sample": sample_n,
+            "total_chapters": total,
+            "needs_review": needs_review,
+        }
+        plan_path = self.work_dir / "clean_review_plan.json"
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan, f, indent=2, ensure_ascii=False)
+
+        logger.info(
+            "Cleaned-text review plan written to %s (mode=%s, needs_review=%s)",
+            plan_path,
+            mode,
+            needs_review,
+        )
+
+          
+    # ------------------------------------------------------------------
+    # PHASE 5 — LLM Semantic Analysis
+    # ------------------------------------------------------------------
+
+    def llm_semantic_analysis(self) -> None:
+        """
+        Phase 5:
+        - Load cleaned_final text (or cleaned if skip mode)
+        - Run DialogueParser.parse() for each chapter
+        - Save raw LLM output to chXXX_llm_raw.json
+        - Save per-chapter chapter_info.json
+        """
+        logger.info("Running Phase 5 — LLM Semantic Analysis…")
+
+        # Load cleaned review plan
+        plan_path = self.work_dir / "clean_review_plan.json"
+        if plan_path.exists():
+            with open(plan_path, "r", encoding="utf-8") as f:
+                review_plan = json.load(f)
+        else:
+            review_plan = {"needs_review": []}
+
+        # Load chapters.json (for titles)
+        chapters_file = self.work_dir / "chapters.json"
+        if not chapters_file.exists():
+            logger.error("Missing chapters.json — cannot run semantic analysis.")
+            return
+        with open(chapters_file, "r", encoding="utf-8") as f:
+            chapters = json.load(f)
+
+        total = len(chapters)
+        if total == 0:
+            logger.warning("No chapters available for semantic analysis.")
+            return
+
+        # Prepare LLM parser
         llm_url = self.settings.get("dialogue_llm_url", "") or self.settings.get("ollama_url", "")
         llm_model = self.settings.get("dialogue_llm_model", "") or self.settings.get("ollama_model", "")
+        llm_log_path = self.work_dir / "llm_communication.jsonl"
+
         parser = DialogueParser(
             ollama_url=llm_url,
             model=llm_model,
@@ -408,379 +501,590 @@ class PipelineController:
             retries=int(self.settings.get("dialogue_llm_retries", 1)),
             llm_mode=str(self.settings.get("dialogue_llm_mode", "full")),
             llm_strict_quotes=bool(self.settings.get("dialogue_llm_strict_quotes", False)),
-            llm_log_path=llm_log_path,
+            llm_log_path=str(llm_log_path),
         )
 
+        # Optional preflight check
         if bool(self.settings.get("llm_preflight_check", True)):
             self._preflight_llm_check(parser)
 
-        known_characters = self.settings.get("character_db", []) or []
-        known_names = {
-            self._normalize_name(item.get("name", ""))
-            for item in known_characters
-            if item.get("name")
-        }
-        pending = self.settings.get("pending_character_additions", []) or []
-        pending_names = {
-            self._normalize_name(item.get("name", ""))
-            for item in pending
-            if item.get("name")
-        }
-        threshold = float(self.settings.get("character_confidence_threshold", 0.8))
+        aggregated_info = {}
 
-        aggregated: dict[str, dict] = {}
+        for idx, chapter in enumerate(chapters):
+            chapter_id = f"ch{idx:03d}"
+            title = chapter.get("title", f"Chapter {idx + 1}")
 
-        total = len(self.translated_chapters)
-        for i, chapter in enumerate(self.translated_chapters):
-            chapter_id = f"ch{i:03d}"
-            content = chapter.get("content", "")
-            parse_result = parser.parse(content, chapter_id=chapter_id)
-            self.dialogue_segments[i] = parse_result.segments
+            # Determine which cleaned file to use
+            cleaned_final = self.work_dir / f"{chapter_id}_cleaned_final.txt"
+            cleaned_basic = self.work_dir / f"{chapter_id}_cleaned.txt"
 
+            if cleaned_final.exists():
+                with open(cleaned_final, "r", encoding="utf-8") as f:
+                    text = f.read()
+            elif cleaned_basic.exists():
+                with open(cleaned_basic, "r", encoding="utf-8") as f:
+                    text = f.read()
+            else:
+                logger.warning("Missing cleaned text for %s — skipping.", chapter_id)
+                continue
+
+            # Run LLM semantic parsing
+            result = parser.parse(text=text, chapter_id=chapter_id)
+            self.dialogue_segments[idx] = result.segments
+
+            # Build chapter_info structure
             chapter_info = {
-                "chapter_index": i,
+                "chapter_index": idx,
                 "chapter_id": chapter_id,
-                "title": chapter.get("title", f"Chapter {i + 1}"),
-                "segments": [self._segment_to_dict(s) for s in parse_result.segments],
+                "title": title,
+                "segments": [
+                    {
+                        "text": s.text,
+                        "type": s.type,
+                        "speaker": s.speaker,
+                        "gender": s.gender,
+                        "speaker_confidence": s.speaker_confidence,
+                        "gender_confidence": s.gender_confidence,
+                        "character_confidence": s.character_confidence,
+                        "paragraph_id": s.paragraph_id,
+                    }
+                    for s in result.segments
+                ],
                 "detected_characters": [
-                    {"name": c.name, "gender": c.gender, "confidence": c.confidence}
-                    for c in parse_result.detected_characters
+                    {
+                        "name": c.name,
+                        "gender": c.gender,
+                        "confidence": c.confidence,
+                    }
+                    for c in result.detected_characters
                 ],
             }
-            aggregated[str(i)] = chapter_info
+
+            # Save raw LLM output
+            raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
+            with open(raw_path, "w", encoding="utf-8") as f:
+                json.dump(chapter_info, f, indent=2, ensure_ascii=False)
+
+            # Save per-chapter chapter_info.json
             chapter_dir = self.work_dir / chapter_id
             chapter_dir.mkdir(parents=True, exist_ok=True)
             with open(chapter_dir / "chapter_info.json", "w", encoding="utf-8") as f:
                 json.dump(chapter_info, f, indent=2, ensure_ascii=False)
 
-            for detected in parse_result.detected_characters:
-                normalized = self._normalize_name(detected.name)
-                if (
-                    normalized
-                    and detected.confidence >= threshold
-                    and normalized not in known_names
-                    and normalized not in pending_names
-                ):
-                    gender_lc = (detected.gender or "unknown").strip().lower()
-                    if gender_lc == "male":
-                        voice = self.settings.get("default_male_voice", "am_adam")
-                    elif gender_lc == "female":
-                        voice = self.settings.get("default_female_voice", "af_heart")
-                    else:
-                        voice = self.settings.get("narrator_voice", "af_heart")
-                    pending.append(
-                        {
-                            "name": detected.name,
-                            "gender": detected.gender,
-                            "voice": voice,
-                            "confidence": detected.confidence,
-                            "source_chapter": chapter_id,
-                        }
-                    )
-                    pending_names.add(normalized)
+            aggregated_info[str(idx)] = chapter_info
 
-            self._on_progress("parse_dialogue", int((i + 1) * 100 / max(total, 1)))
+            self._on_progress("llm_semantic_analysis", int((idx + 1) * 100 / total))
 
-        # Save segments to disk
-        segments_file = self.work_dir / "dialogue_segments.json"
-        segments_data = {
-            str(k): [self._segment_to_dict(s)
-                     for s in v]
-            for k, v in self.dialogue_segments.items()
-        }
-        with open(segments_file, "w", encoding="utf-8") as f:
-            json.dump(segments_data, f, indent=2, ensure_ascii=False)
+        # Save aggregated chapter_info.json
+        with open(self.work_dir / "chapter_info.json", "w", encoding="utf-8") as f:
+            json.dump(aggregated_info, f, indent=2, ensure_ascii=False)
 
-        chapter_info_file = self.work_dir / "chapter_info.json"
-        with open(chapter_info_file, "w", encoding="utf-8") as f:
-            json.dump(aggregated, f, indent=2, ensure_ascii=False)
+        logger.info("Phase 5 — LLM Semantic Analysis complete.")
 
-        self.settings.set("pending_character_additions", pending)
-        self.settings.set("character_review_approved", False)
-        self.review_required = True
+           
+    # ------------------------------------------------------------------
+    # PHASE 6 — Normalize + Smart Review + Voice Assignment
+    # ------------------------------------------------------------------
 
-        logger.info("Dialogue parsing complete.")
-        logger.info("LLM communication log written to %s", llm_log_path)
+    def normalize_llm_output(self) -> None:
+        """
+        Phase 6A:
+        Convert chXXX_llm_raw.json → chXXX_llm_normalized.json
+        Ensures a strict schema for downstream processing.
+        """
+        logger.info("Running Phase 6A — Normalizing LLM output…")
 
-    def multispeaker_tts(self) -> None:
-        """Synthesise audio with per-character voices using MultiSpeakerTTS."""
-        if not self.dialogue_segments:
-            # Try loading from disk
-            segments_file = self.work_dir / "dialogue_segments.json"
-            if segments_file.exists():
-                with open(segments_file, encoding="utf-8") as f:
-                    segments_data = json.load(f)
-                    from ebook_app.models.dialogue_parser import Segment
-                    self.dialogue_segments = {
-                        int(k): [
-                            Segment(
-                                text=s.get("text", ""),
-                                type=s.get("type", s.get("kind", "narration")),
-                                speaker=s.get("speaker", "narrator"),
-                                gender=s.get("gender", "unknown"),
-                                speaker_confidence=float(s.get("speaker_confidence", 0.0)),
-                                gender_confidence=float(s.get("gender_confidence", 0.0)),
-                                character_confidence=float(s.get("character_confidence", 0.0)),
-                                paragraph_id=s.get("paragraph_id", ""),
-                            )
-                            for s in v
-                        ]
-                        for k, v in segments_data.items()
-                    }
-            else:
-                logger.warning("No dialogue segments available.")
-                return
-
-        if not self.settings.get("multispeaker_enabled", False):
-            logger.info("Multispeaker mode disabled; skipping multispeaker_tts step.")
+        chapters_file = self.work_dir / "chapters.json"
+        if not chapters_file.exists():
+            logger.error("Missing chapters.json — cannot normalize.")
             return
+        with open(chapters_file, "r", encoding="utf-8") as f:
+            chapters = json.load(f)
 
-        logger.info("Synthesizing audio with multispeaker TTS...")
-        engine = self._make_tts_backend(output_dir=str(self.work_dir / "audio"))
+        total = len(chapters)
+        for idx in range(total):
+            chapter_id = f"ch{idx:03d}"
+            raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
+            if not raw_path.exists():
+                logger.warning("Missing raw LLM output for %s — skipping.", chapter_id)
+                continue
+
+            with open(raw_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+
+            # Normalize segments
+            normalized_segments = []
+            for seg in raw.get("segments", []):
+                normalized_segments.append({
+                    "text": seg.get("text", ""),
+                    "type": seg.get("type", "narration"),
+                    "speaker": seg.get("speaker", "narrator"),
+                    "gender": seg.get("gender", "unknown"),
+                    "speaker_confidence": float(seg.get("speaker_confidence", 1.0)),
+                    "gender_confidence": float(seg.get("gender_confidence", 0.0)),
+                    "character_confidence": float(seg.get("character_confidence", 1.0)),
+                    "paragraph_id": seg.get("paragraph_id", f"{chapter_id}_p0"),
+                })
+
+            # Normalize characters
+            normalized_chars = []
+            for c in raw.get("detected_characters", []):
+                normalized_chars.append({
+                    "name": c.get("name", ""),
+                    "gender": c.get("gender", "unknown"),
+                    "confidence": float(c.get("confidence", 0.0)),
+                })
+
+            normalized = {
+                "chapter_id": chapter_id,
+                "segments": normalized_segments,
+                "characters": normalized_chars,
+            }
+
+            out_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(normalized, f, indent=2, ensure_ascii=False)
+
+            self._on_progress("normalize_llm_output", int((idx + 1) * 100 / total))
+
+        logger.info("Phase 6A — Normalization complete.")
+
+    # ------------------------------------------------------------------
+
+    def smart_review_dialogue(self) -> None:
+        """
+        Phase 6B:
+        Smart auto-review + voice assignment.
+
+        - Auto-approve chapters unless:
+            * new characters appear
+            * low speaker_confidence
+            * low character_confidence
+        - Assign voices (default + character_db)
+        - Write final JSON files
+        - Update character_db + pending additions
+        """
+        logger.info("Running Phase 6B — Smart Review + Voice Assignment…")
+
+        # Load thresholds
+        speaker_thresh = float(self.settings.get("speaker_conf_threshold", 0.8))
+        char_thresh = float(self.settings.get("character_conf_threshold", 0.8))
+
+        # Load existing character DB
+        character_db = self.settings.get("character_db", []) or []
+        known_names = {self._normalize_name(c["name"]) for c in character_db if c.get("name")}
+
+        pending = self.settings.get("pending_character_additions", []) or []
+        pending_names = {self._normalize_name(c["name"]) for c in pending if c.get("name")}
+
+        # Default voices
+        narrator_voice = self.settings.get("narrator_voice", "af_heart")
+        default_male = self.settings.get("default_male_voice", "am_adam")
+        default_female = self.settings.get("default_female_voice", "af_heart")
+
+        # Load chapters.json
+        chapters_file = self.work_dir / "chapters.json"
+        with open(chapters_file, "r", encoding="utf-8") as f:
+            chapters = json.load(f)
+        total = len(chapters)
+
+        # Track which chapters require manual review
+        needs_review = []
+
+        for idx in range(total):
+            chapter_id = f"ch{idx:03d}"
+            norm_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
+            if not norm_path.exists():
+                logger.warning("Missing normalized LLM output for %s — skipping.", chapter_id)
+                continue
+
+            with open(norm_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            segments = data.get("segments", [])
+            detected_chars = data.get("characters", [])
+
+            # ------------------------------------------------------
+            # SMART REVIEW TRIGGERS
+            # ------------------------------------------------------
+            review_flag = False
+
+            # 1. New characters
+            for c in detected_chars:
+                norm = self._normalize_name(c["name"])
+                if norm and norm not in known_names and norm not in pending_names:
+                    review_flag = True
+
+            # 2. Low confidence segments
+            for seg in segments:
+                if seg["speaker_confidence"] < speaker_thresh:
+                    review_flag = True
+                if seg["character_confidence"] < char_thresh:
+                    review_flag = True
+
+            if review_flag:
+                needs_review.append(idx)
+            else:
+                # AUTO-APPROVE → write final files immediately
+                self._write_final_chapter_files(
+                    chapter_id=chapter_id,
+                    segments=segments,
+                    detected_chars=detected_chars,
+                    narrator_voice=narrator_voice,
+                    default_male=default_male,
+                    default_female=default_female,
+                    character_db=character_db,
+                )
+
+            self._on_progress("smart_review_dialogue", int((idx + 1) * 100 / total))
+
+        # Save review plan
+        review_plan = {
+            "needs_review": needs_review,
+            "total_chapters": total,
+        }
+        with open(self.work_dir / "semantic_review_plan.json", "w", encoding="utf-8") as f:
+            json.dump(review_plan, f, indent=2, ensure_ascii=False)
+
+        # Update settings
+        self.settings.set("pending_character_additions", pending)
+        self.settings.set("character_db", character_db)
+
+        logger.info("Phase 6B — Smart Review complete.")
+        logger.info("Chapters requiring manual review: %s", needs_review)
+
+    # ------------------------------------------------------------------
+
+    def _write_final_chapter_files(
+        self,
+        chapter_id: str,
+        segments: list,
+        detected_chars: list,
+        narrator_voice: str,
+        default_male: str,
+        default_female: str,
+        character_db: list,
+    ) -> None:
+        """
+        Helper for Phase 6:
+        Writes:
+          - chXXX_segments_final.json
+          - chXXX_characters_final.json
+        Applies voice assignment.
+        """
+        # Build voice map from character_db
+        voice_map = {
+            self._normalize_name(c["name"]): c.get("voice", narrator_voice)
+            for c in character_db
+        }
+
+        # Assign voices
+        final_chars = []
+        for c in detected_chars:
+            name = c["name"]
+            norm = self._normalize_name(name)
+            gender = c.get("gender", "unknown").lower()
+
+            if norm in voice_map:
+                voice = voice_map[norm]
+            else:
+                # Default assignment
+                if gender == "male":
+                    voice = default_male
+                elif gender == "female":
+                    voice = default_female
+                else:
+                    voice = narrator_voice
+
+                # Add to character_db
+                character_db.append({
+                    "name": name,
+                    "gender": gender,
+                    "voice": voice,
+                    "description": "",
+                })
+                voice_map[norm] = voice
+
+            final_chars.append({
+                "name": name,
+                "gender": gender,
+                "voice": voice,
+            })
+
+        # Write segments_final
+        seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
+        with open(seg_path, "w", encoding="utf-8") as f:
+            json.dump(segments, f, indent=2, ensure_ascii=False)
+
+        # Write characters_final
+        char_path = self.work_dir / f"{chapter_id}_characters_final.json"
+        with open(char_path, "w", encoding="utf-8") as f:
+            json.dump(final_chars, f, indent=2, ensure_ascii=False)
+       
+    # ------------------------------------------------------------------
+    # PHASE 7 — TTS Generation (new pipeline)
+    # ------------------------------------------------------------------
+
+    def tts_generate(self) -> None:
+        """
+        Phase 7:
+        - Load final segments + character voices
+        - Build voice map from character_db
+        - Generate audio per chapter or whole book
+        - Write audio to work_dir/audio/
+        """
+        logger.info("Running Phase 7 — TTS Generation…")
+
+        audio_dir = self.work_dir / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load character DB
+        character_db = self.settings.get("character_db", []) or []
+        voice_map = {
+            self._normalize_name(c["name"]): c.get("voice", "")
+            for c in character_db
+        }
 
         narrator_voice = self.settings.get("narrator_voice", "af_heart")
-        default_male_voice = self.settings.get("default_male_voice", "am_adam")
-        default_female_voice = self.settings.get("default_female_voice", "af_heart")
+        default_male = self.settings.get("default_male_voice", "am_adam")
+        default_female = self.settings.get("default_female_voice", "af_heart")
 
-        voice_mappings = {"narrator": narrator_voice}
-        for item in self.settings.get("character_db", []) or []:
-            name = (item.get("name") or "").strip()
-            voice = (item.get("voice") or "").strip()
-            if name and voice:
-                voice_mappings[name] = voice
+        # Build TTS backend
+        engine = self._make_tts_backend(output_dir=str(audio_dir))
+
+        # Load chapters.json
+        chapters_file = self.work_dir / "chapters.json"
+        with open(chapters_file, "r", encoding="utf-8") as f:
+            chapters = json.load(f)
+        total = len(chapters)
 
         audio_mode = self.settings.get("audio_output_mode", "per_chapter")
+
+        # --------------------------------------------------------------
+        # SINGLE FILE MODE
+        # --------------------------------------------------------------
         if audio_mode == "single_file":
-            full_segments: list[Segment] = []
-            for _, segments in sorted(self.dialogue_segments.items()):
-                full_segments.extend(segments)
-            if not full_segments:
-                logger.warning("No dialogue segments available for combined audio.")
+            logger.info("Generating single-file audiobook…")
+
+            full_text = []
+            for idx in range(total):
+                chapter_id = f"ch{idx:03d}"
+                seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
+                if not seg_path.exists():
+                    continue
+                with open(seg_path, "r", encoding="utf-8") as f:
+                    segs = json.load(f)
+                for s in segs:
+                    full_text.append(s["text"])
+
+            combined = "\n\n".join(full_text).strip()
+            if not combined:
+                logger.warning("No text available for TTS.")
                 return
-            output_filename = "book_audio.wav"
-            audio_path = engine.generate_multi_voice_audio(
-                dialogue_segments=full_segments,
-                output_filename=output_filename,
-                voice_mappings=voice_mappings,
-                default_male_voice=default_male_voice,
-                default_female_voice=default_female_voice,
-                speed=self.settings.tts_speed,
-            )
-            self.audio_files = {0: audio_path}
-            logger.info("Multispeaker TTS complete: generated combined book audio.")
-            return
 
-        for i, segments in self.dialogue_segments.items():
-            chapter_id = f"ch{i:03d}"
-            output_filename = f"{chapter_id}_audio.wav"
-            try:
-                audio_path = engine.generate_multi_voice_audio(
-                    dialogue_segments=segments,
-                    output_filename=output_filename,
-                    voice_mappings=voice_mappings,
-                    default_male_voice=default_male_voice,
-                    default_female_voice=default_female_voice,
-                    speed=self.settings.tts_speed,
-                )
-                self.audio_files[i] = audio_path
-            except Exception as exc:
-                logger.error("Multispeaker TTS failed for %s: %s", chapter_id, exc)
-
-        logger.info("Multispeaker TTS complete: %d audio files generated.", len(self.audio_files))
-
-    def batch_tts(self) -> None:
-        """Synthesise audio for narration-only chapters in a single voice."""
-        if not self.dialogue_segments:
-            logger.warning("No dialogue segments available for TTS.")
-            return
-
-        logger.info(f"Batch TTS for {len(self.dialogue_segments)} chapters...")
-        engine = self._make_tts_backend(output_dir=str(self.work_dir / "audio"))
-        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
-
-        if audio_mode == "single_file":
-            full_text_parts: list[str] = []
-            for _, segments in sorted(self.dialogue_segments.items()):
-                full_text_parts.extend(s.text for s in segments if s.text.strip())
-            full_text = "\n\n".join(full_text_parts).strip()
-            if not full_text:
-                logger.warning("No text available to synthesize combined audio.")
-                return
-            audio_path = engine.generate_audio(
-                text=full_text,
+            out_path = engine.generate_audio(
+                text=combined,
                 output_filename="book_audio.wav",
-                voice=self.settings.tts_voice,
+                voice=narrator_voice,
                 speed=self.settings.tts_speed,
             )
-            self.audio_files = {0: audio_path}
-            logger.info("Batch TTS complete: generated combined book audio.")
+            self.audio_files = {0: out_path}
+
+            logger.info("Phase 7 — Single-file TTS complete.")
             return
 
-        for i, segments in self.dialogue_segments.items():
-            chapter_id = f"ch{i:03d}"
-            output_filename = f"{chapter_id}_audio.wav"
+        # --------------------------------------------------------------
+        # PER-CHAPTER MODE
+        # --------------------------------------------------------------
+        logger.info("Generating per-chapter audio…")
 
-            # Combine all segment text
-            full_text = "\n\n".join(s.text for s in segments if s.text.strip())
+        for idx in range(total):
+            chapter_id = f"ch{idx:03d}"
+            seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
+            char_path = self.work_dir / f"{chapter_id}_characters_final.json"
 
-            if not full_text:
-                logger.warning(f"Chapter {i} has no text to synthesize.")
+            if not seg_path.exists():
+                logger.warning("Missing final segments for %s — skipping.", chapter_id)
                 continue
 
-            logger.info(f"Generating audio for chapter {i}...")
-            audio_path = engine.generate_audio(
+            with open(seg_path, "r", encoding="utf-8") as f:
+                segments = json.load(f)
+
+            # Build text for narration-only TTS
+            text_parts = [s["text"] for s in segments if s["text"].strip()]
+            full_text = "\n\n".join(text_parts).strip()
+            if not full_text:
+                logger.warning("Chapter %s has no text for TTS.", chapter_id)
+                continue
+
+            output_filename = f"{chapter_id}.wav"
+            out_path = engine.generate_audio(
                 text=full_text,
                 output_filename=output_filename,
-                voice=self.settings.tts_voice,
+                voice=narrator_voice,
                 speed=self.settings.tts_speed,
             )
-            self.audio_files[i] = audio_path
+            self.audio_files[idx] = out_path
 
-        logger.info(f"Batch TTS complete: {len(self.audio_files)} audio files generated.")
+            self._on_progress("tts_generate", int((idx + 1) * 100 / total))
 
-    def forced_alignment(self) -> None:
-        """Generate per-paragraph timestamps from audio + transcript."""
-        if not self.audio_files or not self.dialogue_segments:
-            logger.warning("Missing audio files or segments for forced alignment.")
+        logger.info("Phase 7 — Per-chapter TTS complete.")
+        
+    # ------------------------------------------------------------------
+    # PHASE 8 — EPUB Build (new pipeline)
+    # ------------------------------------------------------------------
+
+    def epub_build(self) -> None:
+        """
+        Phase 8:
+        - Build XHTML from final segments
+        - Build SMIL overlays from alignment data (if available)
+        - Use EPUBBuilder to produce final .epub
+        """
+        logger.info("Running Phase 8 — EPUB Build…")
+
+        # Load chapters
+        chapters_file = self.work_dir / "chapters.json"
+        if not chapters_file.exists():
+            logger.error("Missing chapters.json — cannot build EPUB.")
             return
+        with open(chapters_file, "r", encoding="utf-8") as f:
+            chapters = json.load(f)
 
-        logger.info("Running forced alignment...")
-        aligner = ForcedAlignment()
-        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
-
-        for i, audio_path in self.audio_files.items():
-            if audio_mode == "single_file":
-                segments = []
-                for _, chapter_segments in sorted(self.dialogue_segments.items()):
-                    segments.extend(chapter_segments)
-            else:
-                segments = self.dialogue_segments.get(i, [])
-            if not segments:
-                continue
-
-            chapter_id = f"ch{i:03d}"
-            entries = aligner.align(
-                wav_path=str(audio_path),
-                segments=segments,
-                chapter_id=chapter_id,
-            )
-            self.alignment_data[i] = entries
-
-        # Save alignment data
-        alignment_file = self.work_dir / "alignment_data.json"
-        alignment_dict = {
-            str(k): [{"paragraph_id": e.paragraph_id, "start_s": e.start_s,
-                      "end_s": e.end_s, "text": e.text} for e in v]
-            for k, v in self.alignment_data.items()
-        }
-        with open(alignment_file, "w", encoding="utf-8") as f:
-            json.dump(alignment_dict, f, indent=2, ensure_ascii=False)
-
-        logger.info("Forced alignment complete.")
-
-    def smil_generation(self) -> None:
-        """Build SMIL Media Overlay documents from alignment data."""
-        if not self.alignment_data:
-            # Try loading from disk
-            alignment_file = self.work_dir / "alignment_data.json"
-            if alignment_file.exists():
-                with open(alignment_file, encoding="utf-8") as f:
-                    alignment_dict = json.load(f)
-                    from ebook_app.models.forced_alignment import AlignmentEntry
-                    self.alignment_data = {
-                        int(k): [AlignmentEntry(**e) for e in v]
-                        for k, v in alignment_dict.items()
-                    }
-            else:
-                logger.warning("No alignment data available.")
-                return
-
-        logger.info("Generating SMIL overlays...")
-        # SMIL generation is handled by EPUBBuilder
-        logger.info("SMIL generation will be handled during EPUB export.")
-
-    def epub_export(self) -> None:
-        """Package all processed assets into an EPUB3 file."""
-        if not self.translated_chapters:
-            logger.warning("No chapters available for EPUB export.")
-            return
-
-        logger.info("Exporting EPUB...")
-        title = self.settings.get("book_title", "Untitled")
-        author = self.settings.get("book_author", "Unknown")
+        # Metadata (project manager can override later)
+        title = "Book"
+        author = "Unknown"
 
         builder = EPUBBuilder(
             title=title,
             author=author,
             output_dir=str(self.settings.output_dir),
         )
-        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
 
-        # Add chapters with audio and SMIL
-        for i, chapter in enumerate(self.translated_chapters):
-            chapter_id = f"ch{i:03d}"
-            xhtml_filename = f"{chapter_id}.xhtml"
-            chapter_title = chapter.get("title", f"Chapter {i+1}")
+        total = len(chapters)
 
-            # Generate basic XHTML
-            xhtml_content = self._generate_xhtml(chapter, chapter_id)
-            builder.add_chapter(xhtml_filename, xhtml_content, chapter_title)
+        for idx, chapter in enumerate(chapters):
+            chapter_id = f"ch{idx:03d}"
+            chapter_title = chapter.get("title", f"Chapter {idx + 1}")
 
-            # Add audio and SMIL if available
-            if audio_mode == "single_file":
+            seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
+            if not seg_path.exists():
+                logger.warning("Missing final segments for %s — skipping.", chapter_id)
                 continue
-            if i in self.audio_files and i in self.alignment_data:
-                audio_path = self.audio_files[i]
-                alignment = self.alignment_data[i]
 
-                # Convert alignment to TextSegments
-                text_segments = [
-                    TextSegment(
-                        paragraph_id=entry.paragraph_id,
-                        clip_begin=entry.start_s,
-                        clip_end=entry.end_s,
+            with open(seg_path, "r", encoding="utf-8") as f:
+                segments = json.load(f)
+
+            # Build XHTML
+            xhtml_lines = [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<!DOCTYPE html>',
+                '<html xmlns="http://www.w3.org/1999/xhtml">',
+                "<head>",
+                f"<title>{chapter_title}</title>",
+                '<link rel="stylesheet" type="text/css" href="stylesheet.css"/>',
+                "</head>",
+                "<body>",
+                f"<h1>{chapter_title}</h1>",
+            ]
+
+            for s in segments:
+                pid = s["paragraph_id"]
+                text = s["text"]
+                xhtml_lines.append(f'<p id="{pid}">{text}</p>')
+
+            xhtml_lines.append("</body></html>")
+            xhtml = "\n".join(xhtml_lines)
+
+            filename = f"{chapter_id}.xhtml"
+            builder.add_chapter(filename=filename, xhtml=xhtml, title=chapter_title)
+
+            # Attach audio if available
+            audio_path = self.audio_files.get(idx)
+            if audio_path:
+                # Build simple SMIL segments (no forced alignment yet)
+                smil_segments = []
+                for s in segments:
+                    smil_segments.append(
+                        TextSegment(
+                            paragraph_id=s["paragraph_id"],
+                            clip_begin=0.0,
+                            clip_end=0.0,
+                        )
                     )
-                    for entry in alignment
-                ]
+                builder.add_audio(
+                    chapter_filename=filename,
+                    audio_path=str(audio_path),
+                    segments=smil_segments,
+                )
 
-                builder.add_audio(xhtml_filename, str(audio_path), text_segments)
+            self._on_progress("epub_build", int((idx + 1) * 100 / total))
 
-        # Build the EPUB
-        epub_path = builder.build()
-        logger.info(f"EPUB exported successfully: {epub_path}")
+        out_path = builder.build()
+        logger.info("Phase 8 — EPUB Build complete: %s", out_path)
+   
+   
+    def tts_generate_segment(
+        self,
+        chapter_index: int,
+        segment_index: int,
+        *,
+        preview_mode: bool = True,
+    ) -> Path:
+        """Generate TTS audio for a single semantic segment.
 
-    def _generate_xhtml(self, chapter: dict, chapter_id: str) -> str:
-        """Generate basic XHTML for a chapter."""
-        title = chapter.get("title", "Chapter")
-        content = chapter.get("content", "")
+        Returns:
+            Path to the generated WAV file.
+        """
+        # 1) Locate chapter_info.json
+        work_dir: Path = self.project.get_work_dir()  # or self.work_dir / self.project.work_dir
+        chapter_id = f"ch{chapter_index:03d}"
+        info_file = work_dir / chapter_id / "chapter_info.json"
 
-        # Get segments if available for paragraph IDs
-        segments = self.dialogue_segments.get(int(chapter_id[2:]), [])
+        if not info_file.exists():
+            raise FileNotFoundError(f"chapter_info.json not found for {chapter_id}")
 
-        xhtml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-<head>
-    <title>{title}</title>
-</head>
-<body>
-    <h1>{title}</h1>
-"""
+        data = json.loads(info_file.read_text(encoding="utf-8"))
+        segments = data.get("segments", [])
 
-        if segments:
-            for seg in segments:
-                para_id = seg.paragraph_id or f"{chapter_id}_p0"
-                text = seg.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                xhtml += f'    <p id="{para_id}">{text}</p>\n'
-        else:
-            # Fallback: split content by paragraphs
-            paragraphs = content.split("\n\n")
-            for i, para in enumerate(paragraphs):
-                if para.strip():
-                    para_id = f"{chapter_id}_p{i}"
-                    text = para.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                    xhtml += f'    <p id="{para_id}">{text}</p>\n'
+        if not (0 <= segment_index < len(segments)):
+            raise IndexError(
+                f"Segment index {segment_index} out of range for {chapter_id} "
+                f"(have {len(segments)} segments)"
+            )
 
-        xhtml += """</body>
-</html>"""
-        return xhtml
+        seg = segments[segment_index]
+        text = (seg.get("text") or "").strip()
+        if not text:
+            raise ValueError(f"Segment {segment_index} in {chapter_id} has empty text")
+
+        seg_type = seg.get("type", "narration")
+        speaker = seg.get("speaker", "narrator")
+
+        # 2) Decide voice based on speaker/segment type
+        #    (adapt this to your real voice-mapping logic)
+        voice_name = self.voice_router.get_voice_for_speaker(speaker, seg_type) \
+            if hasattr(self, "voice_router") else self.settings.default_voice
+
+        # 3) Build output path
+        preview_dir = work_dir / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        out_path = preview_dir / f"{chapter_id}_seg{segment_index:03d}_preview.wav"
+
+        # 4) Call existing TTS backend client
+        #    Replace `self.tts_client.synthesize` with your actual low-level call.
+        self.log.info(
+            f"TTS segment preview: chapter={chapter_id}, segment={segment_index}, "
+            f"type={seg_type}, speaker={speaker}, voice={voice_name}"
+        )
+
+        self.tts_client.synthesize(
+            text=text,
+            voice=voice_name,
+            output_path=out_path,
+            speed=self.settings.tts_speed,
+            emotion=seg.get("emotion"),  # if you support this
+            preview_mode=preview_mode,
+        )
+
+        return out_path
