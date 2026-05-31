@@ -1,17 +1,15 @@
-"""src/ebook_app/services/tts_client.py — HTTP client adapter for the TTS service.
+"""
+src/ebook_app/services/tts_client.py — HTTP client adapter for the TTS service.
 
-Provides a :class:`TTSClient` whose public API mirrors :class:`TTSEngine` so
-the pipeline and UI can swap between local (direct) and remote (HTTP) backends
-without any call-site changes.
-
-Output directory handling
--------------------------
-The TTS service writes every generated file to its own server-managed output
-directory (configured by ``TTS_OUTPUT_DIR`` on the server side).  The client
-receives the absolute path of the written file and **moves** it into the
-caller-supplied ``output_dir`` so the pipeline's project layout is preserved
-(``pipeline_work/audio/``).  Because client and server run on the same machine,
-``shutil.move`` is always safe and atomic on most platforms.
+Upgraded to support:
+- return_segments
+- transition modes
+- batch_mode
+- segment-level preview
+- per-segment re-synthesis
+- timing metadata validation
+- resolved voice merging
+- configurable move/copy behavior
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import requests
 
@@ -28,63 +26,101 @@ from ebook_app.models.dialogue_parser import Segment
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:5005"
-_TIMEOUT_HEALTH = 3       # seconds for health / quick checks
-_TIMEOUT_SYNTH  = 300     # seconds for synthesis (may be long for large chapters)
+_TIMEOUT_HEALTH = 3
+_TIMEOUT_SYNTH = 300
 
 
 class TTSServiceUnavailableError(RuntimeError):
-    """Raised when the remote TTS service cannot be reached or returns an error."""
+    pass
 
 
 class TTSClient:
-    """Thin HTTP client that calls the TTS micro-service.
-
-    API is intentionally identical to :class:`~ebook_app.models.tts_engine_cli.TTSEngine`
-    so that callers can switch between local and remote TTS without code changes.
+    """
+    Remote TTS client that mirrors the TTSEngine API.
     """
 
     def __init__(
         self,
         output_dir: str = "output",
         base_url: str = _DEFAULT_BASE_URL,
+        *,
+        move_mode: str = "move",  # "move" | "copy"
     ) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._base_url = base_url.rstrip("/")
         self._session = requests.Session()
 
+        if move_mode not in {"move", "copy"}:
+            move_mode = "move"
+        self._move_mode = move_mode
+
     # ------------------------------------------------------------------
-    # Status / availability
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _move_or_copy(self, src: Path, dest: Path) -> None:
+        """Move or copy based on configuration."""
+        if self._move_mode == "copy":
+            shutil.copy2(str(src), str(dest))
+            src.unlink(missing_ok=True)
+        else:
+            shutil.move(str(src), str(dest))
+
+    def _validate_timing(self, timing: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Ensure timing metadata is sorted and non-overlapping."""
+        if not timing:
+            return timing
+
+        # Sort by start_ms
+        timing = sorted(timing, key=lambda x: x.get("start_ms", 0))
+
+        fixed = []
+        last_end = 0.0
+
+        for item in timing:
+            start = max(0.0, float(item.get("start_ms", 0)))
+            end = max(start, float(item.get("end_ms", start)))
+
+            # Fix overlaps
+            if start < last_end:
+                start = last_end
+                end = max(end, start)
+
+            fixed.append({
+                "start_ms": start,
+                "end_ms": end,
+                "speaker": item.get("speaker", ""),
+                "paragraph_id": item.get("paragraph_id", ""),
+            })
+
+            last_end = end
+
+        return fixed
+
+    # ------------------------------------------------------------------
+    # Health
     # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
-        """Return True if the TTS service is reachable and healthy."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/health", timeout=_TIMEOUT_HEALTH
-            )
+            resp = self._session.get(f"{self._base_url}/health", timeout=_TIMEOUT_HEALTH)
             resp.raise_for_status()
             return resp.json().get("status") == "ok"
         except Exception:
             return False
 
     def models_available(self) -> bool:
-        """Return True if the remote service reports its models are ready."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/health", timeout=_TIMEOUT_HEALTH
-            )
+            resp = self._session.get(f"{self._base_url}/health", timeout=_TIMEOUT_HEALTH)
             resp.raise_for_status()
             return resp.json().get("models_ready", False)
         except Exception:
             return False
 
     def health(self) -> dict:
-        """Return the raw health-check JSON or an error dict."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/health", timeout=_TIMEOUT_HEALTH
-            )
+            resp = self._session.get(f"{self._base_url}/health", timeout=_TIMEOUT_HEALTH)
             resp.raise_for_status()
             return resp.json()
         except requests.ConnectionError:
@@ -93,7 +129,7 @@ class TTSClient:
             return {"status": "error", "models_ready": False, "detail": str(exc)}
 
     # ------------------------------------------------------------------
-    # Public TTS API (mirrors TTSEngine)
+    # Single-voice synthesis
     # ------------------------------------------------------------------
 
     def generate_audio(
@@ -107,7 +143,7 @@ class TTSClient:
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> Path:
         if progress_callback:
-            progress_callback("Sending synthesis request to TTS service…")
+            progress_callback("Sending synthesis request…")
 
         payload = {
             "text": text,
@@ -124,25 +160,22 @@ class TTSClient:
                 timeout=_TIMEOUT_SYNTH,
             )
             resp.raise_for_status()
-        except requests.ConnectionError as exc:
-            raise TTSServiceUnavailableError(
-                f"TTS service unreachable at {self._base_url}. "
-                "Start the service with: uvicorn tts_server:app --port 5005"
-            ) from exc
-        except requests.HTTPError as exc:
-            detail = _extract_detail(exc.response)
-            raise TTSServiceUnavailableError(
-                f"TTS service returned error: {detail}"
-            ) from exc
+        except Exception as exc:
+            raise TTSServiceUnavailableError(str(exc)) from exc
+
+        data = resp.json()
+        server_path = Path(data["audio_path"])
+        dest = self.output_dir / output_filename
+        self._move_or_copy(server_path, dest)
 
         if progress_callback:
             progress_callback("Audio generation complete")
 
-        server_path = Path(resp.json()["audio_path"])
-        dest = self.output_dir / output_filename
-        if server_path != dest:
-            shutil.move(str(server_path), str(dest))
         return dest
+
+    # ------------------------------------------------------------------
+    # Preview
+    # ------------------------------------------------------------------
 
     def generate_preview(
         self,
@@ -150,11 +183,7 @@ class TTSClient:
         lang_code: str = "a",
         speed: float = 1.0,
     ) -> Path:
-        payload = {
-            "voice": voice,
-            "speed": speed,
-            "lang": lang_code,
-        }
+        payload = {"voice": voice, "speed": speed, "lang": lang_code}
 
         try:
             resp = self._session.post(
@@ -163,21 +192,18 @@ class TTSClient:
                 timeout=_TIMEOUT_SYNTH,
             )
             resp.raise_for_status()
-        except requests.ConnectionError as exc:
-            raise TTSServiceUnavailableError(
-                f"TTS service unreachable at {self._base_url}"
-            ) from exc
-        except requests.HTTPError as exc:
-            detail = _extract_detail(exc.response)
-            raise TTSServiceUnavailableError(
-                f"TTS service returned error: {detail}"
-            ) from exc
+        except Exception as exc:
+            raise TTSServiceUnavailableError(str(exc)) from exc
 
-        server_path = Path(resp.json()["audio_path"])
+        data = resp.json()
+        server_path = Path(data["audio_path"])
         dest = self.output_dir / server_path.name
-        if server_path != dest:
-            shutil.move(str(server_path), str(dest))
+        self._move_or_copy(server_path, dest)
         return dest
+
+    # ------------------------------------------------------------------
+    # Multi-voice synthesis (always returns dict)
+    # ------------------------------------------------------------------
 
     def generate_multi_voice_audio(
         self,
@@ -191,7 +217,11 @@ class TTSClient:
         lang_code: str = "a",
         speed: float = 1.0,
         progress_callback: Optional[Callable[[str], None]] = None,
-    ) -> Path:
+        return_segments: str = "combined",
+        transition: str = "silence",
+        batch_mode: str = "single",
+        debug: bool = False,
+    ) -> Dict[str, Any]:
         if progress_callback:
             progress_callback("Sending multi-voice synthesis request…")
 
@@ -215,6 +245,10 @@ class TTSClient:
             "speed": speed,
             "lang": lang_code,
             "dialogue_pause": dialogue_pause,
+            "transition": transition,
+            "return_segments": return_segments,
+            "batch_mode": batch_mode,
+            "debug": debug,
         }
 
         try:
@@ -224,47 +258,130 @@ class TTSClient:
                 timeout=_TIMEOUT_SYNTH,
             )
             resp.raise_for_status()
-        except requests.ConnectionError as exc:
-            raise TTSServiceUnavailableError(
-                f"TTS service unreachable at {self._base_url}"
-            ) from exc
-        except requests.HTTPError as exc:
-            detail = _extract_detail(exc.response)
-            raise TTSServiceUnavailableError(
-                f"TTS service returned error: {detail}"
-            ) from exc
+        except Exception as exc:
+            raise TTSServiceUnavailableError(str(exc)) from exc
+
+        data = resp.json()
+
+        # Combined audio
+        combined_dest = None
+        if data.get("audio_path"):
+            server_combined = Path(data["audio_path"])
+            combined_dest = self.output_dir / output_filename
+            self._move_or_copy(server_combined, combined_dest)
+
+        # Segment audio
+        segment_dest_paths: List[str] = []
+        for seg_server_path in data.get("segment_audio_paths", []) or []:
+            sp = Path(seg_server_path)
+            dest = self.output_dir / sp.name
+            self._move_or_copy(sp, dest)
+            segment_dest_paths.append(str(dest))
+
+        # Timing validation
+        timing = self._validate_timing(data.get("segment_timing", []) or [])
+
+        # Merge resolved voices
+        resolved = data.get("resolved_voices", {}) or {}
+        merged_voices = {**voice_mappings, **resolved}
+
+        result = {
+            "audio_path": str(combined_dest) if combined_dest else None,
+            "segment_audio_paths": segment_dest_paths,
+            "segment_timing": timing,
+            "resolved_voices": merged_voices,
+        }
 
         if progress_callback:
-            progress_callback("Multi-voice audio generation complete")
+            progress_callback("Multi-voice synthesis complete")
 
-        server_path = Path(resp.json()["audio_path"])
-        dest = self.output_dir / output_filename
-        if server_path != dest:
-            shutil.move(str(server_path), str(dest))
+        return result
+
+    # ------------------------------------------------------------------
+    # Segment-level preview
+    # ------------------------------------------------------------------
+
+    def generate_segment_preview(
+        self,
+        text: str,
+        *,
+        voice: str = "af_heart",
+        lang_code: str = "a",
+        speed: float = 1.0,
+    ) -> Path:
+        payload = {"text": text, "voice": voice, "speed": speed, "lang": lang_code}
+
+        try:
+            resp = self._session.post(
+                f"{self._base_url}/synthesize_segment",
+                json=payload,
+                timeout=_TIMEOUT_SYNTH,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            raise TTSServiceUnavailableError(str(exc)) from exc
+
+        data = resp.json()
+        server_path = Path(data["audio_path"])
+        dest = self.output_dir / server_path.name
+        self._move_or_copy(server_path, dest)
         return dest
 
     # ------------------------------------------------------------------
-    # Utility (matches TTSEngine.list_kokoro_voices)
+    # Per-segment re-synthesis
+    # ------------------------------------------------------------------
+
+    def regenerate_single_segment(
+        self,
+        segment: Segment,
+        *,
+        voice: str,
+        lang_code: str = "a",
+        speed: float = 1.0,
+    ) -> Dict[str, Any]:
+        """Re-synthesize a single segment and return metadata."""
+        payload = {
+            "text": segment.text,
+            "voice": voice,
+            "speed": speed,
+            "lang": lang_code,
+        }
+
+        try:
+            resp = self._session.post(
+                f"{self._base_url}/synthesize_segment",
+                json=payload,
+                timeout=_TIMEOUT_SYNTH,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            raise TTSServiceUnavailableError(str(exc)) from exc
+
+        data = resp.json()
+        server_path = Path(data["audio_path"])
+        dest = self.output_dir / server_path.name
+        self._move_or_copy(server_path, dest)
+
+        return {
+            "audio_path": str(dest),
+            "duration_ms": data.get("duration_ms"),
+            "resolved_voice": data.get("resolved_voice"),
+        }
+
+    # ------------------------------------------------------------------
+    # Voice catalog
     # ------------------------------------------------------------------
 
     @staticmethod
     def list_kokoro_voices() -> dict:
-        """Return the voice catalog — imported from the local voice_catalog module."""
         try:
-            from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG  # type: ignore[import]
-
+            from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG
             return KOKORO_VOICE_CATALOG
         except ImportError:
             return {}
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
 def _extract_detail(response: requests.Response) -> str:
-    """Extract a human-readable error detail from an error response."""
     try:
         return response.json().get("detail", response.text)
     except Exception:

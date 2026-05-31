@@ -11,14 +11,10 @@ from typing import TYPE_CHECKING, Callable
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
 from ebook_app.models.epub_builder import EPUBBuilder
-from ebook_app.models.forced_alignment import ForcedAlignment, AlignmentEntry
-from ebook_app.models.media_overlay import MediaOverlayBuilder, TextSegment
 from ebook_app.models.scraper import HttpWebScraper, WebScraper
-from pathlib import Path
-import json
+from ebook_app.models.epub_builder import EPUBBuilder, TextSegment
 
 from ebook_app.voice.voice_router import VoiceRouter
-
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +26,7 @@ ProgressCallback = Callable[[str, int], None]
 
 
 class PipelineController:
-    """Orchestrates the full Web-Novel → EPUB3 Audiobook pipeline.
-
-    Each pipeline step is a separate method that can be called individually
-    or via :meth:`run_all`.  Progress is reported through an optional callback.
-
-    Usage::
-
-        ctrl = PipelineController(settings=settings, on_progress=my_callback)
-        ctrl.run_all()
-    """
+    """Orchestrates the full Web-Novel → EPUB3 Audiobook pipeline."""
 
     STEPS = [
         "scrape_index",
@@ -53,7 +40,6 @@ class PipelineController:
         "epub_build",
     ]
 
-
     _OLLAMA_TAGS_PATH = "/api/tags"
 
     def __init__(
@@ -66,31 +52,43 @@ class PipelineController:
         self._on_progress = on_progress or (lambda key, val: None)
         self._running = False
 
-        # Data storage for pipeline state
+        # Work directory
         if work_dir:
             self.work_dir = Path(work_dir)
         else:
             self.work_dir = Path(self.settings.output_dir) / "pipeline_work"
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
+        # Pipeline state
         self.chapter_urls: list[str] = []
         self.raw_chapter_urls: list[str] = []
         self.chapters: list[dict] = []
-        self.translated_chapters: list[dict] = []
+        self.translated_chapters: list[dict] = []  # legacy, will be removed later
         self.dialogue_segments: dict[int, list[Segment]] = {}
         self.audio_files: dict[int, Path] = {}
-        self.alignment_data: dict[int, list[AlignmentEntry]] = {}
+        self.alignment_data: dict[int, list] = {}  # legacy, will be removed later
+
         self.selected_start_chapter: int = 1
         self.selected_end_chapter: int = 0
         self.review_required: bool = False
+
+        # Future-ready semantic + review state
+        self.clean_review_plan: dict = {}
+        self.semantic_review_plan: dict = {}
+        self.character_db: list[dict] = []
+        self.speaker_style_model: dict = {}
+
+        # Voice routing
         self.voice_router = VoiceRouter(
             character_voices=self.settings.character_voice_map,
-             default_male_voice=self.settings.default_male_voice,
-             default_female_voice=self.settings.default_female_voice,
-             narrator_voice=self.settings.narrator_voice,
+            default_male_voice=self.settings.default_male_voice,
+            default_female_voice=self.settings.default_female_voice,
+            narrator_voice=self.settings.narrator_voice,
         )
 
-
+    # ------------------------------------------------------------------
+    # Helper utilities
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -109,6 +107,26 @@ class PipelineController:
             "paragraph_id": segment.paragraph_id,
         }
 
+    def _load_json(self, path: Path, default=None):
+        if not path.exists():
+            return default
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.error("Failed to load JSON from %s", path, exc_info=True)
+            return default
+
+    def _save_json(self, path: Path, data) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            logger.error("Failed to save JSON to %s", path, exc_info=True)
+
+    @staticmethod
+    def _chapter_id(idx: int) -> str:
+        return f"ch{idx:03d}"
+
     # ------------------------------------------------------------------
     # TTS backend factory
     # ------------------------------------------------------------------
@@ -116,20 +134,24 @@ class PipelineController:
     def _make_tts_backend(self, output_dir: str | None = None):
         """Return a TTSEngine (local) or TTSClient (remote) per settings."""
         effective_output_dir = output_dir or str(self.work_dir / "audio")
+
         if self.settings.tts_backend_mode == "remote":
             from ebook_app.services.tts_client import TTSClient
-
             return TTSClient(
                 output_dir=effective_output_dir,
                 base_url=self.settings.tts_backend_url,
             )
-        from ebook_app.models.tts_engine_cli import TTSEngine
 
+        from ebook_app.models.tts_engine_cli import TTSEngine
         return TTSEngine(
             output_dir=effective_output_dir,
             model_path=self.settings.kokoro_model_path or None,
             voices_path=self.settings.kokoro_voices_path or None,
         )
+
+    # ------------------------------------------------------------------
+    # LLM preflight
+    # ------------------------------------------------------------------
 
     def _preflight_llm_check(self, parser) -> None:
         """Verify Ollama is reachable and the configured model is installed."""
@@ -140,14 +162,12 @@ class PipelineController:
             parsed = urlparse(parser.ollama_url)
             if not parsed.scheme or not parsed.netloc:
                 raise RuntimeError(
-                    f"Invalid LLM URL {parser.ollama_url!r}. "
-                    "Update the Ollama URL in Settings."
+                    f"Invalid LLM URL {parser.ollama_url!r}. Update the Ollama URL in Settings."
                 )
+
             tags_url = urlunparse((parsed.scheme, parsed.netloc, self._OLLAMA_TAGS_PATH, "", "", ""))
             response = requests.get(tags_url, timeout=5)
             response.raise_for_status()
-        except RuntimeError:
-            raise
         except Exception as exc:
             raise RuntimeError(
                 f"Cannot connect to LLM at {parser.ollama_url!r}. "
@@ -168,21 +188,23 @@ class PipelineController:
                     f"Model '{parser.model}' is not installed in Ollama. "
                     f"Pull it first: ollama pull {parser.model}"
                 )
-        except RuntimeError:
-            raise
         except Exception:
-            logger.debug(
-                "Could not parse Ollama /api/tags response; skipping model presence check.",
-                exc_info=True,
-            )
+            logger.debug("Could not parse Ollama /api/tags response; skipping model presence check.", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Scraper builder
+    # ------------------------------------------------------------------
 
     def _build_scraper(self):
         scraper_method = str(self.settings.get("scraper_method", "browser")).strip().lower()
+
         if scraper_method == "http":
             css_raw = (self.settings.get("scraper_css_selectors", "") or "").strip()
             css_selectors = [s.strip() for s in css_raw.split(",") if s.strip()] if css_raw else []
+
             excl_raw = (self.settings.get("scraper_exclude_selectors", "") or "").strip()
             exclude_selectors = [s.strip() for s in excl_raw.split(",") if s.strip()] if excl_raw else []
+
             scraper_kwargs = {
                 "css_selectors": css_selectors,
                 "exclude_selectors": exclude_selectors,
@@ -190,6 +212,7 @@ class PipelineController:
                 "timeout": int(self.settings.get("scraper_browser_timeout_sec", 30)),
                 "max_index_pages": int(self.settings.get("scraper_max_index_pages", 50)),
             }
+
             logger.debug("Creating HttpWebScraper with options: %s", scraper_kwargs)
             return HttpWebScraper(**scraper_kwargs)
 
@@ -205,6 +228,7 @@ class PipelineController:
             "max_index_pages": int(self.settings.get("scraper_max_index_pages", 50)),
             "browser_channel": (self.settings.get("scraper_browser_channel", "") or "").strip() or None,
         }
+
         logger.debug("Creating WebScraper with options: %s", scraper_kwargs)
         try:
             return WebScraper(**scraper_kwargs)
@@ -222,17 +246,7 @@ class PipelineController:
     def run_all(self) -> None:
         """Execute the full new pipeline."""
         self._running = True
-        steps = [
-            ("scrape_index", self.scrape_index),
-            ("scrape_chapters", self.scrape_chapters),
-            ("clean_chapters", self.clean_chapters),
-            ("plan_clean_review", self.plan_clean_review),
-            ("llm_semantic_analysis", self.llm_semantic_analysis),
-            ("normalize_llm_output", self.normalize_llm_output),
-            ("smart_review_dialogue", self.smart_review_dialogue),
-            ("tts_generate", self.tts_generate),
-            ("epub_build", self.epub_build),
-        ]
+        steps = [(name, getattr(self, name)) for name in self.STEPS]
 
         for key, method in steps:
             if not self._running:
@@ -249,7 +263,6 @@ class PipelineController:
 
         self._running = False
 
-
     def stop(self) -> None:
         """Signal the pipeline to stop after the current step."""
         self._running = False
@@ -260,8 +273,11 @@ class PipelineController:
         end = max(start, int(end_chapter))
         self.selected_start_chapter = start
         self.selected_end_chapter = end
-        with open(self.work_dir / "selected_range.json", "w", encoding="utf-8") as f:
-            json.dump({"start": start, "end": end}, f, indent=2, ensure_ascii=False)
+
+        self._save_json(
+            self.work_dir / "selected_range.json",
+            {"start": start, "end": end},
+        )
 
     def get_chapter_inventory(self) -> dict:
         """Return chapter inventory for current index scrape state."""
@@ -281,53 +297,58 @@ class PipelineController:
             logger.warning("No index_url configured in settings.")
             return
 
-        logger.info(f"Scraping index from: {index_url}")
+        logger.info(f"[Phase 1] Scraping index from: {index_url}")
         scraper = self._build_scraper()
         max_index_pages = int(self.settings.get("scraper_max_index_pages", 50))
+
         try:
-            self.raw_chapter_urls = scraper.scrape_index_page(index_url, max_pages=max_index_pages)
+            self.raw_chapter_urls = scraper.scrape_index_page(
+                index_url, max_pages=max_index_pages
+            )
         except TypeError:
             logger.debug(
                 "Scraper implementation does not accept max_pages kwarg; retrying without it.",
                 exc_info=True,
             )
             self.raw_chapter_urls = scraper.scrape_index_page(index_url)
+
         url_filter = FillerChapterFilter()
         self.chapter_urls, filtered_urls = url_filter.filter_urls(self.raw_chapter_urls)
+
         logger.info(
-            "Found %d chapter URLs (%d valid, %d filtered).",
+            "Index scrape complete: %d total, %d valid, %d filtered.",
             len(self.raw_chapter_urls),
             len(self.chapter_urls),
             len(filtered_urls),
         )
 
-        # Save URLs to disk
-        raw_urls_file = self.work_dir / "raw_chapter_urls.json"
-        logger.debug("Writing raw chapter URLs to %s", raw_urls_file)
-        with open(raw_urls_file, "w", encoding="utf-8") as f:
-            json.dump(self.raw_chapter_urls, f, indent=2, ensure_ascii=False)
+        self._save_json(self.work_dir / "raw_chapter_urls.json", self.raw_chapter_urls)
+        self._save_json(self.work_dir / "chapter_urls.json", self.chapter_urls)
 
-        urls_file = self.work_dir / "chapter_urls.json"
-        logger.debug("Writing filtered chapter URLs to %s", urls_file)
-        with open(urls_file, "w", encoding="utf-8") as f:
-            json.dump(self.chapter_urls, f, indent=2, ensure_ascii=False)
+        self._on_progress("scrape_index", 100)
 
     def scrape_chapters(self) -> None:
         """Download all chapter pages listed in the scraped index."""
-        if not self.chapter_urls:
-            urls_file = self.work_dir / "chapter_urls.json"
-            if urls_file.exists():
-                with open(urls_file, encoding="utf-8") as f:
-                    self.chapter_urls = json.load(f)
-            else:
-                logger.warning("No chapter URLs available. Run scrape_index first.")
-                return
+        logger.info("[Phase 2] Scraping chapters…")
 
+        # Load chapter URLs if needed
+        if not self.chapter_urls:
+            self.chapter_urls = self._load_json(
+                self.work_dir / "chapter_urls.json", default=[]
+            )
+
+        if not self.chapter_urls:
+            logger.warning("No chapter URLs available. Run scrape_index first.")
+            return
+
+        # Determine range
         if self.selected_end_chapter <= 0:
             self.selected_end_chapter = len(self.chapter_urls)
+
         start_idx = max(0, self.selected_start_chapter - 1)
         end_idx = min(len(self.chapter_urls), self.selected_end_chapter)
         selected_urls = self.chapter_urls[start_idx:end_idx]
+
         if not selected_urls:
             logger.warning(
                 "No chapters selected for range %d-%d.",
@@ -342,47 +363,38 @@ class PipelineController:
             self.selected_end_chapter,
             len(selected_urls),
         )
-        logger.debug("Selected chapter URL range: %s", selected_urls)
+
         scraper = self._build_scraper()
         self.chapters = scraper.scrape_chapters(selected_urls)
 
-        chapters_file = self.work_dir / "chapters.json"
-        logger.debug("Writing chapter scrape output to %s", chapters_file)
-        with open(chapters_file, "w", encoding="utf-8") as f:
-            json.dump(self.chapters, f, indent=2, ensure_ascii=False)
+        self._save_json(self.work_dir / "chapters.json", self.chapters)
 
-        logger.info(f"Scraped {len(self.chapters)} chapters successfully.")
+        logger.info("Scraped %d chapters successfully.", len(self.chapters))
+        self._on_progress("scrape_chapters", 100)
 
     # ------------------------------------------------------------------
     # NEW Phase 3 — Deterministic cleaning
     # ------------------------------------------------------------------
 
     def clean_chapters(self) -> None:
-        """Deterministically clean scraped chapters into per-chapter text files.
+        """Deterministically clean scraped chapters into per-chapter text files."""
+        logger.info("[Phase 3] Cleaning chapters (deterministic)…")
 
-        This is a non-LLM, purely mechanical normalization step that prepares
-        content for either user review or LLM semantic analysis.
-        """
         if not self.chapters:
-            chapters_file = self.work_dir / "chapters.json"
-            if chapters_file.exists():
-                with open(chapters_file, encoding="utf-8") as f:
-                    self.chapters = json.load(f)
-            else:
-                logger.warning("No chapters available. Run scrape_chapters first.")
-                return
+            self.chapters = self._load_json(
+                self.work_dir / "chapters.json", default=[]
+            )
 
         total = len(self.chapters)
         if total == 0:
             logger.warning("No chapters to clean.")
             return
 
-        logger.info("Cleaning %d chapters (deterministic, no LLM)…", total)
         for idx, chapter in enumerate(self.chapters):
-            chapter_id = f"ch{idx:03d}"
+            chapter_id = self._chapter_id(idx)
             raw_content = str(chapter.get("content", "") or "")
 
-            # Simple deterministic cleaning; can be refined later.
+            # Simple deterministic cleaning
             text = raw_content.replace("\r\n", "\n").replace("\r", "\n")
             lines = [ln.strip() for ln in text.split("\n")]
             lines = [ln for ln in lines if ln]  # drop empty lines
@@ -390,13 +402,15 @@ class PipelineController:
 
             out_path = self.work_dir / f"{chapter_id}_cleaned.txt"
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(cleaned)
+            out_path.write_text(cleaned, encoding="utf-8")
 
-            self._on_progress("clean_chapters", int((idx + 1) * 100 / max(total, 1)))
+            # Improved progress reporting
+            percent = int((idx + 1) * 100 / max(total, 1))
+            logger.debug("Cleaned %s (%d/%d)", chapter_id, idx + 1, total)
+            self._on_progress("clean_chapters", percent)
 
         logger.info("Deterministic cleaning complete for %d chapters.", total)
-
+ 
     # ------------------------------------------------------------------
     # NEW Phase 4 — Cleaned-text review planner
     # ------------------------------------------------------------------
@@ -410,15 +424,12 @@ class PipelineController:
         Writes:
           - clean_review_plan.json in work_dir
         """
+        logger.info("[Phase 4] Planning cleaned-text review…")
+
         mode = str(self.settings.get("clean_review_mode", "semi")).strip().lower()
         sample_n = int(self.settings.get("clean_review_sample_chapters", 3))
 
-        chapters_file = self.work_dir / "chapters.json"
-        if chapters_file.exists():
-            with open(chapters_file, encoding="utf-8") as f:
-                chapters = json.load(f)
-        else:
-            chapters = self.chapters or []
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
         total = len(chapters)
 
         if total == 0:
@@ -430,10 +441,10 @@ class PipelineController:
             mode = "semi"
 
         if mode == "skip":
-            needs_review: list[int] = []
+            needs_review = []
         elif mode == "full":
             needs_review = list(range(total))
-        else:  # 'semi'
+        else:  # semi
             needs_review = list(range(min(sample_n, total)))
 
         plan = {
@@ -442,18 +453,16 @@ class PipelineController:
             "total_chapters": total,
             "needs_review": needs_review,
         }
-        plan_path = self.work_dir / "clean_review_plan.json"
-        with open(plan_path, "w", encoding="utf-8") as f:
-            json.dump(plan, f, indent=2, ensure_ascii=False)
+
+        self.clean_review_plan = plan
+        self._save_json(self.work_dir / "clean_review_plan.json", plan)
 
         logger.info(
-            "Cleaned-text review plan written to %s (mode=%s, needs_review=%s)",
-            plan_path,
+            "Cleaned-text review plan created (mode=%s, needs_review=%s)",
             mode,
             needs_review,
         )
 
-          
     # ------------------------------------------------------------------
     # PHASE 5 — LLM Semantic Analysis
     # ------------------------------------------------------------------
@@ -464,29 +473,23 @@ class PipelineController:
         - Load cleaned_final text (or cleaned if skip mode)
         - Run DialogueParser.parse() for each chapter
         - Save raw LLM output to chXXX_llm_raw.json
-        - Save per-chapter chapter_info.json
+        - Save per-chapter chXXX_chapter_info.json
+        - Save aggregated chapter_info_all.json
         """
-        logger.info("Running Phase 5 — LLM Semantic Analysis…")
+        logger.info("[Phase 5] Running LLM Semantic Analysis…")
 
         # Load cleaned review plan
-        plan_path = self.work_dir / "clean_review_plan.json"
-        if plan_path.exists():
-            with open(plan_path, "r", encoding="utf-8") as f:
-                review_plan = json.load(f)
-        else:
-            review_plan = {"needs_review": []}
+        review_plan = self._load_json(
+            self.work_dir / "clean_review_plan.json",
+            default={"needs_review": []},
+        )
 
         # Load chapters.json (for titles)
-        chapters_file = self.work_dir / "chapters.json"
-        if not chapters_file.exists():
-            logger.error("Missing chapters.json — cannot run semantic analysis.")
-            return
-        with open(chapters_file, "r", encoding="utf-8") as f:
-            chapters = json.load(f)
-
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
         total = len(chapters)
+
         if total == 0:
-            logger.warning("No chapters available for semantic analysis.")
+            logger.error("Missing chapters.json — cannot run semantic analysis.")
             return
 
         # Prepare LLM parser
@@ -511,7 +514,7 @@ class PipelineController:
         aggregated_info = {}
 
         for idx, chapter in enumerate(chapters):
-            chapter_id = f"ch{idx:03d}"
+            chapter_id = self._chapter_id(idx)
             title = chapter.get("title", f"Chapter {idx + 1}")
 
             # Determine which cleaned file to use
@@ -519,16 +522,15 @@ class PipelineController:
             cleaned_basic = self.work_dir / f"{chapter_id}_cleaned.txt"
 
             if cleaned_final.exists():
-                with open(cleaned_final, "r", encoding="utf-8") as f:
-                    text = f.read()
+                text = cleaned_final.read_text(encoding="utf-8")
             elif cleaned_basic.exists():
-                with open(cleaned_basic, "r", encoding="utf-8") as f:
-                    text = f.read()
+                text = cleaned_basic.read_text(encoding="utf-8")
             else:
                 logger.warning("Missing cleaned text for %s — skipping.", chapter_id)
                 continue
 
             # Run LLM semantic parsing
+            logger.debug("Parsing chapter %s (%d/%d)…", chapter_id, idx + 1, total)
             result = parser.parse(text=text, chapter_id=chapter_id)
             self.dialogue_segments[idx] = result.segments
 
@@ -562,26 +564,23 @@ class PipelineController:
 
             # Save raw LLM output
             raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
-            with open(raw_path, "w", encoding="utf-8") as f:
-                json.dump(chapter_info, f, indent=2, ensure_ascii=False)
+            self._save_json(raw_path, chapter_info)
 
-            # Save per-chapter chapter_info.json
+            # Save per-chapter chapter_info
             chapter_dir = self.work_dir / chapter_id
             chapter_dir.mkdir(parents=True, exist_ok=True)
-            with open(chapter_dir / "chapter_info.json", "w", encoding="utf-8") as f:
-                json.dump(chapter_info, f, indent=2, ensure_ascii=False)
+            self._save_json(chapter_dir / "chXXX_chapter_info.json".replace("XXX", chapter_id[2:]), chapter_info)
 
             aggregated_info[str(idx)] = chapter_info
 
-            self._on_progress("llm_semantic_analysis", int((idx + 1) * 100 / total))
+            percent = int((idx + 1) * 100 / total)
+            self._on_progress("llm_semantic_analysis", percent)
 
-        # Save aggregated chapter_info.json
-        with open(self.work_dir / "chapter_info.json", "w", encoding="utf-8") as f:
-            json.dump(aggregated_info, f, indent=2, ensure_ascii=False)
+        # Save aggregated chapter_info_all.json
+        self._save_json(self.work_dir / "chapter_info_all.json", aggregated_info)
 
         logger.info("Phase 5 — LLM Semantic Analysis complete.")
 
-           
     # ------------------------------------------------------------------
     # PHASE 6 — Normalize + Smart Review + Voice Assignment
     # ------------------------------------------------------------------
@@ -592,25 +591,24 @@ class PipelineController:
         Convert chXXX_llm_raw.json → chXXX_llm_normalized.json
         Ensures a strict schema for downstream processing.
         """
-        logger.info("Running Phase 6A — Normalizing LLM output…")
+        logger.info("[Phase 6A] Normalizing LLM output…")
 
-        chapters_file = self.work_dir / "chapters.json"
-        if not chapters_file.exists():
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
+        total = len(chapters)
+
+        if total == 0:
             logger.error("Missing chapters.json — cannot normalize.")
             return
-        with open(chapters_file, "r", encoding="utf-8") as f:
-            chapters = json.load(f)
 
-        total = len(chapters)
         for idx in range(total):
-            chapter_id = f"ch{idx:03d}"
+            chapter_id = self._chapter_id(idx)
             raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
+
             if not raw_path.exists():
                 logger.warning("Missing raw LLM output for %s — skipping.", chapter_id)
                 continue
 
-            with open(raw_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
+            raw = self._load_json(raw_path, default={})
 
             # Normalize segments
             normalized_segments = []
@@ -642,13 +640,15 @@ class PipelineController:
             }
 
             out_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(normalized, f, indent=2, ensure_ascii=False)
+            self._save_json(out_path, normalized)
 
-            self._on_progress("normalize_llm_output", int((idx + 1) * 100 / total))
+            percent = int((idx + 1) * 100 / total)
+            self._on_progress("normalize_llm_output", percent)
 
         logger.info("Phase 6A — Normalization complete.")
 
+    # ------------------------------------------------------------------
+    # PHASE 6 — Normalize + Smart Review + Voice Assignment
     # ------------------------------------------------------------------
 
     def smart_review_dialogue(self) -> None:
@@ -656,24 +656,30 @@ class PipelineController:
         Phase 6B:
         Smart auto-review + voice assignment.
 
-        - Auto-approve chapters unless:
-            * new characters appear
-            * low speaker_confidence
-            * low character_confidence
-        - Assign voices (default + character_db)
+        - Detect new characters
+        - Detect low-confidence segments
+        - Detect gender inconsistencies
+        - Detect alias collisions
+        - Detect unknown speakers
+        - Assign voices (VoiceRouter for known, fallback for unknown)
         - Write final JSON files
-        - Update character_db + pending additions
+        - Update character_database.json
+        - Write semantic_review_plan.json
         """
-        logger.info("Running Phase 6B — Smart Review + Voice Assignment…")
+        logger.info("[Phase 6B] Smart Review + Voice Assignment…")
 
         # Load thresholds
         speaker_thresh = float(self.settings.get("speaker_conf_threshold", 0.8))
         char_thresh = float(self.settings.get("character_conf_threshold", 0.8))
 
-        # Load existing character DB
-        character_db = self.settings.get("character_db", []) or []
+        # Load character DB from file (new canonical location)
+        db_path = self.work_dir / "character_database.json"
+        character_db = self._load_json(db_path, default=[])
+        self.character_db = character_db
+
         known_names = {self._normalize_name(c["name"]) for c in character_db if c.get("name")}
 
+        # Pending additions (still stored in settings for UI)
         pending = self.settings.get("pending_character_additions", []) or []
         pending_names = {self._normalize_name(c["name"]) for c in pending if c.get("name")}
 
@@ -683,24 +689,20 @@ class PipelineController:
         default_female = self.settings.get("default_female_voice", "af_heart")
 
         # Load chapters.json
-        chapters_file = self.work_dir / "chapters.json"
-        with open(chapters_file, "r", encoding="utf-8") as f:
-            chapters = json.load(f)
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
         total = len(chapters)
 
-        # Track which chapters require manual review
         needs_review = []
 
         for idx in range(total):
-            chapter_id = f"ch{idx:03d}"
+            chapter_id = self._chapter_id(idx)
             norm_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
+
             if not norm_path.exists():
                 logger.warning("Missing normalized LLM output for %s — skipping.", chapter_id)
                 continue
 
-            with open(norm_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
+            data = self._load_json(norm_path, default={})
             segments = data.get("segments", [])
             detected_chars = data.get("characters", [])
 
@@ -722,10 +724,38 @@ class PipelineController:
                 if seg["character_confidence"] < char_thresh:
                     review_flag = True
 
+            # 3. Gender inconsistencies
+            gender_map = {}
+            for c in detected_chars:
+                norm = self._normalize_name(c["name"])
+                g = c.get("gender", "unknown")
+                if norm in gender_map and gender_map[norm] != g:
+                    review_flag = True
+                gender_map[norm] = g
+
+            # 4. Alias collisions (same normalized name, different raw names)
+            alias_map = {}
+            for c in detected_chars:
+                norm = self._normalize_name(c["name"])
+                alias_map.setdefault(norm, set()).add(c["name"])
+            for norm, raw_names in alias_map.items():
+                if len(raw_names) > 1:
+                    review_flag = True
+
+            # 5. Unknown speakers
+            for seg in segments:
+                sp = seg.get("speaker", "").strip()
+                if sp and self._normalize_name(sp) not in known_names:
+                    # Unknown speaker → review unless narrator
+                    if sp.lower() not in {"narrator", "unknown"}:
+                        review_flag = True
+
+            # ------------------------------------------------------
+            # AUTO-APPROVE OR FLAG FOR REVIEW
+            # ------------------------------------------------------
             if review_flag:
                 needs_review.append(idx)
             else:
-                # AUTO-APPROVE → write final files immediately
                 self._write_final_chapter_files(
                     chapter_id=chapter_id,
                     segments=segments,
@@ -736,17 +766,21 @@ class PipelineController:
                     character_db=character_db,
                 )
 
-            self._on_progress("smart_review_dialogue", int((idx + 1) * 100 / total))
+            percent = int((idx + 1) * 100 / total)
+            self._on_progress("smart_review_dialogue", percent)
 
         # Save review plan
         review_plan = {
             "needs_review": needs_review,
             "total_chapters": total,
         }
-        with open(self.work_dir / "semantic_review_plan.json", "w", encoding="utf-8") as f:
-            json.dump(review_plan, f, indent=2, ensure_ascii=False)
+        self.semantic_review_plan = review_plan
+        self._save_json(self.work_dir / "semantic_review_plan.json", review_plan)
 
-        # Update settings
+        # Update character DB file
+        self._save_json(db_path, character_db)
+
+        # Update settings (UI still reads these)
         self.settings.set("pending_character_additions", pending)
         self.settings.set("character_db", character_db)
 
@@ -770,7 +804,10 @@ class PipelineController:
         Writes:
           - chXXX_segments_final.json
           - chXXX_characters_final.json
-        Applies voice assignment.
+          - chXXX_chapter_info_final.json
+        Applies hybrid voice assignment:
+          - VoiceRouter for known characters
+          - Fallback logic for unknown characters
         """
         # Build voice map from character_db
         voice_map = {
@@ -778,17 +815,23 @@ class PipelineController:
             for c in character_db
         }
 
-        # Assign voices
         final_chars = []
+
         for c in detected_chars:
             name = c["name"]
             norm = self._normalize_name(name)
             gender = c.get("gender", "unknown").lower()
 
+            # Hybrid voice assignment
             if norm in voice_map:
-                voice = voice_map[norm]
+                # Known character → VoiceRouter
+                voice = self.voice_router.get_voice_for_segment(
+                    speaker=name,
+                    seg_type="dialogue",
+                    gender=gender,
+                )
             else:
-                # Default assignment
+                # Unknown character → fallback
                 if gender == "male":
                     voice = default_male
                 elif gender == "female":
@@ -813,158 +856,170 @@ class PipelineController:
 
         # Write segments_final
         seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
-        with open(seg_path, "w", encoding="utf-8") as f:
-            json.dump(segments, f, indent=2, ensure_ascii=False)
+        self._save_json(seg_path, segments)
 
         # Write characters_final
         char_path = self.work_dir / f"{chapter_id}_characters_final.json"
-        with open(char_path, "w", encoding="utf-8") as f:
-            json.dump(final_chars, f, indent=2, ensure_ascii=False)
+        self._save_json(char_path, final_chars)
+
+        # Write chapter_info_final
+        info_final = {
+            "chapter_id": chapter_id,
+            "segments": segments,
+            "characters": final_chars,
+        }
+        info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
+        self._save_json(info_path, info_final)
+
+        logger.debug("Final chapter files written for %s", chapter_id)
        
     # ------------------------------------------------------------------
-    # PHASE 7 — TTS Generation (new pipeline)
+    # PHASE 7 — TTS Generation (multi-speaker, timed)
     # ------------------------------------------------------------------
 
     def tts_generate(self) -> None:
         """
         Phase 7:
-        - Load final segments + character voices
-        - Build voice map from character_db
-        - Generate audio per chapter or whole book
-        - Write audio to work_dir/audio/
+        - Multi-speaker TTS per segment
+        - Use VoiceRouter for voice selection
+        - Generate per-segment WAVs
+        - Concatenate into per-chapter WAVs
+        - Produce timing metadata for SMIL
+        - Store audio in per-chapter folders
         """
-        logger.info("Running Phase 7 — TTS Generation…")
-
-        audio_dir = self.work_dir / "audio"
-        audio_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[Phase 7] Generating multi-speaker TTS…")
 
         # Load character DB
-        character_db = self.settings.get("character_db", []) or []
+        db_path = self.work_dir / "character_database.json"
+        character_db = self._load_json(db_path, default=[])
         voice_map = {
             self._normalize_name(c["name"]): c.get("voice", "")
             for c in character_db
         }
 
-        narrator_voice = self.settings.get("narrator_voice", "af_heart")
-        default_male = self.settings.get("default_male_voice", "am_adam")
-        default_female = self.settings.get("default_female_voice", "af_heart")
-
-        # Build TTS backend
-        engine = self._make_tts_backend(output_dir=str(audio_dir))
-
-        # Load chapters.json
-        chapters_file = self.work_dir / "chapters.json"
-        with open(chapters_file, "r", encoding="utf-8") as f:
-            chapters = json.load(f)
+        # Load chapters
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
         total = len(chapters)
 
-        audio_mode = self.settings.get("audio_output_mode", "per_chapter")
+        # Build TTS backend
+        engine = self._make_tts_backend()
 
-        # --------------------------------------------------------------
-        # SINGLE FILE MODE
-        # --------------------------------------------------------------
-        if audio_mode == "single_file":
-            logger.info("Generating single-file audiobook…")
-
-            full_text = []
-            for idx in range(total):
-                chapter_id = f"ch{idx:03d}"
-                seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
-                if not seg_path.exists():
-                    continue
-                with open(seg_path, "r", encoding="utf-8") as f:
-                    segs = json.load(f)
-                for s in segs:
-                    full_text.append(s["text"])
-
-            combined = "\n\n".join(full_text).strip()
-            if not combined:
-                logger.warning("No text available for TTS.")
-                return
-
-            out_path = engine.generate_audio(
-                text=combined,
-                output_filename="book_audio.wav",
-                voice=narrator_voice,
-                speed=self.settings.tts_speed,
-            )
-            self.audio_files = {0: out_path}
-
-            logger.info("Phase 7 — Single-file TTS complete.")
-            return
-
-        # --------------------------------------------------------------
-        # PER-CHAPTER MODE
-        # --------------------------------------------------------------
-        logger.info("Generating per-chapter audio…")
+        self.audio_files = {}
+        timing_data = {}
 
         for idx in range(total):
-            chapter_id = f"ch{idx:03d}"
+            chapter_id = self._chapter_id(idx)
             seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
-            char_path = self.work_dir / f"{chapter_id}_characters_final.json"
 
             if not seg_path.exists():
                 logger.warning("Missing final segments for %s — skipping.", chapter_id)
                 continue
 
-            with open(seg_path, "r", encoding="utf-8") as f:
-                segments = json.load(f)
+            segments = self._load_json(seg_path, default=[])
 
-            # Build text for narration-only TTS
-            text_parts = [s["text"] for s in segments if s["text"].strip()]
-            full_text = "\n\n".join(text_parts).strip()
-            if not full_text:
-                logger.warning("Chapter %s has no text for TTS.", chapter_id)
-                continue
+            # Per-chapter audio folder
+            chapter_audio_dir = self.work_dir / "audio" / chapter_id
+            chapter_audio_dir.mkdir(parents=True, exist_ok=True)
 
-            output_filename = f"{chapter_id}.wav"
-            out_path = engine.generate_audio(
-                text=full_text,
-                output_filename=output_filename,
-                voice=narrator_voice,
-                speed=self.settings.tts_speed,
-            )
-            self.audio_files[idx] = out_path
+            segment_wavs = []
+            segment_timings = []
 
-            self._on_progress("tts_generate", int((idx + 1) * 100 / total))
+            # --------------------------------------------------------------
+            # Generate per-segment audio
+            # --------------------------------------------------------------
+            current_time = 0.0
 
-        logger.info("Phase 7 — Per-chapter TTS complete.")
-        
+            for s_idx, seg in enumerate(segments):
+                text = seg.get("text", "").strip()
+                if not text:
+                    continue
+
+                seg_type = seg.get("type", "narration")
+                speaker = seg.get("speaker", "narrator")
+                gender = seg.get("gender", "unknown")
+
+                # Voice selection
+                voice_name = self.voice_router.get_voice_for_segment(
+                    speaker=speaker,
+                    seg_type=seg_type,
+                    gender=gender,
+                )
+
+                out_name = f"{chapter_id}_seg{s_idx:03d}.wav"
+                out_path = chapter_audio_dir / out_name
+
+                # Generate audio
+                wav_path = engine.generate_audio(
+                    text=text,
+                    output_filename=out_name,
+                    voice=voice_name,
+                    speed=self.settings.tts_speed,
+                )
+
+                # Duration (engine returns metadata)
+                duration = engine.get_last_audio_duration()
+
+                segment_wavs.append(str(wav_path))
+                segment_timings.append({
+                    "paragraph_id": seg.get("paragraph_id"),
+                    "clip_begin": current_time,
+                    "clip_end": current_time + duration,
+                })
+
+                current_time += duration
+
+            # --------------------------------------------------------------
+            # Concatenate into chapter WAV
+            # --------------------------------------------------------------
+            chapter_wav = chapter_audio_dir / f"{chapter_id}.wav"
+            engine.concatenate_audio_files(segment_wavs, chapter_wav)
+
+            self.audio_files[idx] = chapter_wav
+            timing_data[chapter_id] = segment_timings
+
+            percent = int((idx + 1) * 100 / total)
+            self._on_progress("tts_generate", percent)
+
+        # Save timing metadata for EPUB
+        self._save_json(self.work_dir / "audio_timing.json", timing_data)
+
+        logger.info("Phase 7 — Multi-speaker TTS complete.")
+
     # ------------------------------------------------------------------
-    # PHASE 8 — EPUB Build (new pipeline)
+    # PHASE 8 — EPUB Build (real SMIL timing)
     # ------------------------------------------------------------------
 
     def epub_build(self) -> None:
         """
         Phase 8:
         - Build XHTML from final segments
-        - Build SMIL overlays from alignment data (if available)
+        - Build SMIL overlays using real timing metadata
         - Use EPUBBuilder to produce final .epub
         """
-        logger.info("Running Phase 8 — EPUB Build…")
+        logger.info("[Phase 8] Building EPUB with real SMIL timing…")
 
-        # Load chapters
-        chapters_file = self.work_dir / "chapters.json"
-        if not chapters_file.exists():
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
+        if not chapters:
             logger.error("Missing chapters.json — cannot build EPUB.")
             return
-        with open(chapters_file, "r", encoding="utf-8") as f:
-            chapters = json.load(f)
 
-        # Metadata (project manager can override later)
+        timing_data = self._load_json(self.work_dir / "audio_timing.json", default={})
+
         title = "Book"
         author = "Unknown"
 
+        # IMPORTANT: pass work_dir into EPUBBuilder
         builder = EPUBBuilder(
             title=title,
             author=author,
             output_dir=str(self.settings.output_dir),
+            work_dir=str(self.work_dir),
         )
 
         total = len(chapters)
 
         for idx, chapter in enumerate(chapters):
-            chapter_id = f"ch{idx:03d}"
+            chapter_id = self._chapter_id(idx)
             chapter_title = chapter.get("title", f"Chapter {idx + 1}")
 
             seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
@@ -972,10 +1027,11 @@ class PipelineController:
                 logger.warning("Missing final segments for %s — skipping.", chapter_id)
                 continue
 
-            with open(seg_path, "r", encoding="utf-8") as f:
-                segments = json.load(f)
+            segments = self._load_json(seg_path, default=[])
 
-            # Build XHTML
+            # --------------------------------------------------------------
+            # Build XHTML with rich structure
+            # --------------------------------------------------------------
             xhtml_lines = [
                 '<?xml version="1.0" encoding="UTF-8"?>',
                 '<!DOCTYPE html>',
@@ -991,7 +1047,15 @@ class PipelineController:
             for s in segments:
                 pid = s["paragraph_id"]
                 text = s["text"]
-                xhtml_lines.append(f'<p id="{pid}">{text}</p>')
+                seg_type = s.get("type", "narration")
+                speaker = s.get("speaker", "narrator")
+
+                xhtml_lines.append(
+                    f'<p id="{pid}" class="{seg_type}">'
+                    f'<span class="speaker">{speaker}:</span> '
+                    f'<span class="text">{text}</span>'
+                    f'</p>'
+                )
 
             xhtml_lines.append("</body></html>")
             xhtml = "\n".join(xhtml_lines)
@@ -999,52 +1063,54 @@ class PipelineController:
             filename = f"{chapter_id}.xhtml"
             builder.add_chapter(filename=filename, xhtml=xhtml, title=chapter_title)
 
-            # Attach audio if available
+            # --------------------------------------------------------------
+            # Attach audio + real SMIL timing
+            # --------------------------------------------------------------
             audio_path = self.audio_files.get(idx)
             if audio_path:
-                # Build simple SMIL segments (no forced alignment yet)
                 smil_segments = []
-                for s in segments:
+                for t in timing_data.get(chapter_id, []):
                     smil_segments.append(
                         TextSegment(
-                            paragraph_id=s["paragraph_id"],
-                            clip_begin=0.0,
-                            clip_end=0.0,
+                            paragraph_id=t["paragraph_id"],
+                            clip_begin=t["clip_begin"],
+                            clip_end=t["clip_end"],
                         )
                     )
+
+                # audio_path is the FULL PATH to chXXX.wav
                 builder.add_audio(
                     chapter_filename=filename,
                     audio_path=str(audio_path),
                     segments=smil_segments,
                 )
 
-            self._on_progress("epub_build", int((idx + 1) * 100 / total))
+            percent = int((idx + 1) * 100 / total)
+            self._on_progress("epub_build", percent)
 
         out_path = builder.build()
         logger.info("Phase 8 — EPUB Build complete: %s", out_path)
-   
-   
+
+    # ------------------------------------------------------------------
+    # TTS Preview — upgraded to multi-speaker logic
+    # ------------------------------------------------------------------
+
     def tts_generate_segment(
         self,
         chapter_index: int,
         segment_index: int,
-        *,
-        preview_mode: bool = True,
     ) -> Path:
-        """Generate TTS audio for a single semantic segment.
-
-        Returns:
-            Path to the generated WAV file.
         """
-        # 1) Locate chapter_info.json
-        work_dir: Path = self.project.get_work_dir()  # or self.work_dir / self.project.work_dir
-        chapter_id = f"ch{chapter_index:03d}"
-        info_file = work_dir / chapter_id / "chapter_info.json"
+        Generate TTS audio for a single semantic segment (preview).
+        Uses the same multi-speaker logic as full TTS.
+        """
+        chapter_id = self._chapter_id(chapter_index)
+        info_file = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
         if not info_file.exists():
-            raise FileNotFoundError(f"chapter_info.json not found for {chapter_id}")
+            raise FileNotFoundError(f"chapter_info_final.json not found for {chapter_id}")
 
-        data = json.loads(info_file.read_text(encoding="utf-8"))
+        data = self._load_json(info_file, default={})
         segments = data.get("segments", [])
 
         if not (0 <= segment_index < len(segments)):
@@ -1060,31 +1126,36 @@ class PipelineController:
 
         seg_type = seg.get("type", "narration")
         speaker = seg.get("speaker", "narrator")
+        gender = seg.get("gender", "unknown")
 
-        # 2) Decide voice based on speaker/segment type
-        #    (adapt this to your real voice-mapping logic)
-        voice_name = self.voice_router.get_voice_for_speaker(speaker, seg_type) \
-            if hasattr(self, "voice_router") else self.settings.default_voice
-
-        # 3) Build output path
-        preview_dir = work_dir / "previews"
-        preview_dir.mkdir(parents=True, exist_ok=True)
-        out_path = preview_dir / f"{chapter_id}_seg{segment_index:03d}_preview.wav"
-
-        # 4) Call existing TTS backend client
-        #    Replace `self.tts_client.synthesize` with your actual low-level call.
-        self.log.info(
-            f"TTS segment preview: chapter={chapter_id}, segment={segment_index}, "
-            f"type={seg_type}, speaker={speaker}, voice={voice_name}"
+        # Voice selection
+        voice_name = self.voice_router.get_voice_for_segment(
+            speaker=speaker,
+            seg_type=seg_type,
+            gender=gender,
         )
 
-        self.tts_client.synthesize(
+        # Preview directory
+        preview_dir = self.work_dir / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+
+        engine = self._make_tts_backend(output_dir=str(preview_dir))
+        out_path = preview_dir / f"{chapter_id}_seg{segment_index:03d}_preview.wav"
+
+        logger.info(
+            "TTS segment preview: chapter=%s, segment=%d, type=%s, speaker=%s, voice=%s",
+            chapter_id,
+            segment_index,
+            seg_type,
+            speaker,
+            voice_name,
+        )
+
+        engine.generate_audio(
             text=text,
+            output_filename=out_path.name,
             voice=voice_name,
-            output_path=out_path,
             speed=self.settings.tts_speed,
-            emotion=seg.get("emotion"),  # if you support this
-            preview_mode=preview_mode,
         )
 
         return out_path
