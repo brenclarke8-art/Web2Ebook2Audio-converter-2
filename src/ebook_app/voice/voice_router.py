@@ -23,10 +23,17 @@ class VoiceRouter:
         thought_voice: Optional[str] = None,
         system_voice: Optional[str] = None,
     ):
-        self.character_voices = character_voices or {}
+        # Normalize all character voice keys
+        self.character_voices = {
+            self._normalize_name(k): v
+            for k, v in (character_voices or {}).items()
+        }
+
         self.default_male_voice = default_male_voice
         self.default_female_voice = default_female_voice
         self.narrator_voice = narrator_voice
+
+        # Segment-type overrides
         self.thought_voice = thought_voice or narrator_voice
         self.system_voice = system_voice or narrator_voice
 
@@ -51,20 +58,21 @@ class VoiceRouter:
         4. Narrator fallback
         """
 
-        speaker_norm = speaker.strip().lower()
+        speaker_norm = self._normalize_name(speaker)
+        seg_type_norm = (seg_type or "").strip().lower()
+        gender_norm = (gender or "").strip().lower()
 
         # 1. Character-specific voice
         if speaker_norm in self.character_voices:
             return self.character_voices[speaker_norm]
 
         # 2. Segment-type overrides
-        if seg_type == "thought":
+        if seg_type_norm == "thought":
             return self.thought_voice
-        if seg_type == "system":
+        if seg_type_norm == "system":
             return self.system_voice
 
         # 3. Gender-based fallback
-        gender_norm = gender.strip().lower()
         if gender_norm == "male":
             return self.default_male_voice
         if gender_norm == "female":
@@ -79,12 +87,21 @@ class VoiceRouter:
 
     def assign_voice(self, character: str, voice: str) -> None:
         """Assign a voice to a character."""
-        self.character_voices[character.strip().lower()] = voice
+        self.character_voices[self._normalize_name(character)] = voice
 
     def remove_character(self, character: str) -> None:
         """Remove a character-specific voice assignment."""
-        self.character_voices.pop(character.strip().lower(), None)
+        self.character_voices.pop(self._normalize_name(character), None)
 
     def clear(self) -> None:
         """Remove all character-specific assignments."""
         self.character_voices.clear()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Normalize speaker names for consistent lookup."""
+        return " ".join((name or "").strip().lower().split())

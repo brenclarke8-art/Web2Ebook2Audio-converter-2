@@ -23,6 +23,7 @@ class MediaOverlayBuilder:
         """
         Returns SMIL XML as a string.
         """
+
         ns = {
             "smil": "http://www.w3.org/2001/SMIL20/",
             "epub": "http://www.idpf.org/2007/ops"
@@ -31,15 +32,31 @@ class MediaOverlayBuilder:
         ET.register_namespace("", ns["smil"])
         ET.register_namespace("epub", ns["epub"])
 
+        # Root <smil>
         smil = ET.Element("smil", {
             "xmlns": ns["smil"],
             "xmlns:epub": ns["epub"],
             "version": "3.0"
         })
 
-        body = ET.SubElement(smil, "body")
-        seq = ET.SubElement(body, "seq", {"epub:textref": chapter_filename})
+        # <head> block (recommended for EPUB3)
+        head = ET.SubElement(smil, "head")
+        ET.SubElement(head, "meta", {
+            "name": "dc:format",
+            "content": "application/smil+xml"
+        })
 
+        # <body>
+        body = ET.SubElement(smil, "body")
+
+        # Main sequence
+        seq = ET.SubElement(body, "seq", {
+            "id": "seq1",
+            "epub:textref": chapter_filename,
+            "epub:type": "bodymatter"
+        })
+
+        # Build <par> entries
         for seg in segments:
             par = ET.SubElement(seq, "par")
 
@@ -53,7 +70,11 @@ class MediaOverlayBuilder:
                 "clipEnd": MediaOverlayBuilder._fmt(seg.clip_end)
             })
 
-        return ET.tostring(smil, encoding="unicode")
+        # Pretty-print XML
+        xml_string = ET.tostring(smil, encoding="unicode")
+
+        # Add XML declaration manually
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_string
 
     @staticmethod
     def _fmt(seconds: float) -> str:

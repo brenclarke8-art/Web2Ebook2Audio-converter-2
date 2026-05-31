@@ -26,10 +26,11 @@ prevents path-traversal vulnerabilities.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Literal, Optional
 
 # ---------------------------------------------------------------------------
 # Prevent ONNX Runtime / OpenMP threads from saturating all CPU cores.
@@ -48,6 +49,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+logger = logging.getLogger("tts_server")
+
 # ---------------------------------------------------------------------------
 # Model directory — mirrors the main app default
 # ---------------------------------------------------------------------------
@@ -65,8 +68,13 @@ _VOICES_FILENAME = "voices-v1.0.bin"
 # App + lazy-loaded engine
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Ebook Audio Studio — TTS Service", version="1.0.0")
+app = FastAPI(title="Ebook Audio Studio — TTS Service", version="1.1.0")
 _kokoro = None  # lazily initialized on first request
+_kokoro_voices: Dict[str, dict] | None = None  # optional voice catalog from kokoro
+_kokoro_provider: str | None = None  # "gpu" or "cpu"
+
+SAMPLE_RATE = 24000
+
 
 # ---------------------------------------------------------------------------
 # Server-managed output directory
@@ -87,19 +95,9 @@ def _get_model_paths() -> tuple[Path, Path]:
     return model_path, voices_path
 
 
-def _get_kokoro():
-    global _kokoro
-    if _kokoro is not None:
-        return _kokoro
-
-    # Re-apply thread limits
-    _cpus = os.cpu_count() or 4
-    _threads = str(max(1, _cpus - 2))
-    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
-    os.environ.setdefault("OMP_NUM_THREADS", _threads)
-    os.environ.setdefault("MKL_NUM_THREADS", _threads)
-    os.environ.setdefault("OPENBLAS_NUM_THREADS", _threads)
-    os.environ.setdefault("ONNXRUNTIME_THREADPOOL_SIZE", _threads)
+def _load_kokoro_model():
+    """Load Kokoro with GPU-first, CPU-fallback strategy."""
+    global _kokoro, _kokoro_voices, _kokoro_provider
 
     try:
         from kokoro_onnx import Kokoro  # type: ignore[import]
@@ -123,7 +121,42 @@ def _get_kokoro():
             f"{DEFAULT_MODELS_DIR}"
         )
 
-    _kokoro = Kokoro(str(model_path), str(voices_path))
+    # GPU-first, CPU-fallback
+    provider = "cpu"
+    try:
+        _kokoro = Kokoro(str(model_path), str(voices_path), device="cuda")  # type: ignore[call-arg]
+        provider = "gpu"
+    except Exception:
+        _kokoro = Kokoro(str(model_path), str(voices_path))
+        provider = "cpu"
+
+    _kokoro_provider = provider
+    logger.info("Kokoro model loaded using provider: %s", provider)
+
+    # Try to expose voice catalog if available
+    try:
+        voices = getattr(_kokoro, "voices", None)
+        if isinstance(voices, dict):
+            _kokoro_voices = voices
+    except Exception:
+        _kokoro_voices = None
+
+
+def _get_kokoro():
+    global _kokoro
+    if _kokoro is not None:
+        return _kokoro
+
+    # Re-apply thread limits
+    _cpus = os.cpu_count() or 4
+    _threads = str(max(1, _cpus - 2))
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+    os.environ.setdefault("OMP_NUM_THREADS", _threads)
+    os.environ.setdefault("MKL_NUM_THREADS", _threads)
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", _threads)
+    os.environ.setdefault("ONNXRUNTIME_THREADPOOL_SIZE", _threads)
+
+    _load_kokoro_model()
     return _kokoro
 
 
@@ -137,12 +170,14 @@ class SynthesizeRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = 1.0
     lang: str = "a"
+    debug: bool = False
 
 
 class PreviewRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = 1.0
     lang: str = "a"
+    debug: bool = False
 
 
 class SegmentItem(BaseModel):
@@ -162,10 +197,24 @@ class MultiSynthesizeRequest(BaseModel):
     speed: float = 1.0
     lang: str = "a"
     dialogue_pause: float = 0.3
+    transition: Literal["silence", "crossfade", "none"] = "silence"
+    return_segments: Literal["combined", "segments", "both"] = "combined"
+    batch_mode: Literal["batch", "single"] = "single"
+    debug: bool = False
 
 
 class AudioResponse(BaseModel):
     audio_path: str
+    duration_ms: Optional[int] = None
+    resolved_voice: Optional[str] = None
+
+
+class MultiAudioResponse(BaseModel):
+    audio_path: Optional[str] = None
+    duration_ms: Optional[int] = None
+    segment_audio_paths: List[str] = []
+    segment_timing: List[Dict[str, float]] = []  # {start_ms, end_ms, speaker, paragraph_id}
+    resolved_voices: Dict[str, str] = {}  # speaker -> voice
 
 
 class HealthResponse(BaseModel):
@@ -173,28 +222,51 @@ class HealthResponse(BaseModel):
     models_ready: bool
     model_path: str
     voices_path: str
+    provider: Optional[str] = None
 
 
-# --- NEW: segment-level TTS models -----------------------------------------
+# --- Segment-level TTS models ----------------------------------------------
 
 class SegmentTTSRequest(BaseModel):
     text: str
     voice: str = "af_heart"
     speed: float = 1.0
     lang: str = "a"
+    debug: bool = False
 
 
 class SegmentTTSResponse(BaseModel):
     audio_path: str
+    duration_ms: Optional[int] = None
+    resolved_voice: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _synthesise(text: str, *, voice: str, speed: float, lang: str) -> np.ndarray:
+def _validate_or_fallback_voice(voice: str, default_voice: str = "af_heart") -> str:
+    """Hybrid voice routing: trust client, but validate against known voices if available."""
+    if not voice:
+        return default_voice
+
+    if _kokoro_voices is None:
+        # No catalog available, trust client
+        return voice
+
+    if voice in _kokoro_voices:
+        return voice
+
+    logger.warning("Requested voice '%s' not found in Kokoro catalog; falling back to '%s'", voice, default_voice)
+    return default_voice
+
+
+def _synthesise(text: str, *, voice: str, speed: float, lang: str, debug: bool = False) -> np.ndarray:
     kokoro = _get_kokoro()
-    samples, _sr = kokoro.create(text, voice=voice, speed=speed, lang=lang)
+    resolved_voice = _validate_or_fallback_voice(voice)
+    if debug:
+        logger.debug("Synthesizing text with voice=%s (requested=%s), speed=%.3f, lang=%s", resolved_voice, voice, speed, lang)
+    samples, _sr = kokoro.create(text, voice=resolved_voice, speed=speed, lang=lang)
     return np.array(samples, dtype=np.float32)
 
 
@@ -208,8 +280,37 @@ def _safe_filename(filename: str) -> str:
 def _write_wav(samples: np.ndarray, filename: str) -> str:
     safe_name = _safe_filename(filename)
     out_path = _server_output_dir() / safe_name
-    sf.write(str(out_path), samples, 24000)
+    sf.write(str(out_path), samples, SAMPLE_RATE)
     return str(out_path)
+
+
+def _duration_ms(samples: np.ndarray) -> int:
+    if samples.size == 0:
+        return 0
+    return int(round(len(samples) / SAMPLE_RATE * 1000))
+
+
+def _crossfade(a: np.ndarray, b: np.ndarray, fade_ms: float = 120.0) -> np.ndarray:
+    """Equal-power crossfade between two segments."""
+    if a.size == 0:
+        return b
+    if b.size == 0:
+        return a
+
+    fade_samples = int(SAMPLE_RATE * (fade_ms / 1000.0))
+    fade_samples = max(1, min(fade_samples, min(len(a), len(b))))
+
+    a_main = a[:-fade_samples]
+    a_tail = a[-fade_samples:]
+    b_head = b[:fade_samples]
+    b_rest = b[fade_samples:]
+
+    t = np.linspace(0.0, 1.0, fade_samples, endpoint=False, dtype=np.float32)
+    fade_out = np.sqrt(1.0 - t)
+    fade_in = np.sqrt(t)
+
+    mixed = a_tail * fade_out + b_head * fade_in
+    return np.concatenate([a_main, mixed, b_rest])
 
 
 # ---------------------------------------------------------------------------
@@ -225,12 +326,16 @@ def health() -> HealthResponse:
         models_ready=models_ready,
         model_path=str(model_path),
         voices_path=str(voices_path),
+        provider=_kokoro_provider,
     )
 
 
 @app.get("/voices")
 def voices() -> dict:
     try:
+        # Prefer Kokoro's own catalog if available
+        if _kokoro_voices is not None:
+            return {"voices": _kokoro_voices}
         from ebook_app.models.voice_catalog import KOKORO_VOICE_CATALOG  # type: ignore[import]
         return {"voices": KOKORO_VOICE_CATALOG}
     except ImportError:
@@ -242,9 +347,14 @@ def synthesize(req: SynthesizeRequest) -> AudioResponse:
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=422, detail="text must not be empty")
     try:
-        samples = _synthesise(req.text, voice=req.voice, speed=req.speed, lang=req.lang)
+        resolved_voice = _validate_or_fallback_voice(req.voice)
+        samples = _synthesise(req.text, voice=resolved_voice, speed=req.speed, lang=req.lang, debug=req.debug)
         path = _write_wav(samples, req.output_filename)
-        return AudioResponse(audio_path=path)
+        return AudioResponse(
+            audio_path=path,
+            duration_ms=_duration_ms(samples),
+            resolved_voice=resolved_voice,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
@@ -262,9 +372,14 @@ def preview(req: PreviewRequest) -> AudioResponse:
     speed_tag = int(req.speed * 100)
     filename = f"preview_{req.voice}_{speed_tag}.wav"
     try:
-        samples = _synthesise(preview_text, voice=req.voice, speed=req.speed, lang=req.lang)
+        resolved_voice = _validate_or_fallback_voice(req.voice)
+        samples = _synthesise(preview_text, voice=resolved_voice, speed=req.speed, lang=req.lang, debug=req.debug)
         path = _write_wav(samples, filename)
-        return AudioResponse(audio_path=path)
+        return AudioResponse(
+            audio_path=path,
+            duration_ms=_duration_ms(samples),
+            resolved_voice=resolved_voice,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
@@ -273,7 +388,7 @@ def preview(req: PreviewRequest) -> AudioResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-# --- NEW: segment-level TTS endpoint ---------------------------------------
+# --- Segment-level TTS endpoint --------------------------------------------
 
 @app.post("/synthesize_segment", response_model=SegmentTTSResponse)
 def synthesize_segment(req: SegmentTTSRequest) -> SegmentTTSResponse:
@@ -288,9 +403,14 @@ def synthesize_segment(req: SegmentTTSRequest) -> SegmentTTSResponse:
     filename = f"segment_{uuid.uuid4().hex}_{req.voice}_{speed_tag}.wav"
 
     try:
-        samples = _synthesise(req.text, voice=req.voice, speed=req.speed, lang=req.lang)
+        resolved_voice = _validate_or_fallback_voice(req.voice)
+        samples = _synthesise(req.text, voice=resolved_voice, speed=req.speed, lang=req.lang, debug=req.debug)
         path = _write_wav(samples, filename)
-        return SegmentTTSResponse(audio_path=path)
+        return SegmentTTSResponse(
+            audio_path=path,
+            duration_ms=_duration_ms(samples),
+            resolved_voice=resolved_voice,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
@@ -299,46 +419,127 @@ def synthesize_segment(req: SegmentTTSRequest) -> SegmentTTSResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/synthesize_multi", response_model=AudioResponse)
-def synthesize_multi(req: MultiSynthesizeRequest) -> AudioResponse:
-    sample_rate = 24000
+@app.post("/synthesize_multi", response_model=MultiAudioResponse)
+def synthesize_multi(req: MultiSynthesizeRequest) -> MultiAudioResponse:
+    """
+    Multi-segment synthesis with:
+    - hybrid voice validation
+    - optional per-segment WAVs
+    - optional combined WAV
+    - silence / crossfade / none transitions
+    - optional batch vs single synthesis mode (currently single-call per segment)
+    """
+    sample_rate = SAMPLE_RATE
     silence_samples = int(sample_rate * req.dialogue_pause)
     silence = np.zeros(silence_samples, dtype=np.float32)
 
     voice_mappings = req.voice_mappings
-    narrator_voice = voice_mappings.get("narrator", "af_heart")
+    narrator_voice = voice_mappings.get("narrator", req.default_female_voice or "af_heart")
+
     all_audio: list[np.ndarray] = []
+    segment_paths: list[str] = []
+    segment_timing: list[Dict[str, float]] = []
+    resolved_voices: Dict[str, str] = {}
+
     previous_speaker: str | None = None
+    current_time_ms: float = 0.0
 
     try:
-        for segment in req.segments:
+        # For now, we honor batch_mode flag but still synthesize per segment;
+        # batch synthesis would require deeper integration with Kokoro internals.
+        for idx, segment in enumerate(req.segments):
             if not segment.text or not segment.text.strip():
                 continue
 
             speaker = segment.speaker or "narrator"
-            voice = voice_mappings.get(speaker)
-            if not voice:
-                gender = (segment.gender or "").strip().lower()
-                if gender == "male":
-                    voice = req.default_male_voice or narrator_voice
-                elif gender == "female":
-                    voice = req.default_female_voice or narrator_voice
-                else:
-                    voice = narrator_voice
+            kind = (segment.kind or "narration").strip().lower()
+            gender = (segment.gender or "").strip().lower()
 
+            # Narration segments always use narrator voice
+            if kind == "narration":
+                requested_voice = voice_mappings.get("narrator", narrator_voice)
+            else:
+                requested_voice = voice_mappings.get(speaker)
+                if not requested_voice:
+                    if gender == "male":
+                        requested_voice = req.default_male_voice or narrator_voice
+                    elif gender == "female":
+                        requested_voice = req.default_female_voice or narrator_voice
+                    else:
+                        requested_voice = narrator_voice
+
+            resolved_voice = _validate_or_fallback_voice(requested_voice, default_voice=narrator_voice)
+            resolved_voices.setdefault(speaker, resolved_voice)
+
+            if req.debug:
+                logger.debug(
+                    "Segment %d: speaker=%s kind=%s gender=%s requested_voice=%s resolved_voice=%s",
+                    idx,
+                    speaker,
+                    kind,
+                    gender,
+                    requested_voice,
+                    resolved_voice,
+                )
+
+            # Transition handling between speakers
             if previous_speaker is not None and previous_speaker != speaker and all_audio:
-                all_audio.append(silence)
-
-            samples = _synthesise(segment.text, voice=voice, speed=req.speed, lang=req.lang)
-            all_audio.append(samples)
+                if req.transition == "silence":
+                    all_audio.append(silence)
+                    current_time_ms += req.dialogue_pause * 1000.0
+                elif req.transition == "crossfade":
+                    # crossfade will be applied when concatenating; handled below
+                    pass
+                # "none" means no explicit transition
             previous_speaker = speaker
+
+            # Synthesize this segment
+            samples = _synthesise(segment.text, voice=resolved_voice, speed=req.speed, lang=req.lang, debug=req.debug)
+
+            # Optional per-segment WAV
+            seg_path: Optional[str] = None
+            if req.return_segments in {"segments", "both"}:
+                seg_filename = f"segment_{idx}_{uuid.uuid4().hex}_{resolved_voice}.wav"
+                seg_path = _write_wav(samples, seg_filename)
+                segment_paths.append(seg_path)
+
+            # Track timing
+            seg_duration_ms = _duration_ms(samples)
+            segment_timing.append(
+                {
+                    "start_ms": current_time_ms,
+                    "end_ms": current_time_ms + seg_duration_ms,
+                    "speaker": speaker,
+                    "paragraph_id": segment.paragraph_id or "",
+                }
+            )
+            current_time_ms += seg_duration_ms
+
+            # Store audio for combined output
+            all_audio.append(samples)
 
         if not all_audio:
             raise HTTPException(status_code=422, detail="No audio segments were generated")
 
-        combined = np.concatenate(all_audio)
-        path = _write_wav(combined, req.output_filename)
-        return AudioResponse(audio_path=path)
+        # Build combined audio with transitions
+        if req.transition == "crossfade" and len(all_audio) > 1:
+            combined = all_audio[0]
+            for part in all_audio[1:]:
+                combined = _crossfade(combined, part)
+        else:
+            combined = np.concatenate(all_audio)
+
+        combined_path: Optional[str] = None
+        if req.return_segments in {"combined", "both"}:
+            combined_path = _write_wav(combined, req.output_filename)
+
+        return MultiAudioResponse(
+            audio_path=combined_path,
+            duration_ms=_duration_ms(combined),
+            segment_audio_paths=segment_paths,
+            segment_timing=segment_timing,
+            resolved_voices=resolved_voices,
+        )
     except HTTPException:
         raise
     except ValueError as exc:
