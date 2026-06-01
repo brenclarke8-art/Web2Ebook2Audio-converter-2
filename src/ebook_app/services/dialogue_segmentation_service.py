@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from ebook_app.services.llm_client import OllamaChatClient
 
@@ -31,7 +31,7 @@ class DialogueLLMSegment:
 @dataclass
 class DialogueLLMResult:
     segments: list[DialogueLLMSegment]
-    characters: list[str]
+    characters: list[Any]
 
 
 class DialogueSegmentationService:
@@ -113,6 +113,22 @@ class DialogueSegmentationService:
                     if name and name.casefold() != "narrator" and name.casefold() not in seen:
                         seen.add(name.casefold())
                         characters.append(name)
+                elif isinstance(item, dict):
+                    name = str(item.get("name", "")).strip()
+                    if name and name.casefold() != "narrator" and name.casefold() not in seen:
+                        confidence = item.get("confidence", 0.0)
+                        try:
+                            confidence_val = float(confidence)
+                        except (TypeError, ValueError):
+                            confidence_val = 0.0
+                        seen.add(name.casefold())
+                        characters.append(
+                            {
+                                "name": name,
+                                "gender": str(item.get("gender", "unknown")).strip().lower() or "unknown",
+                                "confidence": confidence_val,
+                            }
+                        )
 
         if isinstance(raw_segments, list):
             for item in raw_segments:

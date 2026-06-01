@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QTextCharFormat, QColor
 from PySide6.QtCore import Qt
+from ebook_app.pipeline_contracts import chapter_id as make_chapter_id
 
 
 class EpubChapterPreviewDialog(QDialog):
@@ -39,7 +40,7 @@ class EpubChapterPreviewDialog(QDialog):
         self._work_dir = work_dir
         self._chapter_index = chapter_index
         self._max_chapters = max_chapters
-        self._chapter_id = f"ch{chapter_index:03d}"
+        self._chapter_id = make_chapter_id(chapter_index)
 
         self.setWindowTitle(f"EPUB Preview — Chapter {chapter_index + 1}")
         self.resize(1200, 800)
@@ -115,14 +116,14 @@ class EpubChapterPreviewDialog(QDialog):
         self._text_view.setPlainText(text)
 
         # Load semantic JSON
-        info_file = wd / ch_id / "chapter_info.json"
+        info_file = wd / ch_id / f"{ch_id}_chapter_info.json"
         if info_file.exists():
             data = json.loads(info_file.read_text(encoding="utf-8"))
             pretty = json.dumps(data, indent=2, ensure_ascii=False)
             self._json_view.setPlainText(pretty)
             self._load_segments(data.get("segments", []))
         else:
-            self._json_view.setPlainText("[chapter_info.json not found]")
+            self._json_view.setPlainText("[chapter info file not found]")
 
         # Metadata
         self._meta_label.setText(
@@ -164,13 +165,13 @@ class EpubChapterPreviewDialog(QDialog):
     def _go_prev(self):
         if self._chapter_index > 0:
             self._chapter_index -= 1
-            self._chapter_id = f"ch{self._chapter_index:03d}"
+            self._chapter_id = make_chapter_id(self._chapter_index)
             self._load_content()
 
     def _go_next(self):
         if self._chapter_index < self._max_chapters - 1:
             self._chapter_index += 1
-            self._chapter_id = f"ch{self._chapter_index:03d}"
+            self._chapter_id = make_chapter_id(self._chapter_index)
             self._load_content()
 
     # ------------------------------------------------------------

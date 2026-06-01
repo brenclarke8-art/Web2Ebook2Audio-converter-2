@@ -49,7 +49,22 @@ pipeline_work/
 *.wav
 .ebook_audio_studio_settings.json
 .ebook_audio_studio/
-
+ch*_cleaned*.txt
+ch*_llm_*.json
+ch*_segments_final.json
+ch*_characters_final.json
+ch*_chapter_info_final.json
+chapter_info_all.json
+chapter_urls.json
+raw_chapter_urls.json
+chapters.json
+character_database.json
+clean_review_plan.json
+semantic_review_plan.json
+selected_range.json
+audio_timing.json
+llm_communication.jsonl
+ 
 # Testing
 .pytest_cache/
 .coverage

@@ -136,3 +136,24 @@ def test_run_all_executes_new_pipeline_steps_in_order(tmp_path):
     controller.run_all()
 
     assert called == controller.STEPS
+
+
+def test_clean_chapters_removes_ui_noise_and_zero_width_chars(tmp_path):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+    controller.chapters = [
+        {
+            "title": "Chapter 1",
+            "content": "Next Chapter\nSubscribe now\nLine\u200B one.\n\nLine two.",
+        }
+    ]
+
+    controller.clean_chapters()
+
+    cleaned = (tmp_path / "pipeline_work" / "ch1_cleaned.txt").read_text(encoding="utf-8")
+    assert "Next Chapter" not in cleaned
+    assert "Subscribe now" not in cleaned
+    assert "\u200B" not in cleaned
+    assert "Line one." in cleaned
+    assert "Line two." in cleaned
