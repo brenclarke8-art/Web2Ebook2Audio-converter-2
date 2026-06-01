@@ -1,9 +1,8 @@
 from __future__ import annotations
-import os
 import json
 import logging
+import os
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)
@@ -39,15 +38,12 @@ class SettingsManager(QObject):
     }
 
     DEFAULTS = {
-
-        self.debug_pipeline = False
-
         # ------------------------------
         # UI + Window
         # ------------------------------
         "theme": "dark",
         "window_width": 1200,
-        "window_height": 800",
+        "window_height": 800,
 
         # ------------------------------
         # Output
@@ -57,7 +53,6 @@ class SettingsManager(QObject):
         # ------------------------------
         # TTS Backend (remote-only)
         # ------------------------------
-        "tts_backend_mode": "remote",
         "tts_backend_url": "http://127.0.0.1:5005",
         "tts_autostart_service": False,
 
@@ -72,12 +67,7 @@ class SettingsManager(QObject):
         # ------------------------------
         # LLM / Dialogue Parsing
         # ------------------------------
-        "llm_api_url": "http://localhost:5000/translate",
-        "llm_api_key": "",
         "index_url": "",
-        "ollama_url": "http://127.0.0.1:11434/api/generate",
-        "ollama_model": "mistral",
-
         "dialogue_llm_mode": "full",
         "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
         "dialogue_llm_model": "mistral:instruct",
@@ -91,11 +81,6 @@ class SettingsManager(QObject):
         # ------------------------------
         "character_confidence_threshold": 0.8,
         "character_review_approved": False,
-
-        # ------------------------------
-        # Audio Output Mode
-        # ------------------------------
-        "audio_output_mode": "per_chapter",
 
         # ------------------------------
         # Scraper
@@ -116,7 +101,6 @@ class SettingsManager(QObject):
         # ------------------------------
         # Multi-speaker TTS
         # ------------------------------
-        "multispeaker_enabled": False,
         "narrator_voice": "af_heart",
         "default_male_voice": "am_adam",
         "default_female_voice": "af_heart",
@@ -170,41 +154,22 @@ class SettingsManager(QObject):
                 self.data[key] = value
                 changed = True
 
-        # Migrate old URLs
-        dialogue_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
-        legacy_ollama_url = str(self.data.get("ollama_url", "") or "").strip()
-        if not dialogue_url and legacy_ollama_url:
-            self.data["dialogue_llm_url"] = self._migrate_generate_to_chat_url(legacy_ollama_url)
-            changed = True
-        elif dialogue_url.endswith("/api/generate"):
-            self.data["dialogue_llm_url"] = self._migrate_generate_to_chat_url(dialogue_url)
-            changed = True
-
-        dialogue_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
-        legacy_ollama_model = str(self.data.get("ollama_model", "") or "").strip()
-        if not dialogue_model and legacy_ollama_model:
-            self.data["dialogue_llm_model"] = legacy_ollama_model
-            changed = True
-
-        # Force remote TTS
-        if self.data.get("tts_backend_mode") != "remote":
-            self.data["tts_backend_mode"] = "remote"
-            changed = True
+        for legacy_key in (
+            "tts_backend_mode",
+            "llm_api_url",
+            "llm_api_key",
+            "ollama_url",
+            "ollama_model",
+            "audio_output_mode",
+            "multispeaker_enabled",
+        ):
+            if legacy_key in self.data:
+                self.data.pop(legacy_key, None)
+                changed = True
 
         self._settings = self.data
         if changed:
             self.save()
-
-    @staticmethod
-    def _migrate_generate_to_chat_url(url: str) -> str:
-        clean = (url or "").strip()
-        if not clean:
-            return clean
-        parsed = urlparse(clean)
-        if parsed.path.endswith("/api/generate"):
-            new_path = parsed.path[: -len("/api/generate")] + "/api/chat"
-            return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
-        return clean
 
     def save(self):
         try:
@@ -264,14 +229,6 @@ class SettingsManager(QObject):
     @kokoro_voices_path.setter
     def kokoro_voices_path(self, value):
         self.set("kokoro_voices_path", value)
-
-    @property
-    def tts_backend_mode(self):
-        return self.get("tts_backend_mode")
-
-    @tts_backend_mode.setter
-    def tts_backend_mode(self, value):
-        self.set("tts_backend_mode", value)
 
     @property
     def tts_backend_url(self):

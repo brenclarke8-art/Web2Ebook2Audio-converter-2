@@ -8,13 +8,12 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from ebook_app.core.epub.epub_builder import EPUBBuilder
+from ebook_app.core.tts.voice_router import VoiceRouter
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
-from ebook_app.models.epub_builder import EPUBBuilder
 from ebook_app.models.scraper import HttpWebScraper, WebScraper
-from ebook_app.models.epub_builder import EPUBBuilder, TextSegment
-
-from ebook_app.voice.voice_router import VoiceRouter
+from ebook_app.pipeline_contracts import TextSegment
 
 logger = logging.getLogger(__name__)
 
@@ -63,27 +62,23 @@ class PipelineController:
         self.chapter_urls: list[str] = []
         self.raw_chapter_urls: list[str] = []
         self.chapters: list[dict] = []
-        self.translated_chapters: list[dict] = []  # legacy, will be removed later
         self.dialogue_segments: dict[int, list[Segment]] = {}
         self.audio_files: dict[int, Path] = {}
-        self.alignment_data: dict[int, list] = {}  # legacy, will be removed later
 
         self.selected_start_chapter: int = 1
         self.selected_end_chapter: int = 0
-        self.review_required: bool = False
 
         # Future-ready semantic + review state
         self.clean_review_plan: dict = {}
         self.semantic_review_plan: dict = {}
         self.character_db: list[dict] = []
-        self.speaker_style_model: dict = {}
 
         # Voice routing
         self.voice_router = VoiceRouter(
-            character_voices=self.settings.character_voice_map,
-            default_male_voice=self.settings.default_male_voice,
-            default_female_voice=self.settings.default_female_voice,
-            narrator_voice=self.settings.narrator_voice,
+            character_voices=self.settings.get("character_voice_map", {}) or {},
+            default_male_voice=str(self.settings.get("default_male_voice", "am_adam")),
+            default_female_voice=str(self.settings.get("default_female_voice", "af_heart")),
+            narrator_voice=str(self.settings.get("narrator_voice", "af_heart")),
         )
 
     # ------------------------------------------------------------------
@@ -132,21 +127,12 @@ class PipelineController:
     # ------------------------------------------------------------------
 
     def _make_tts_backend(self, output_dir: str | None = None):
-        """Return a TTSEngine (local) or TTSClient (remote) per settings."""
+        """Return the contract-compliant TTS backend."""
         effective_output_dir = output_dir or str(self.work_dir / "audio")
-
-        if self.settings.tts_backend_mode == "remote":
-            from ebook_app.services.tts_client import TTSClient
-            return TTSClient(
-                output_dir=effective_output_dir,
-                base_url=self.settings.tts_backend_url,
-            )
-
-        from ebook_app.models.tts_engine_cli import TTSEngine
+        from ebook_app.core.tts.tts_engine import TTSEngine
         return TTSEngine(
             output_dir=effective_output_dir,
-            model_path=self.settings.kokoro_model_path or None,
-            voices_path=self.settings.kokoro_voices_path or None,
+            server_url=str(self.settings.get("tts_backend_url", "http://127.0.0.1:5005")),
         )
 
     # ------------------------------------------------------------------
@@ -188,6 +174,8 @@ class PipelineController:
                     f"Model '{parser.model}' is not installed in Ollama. "
                     f"Pull it first: ollama pull {parser.model}"
                 )
+        except RuntimeError:
+            raise
         except Exception:
             logger.debug("Could not parse Ollama /api/tags response; skipping model presence check.", exc_info=True)
 
@@ -493,8 +481,8 @@ class PipelineController:
             return
 
         # Prepare LLM parser
-        llm_url = self.settings.get("dialogue_llm_url", "") or self.settings.get("ollama_url", "")
-        llm_model = self.settings.get("dialogue_llm_model", "") or self.settings.get("ollama_model", "")
+        llm_url = self.settings.get("dialogue_llm_url", "")
+        llm_model = self.settings.get("dialogue_llm_model", "")
         llm_log_path = self.work_dir / "llm_communication.jsonl"
 
         parser = DialogueParser(
@@ -824,12 +812,7 @@ class PipelineController:
 
             # Hybrid voice assignment
             if norm in voice_map:
-                # Known character → VoiceRouter
-                voice = self.voice_router.get_voice_for_segment(
-                    speaker=name,
-                    seg_type="dialogue",
-                    gender=gender,
-                )
+                voice = voice_map[norm]
             else:
                 # Unknown character → fallback
                 if gender == "male":

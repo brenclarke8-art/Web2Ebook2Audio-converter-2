@@ -213,7 +213,7 @@ class DialogueParserContract(Protocol):
     Contract for DialogueParser used in Phase 5.
 
     Must be constructible with:
-      - ollama_url: str
+      - llm_url: str
       - model: str
       - timeout_s: int
       - retries: int

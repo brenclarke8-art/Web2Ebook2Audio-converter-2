@@ -291,15 +291,6 @@ class PipelinePage(BasePage):
         self._max_index_pages_spin.setValue(int(self.settings.get("scraper_max_index_pages", 50)))
         inventory_layout.addRow("Max index pages:", self._max_index_pages_spin)
 
-        # Audio mode
-        self._audio_mode_combo = QComboBox()
-        self._audio_mode_combo.addItems(["per_chapter", "single_file"])
-        current_mode = self.settings.get("audio_output_mode", "per_chapter")
-        self._audio_mode_combo.setCurrentText(
-            current_mode if current_mode in {"per_chapter", "single_file"} else "per_chapter"
-        )
-        inventory_layout.addRow("Audio output mode:", self._audio_mode_combo)
-
         # -------------------------
         # Action buttons
         # -------------------------
@@ -353,99 +344,99 @@ class PipelinePage(BasePage):
         self._tabs.addTab(review_tab, "Review")
 
 
-def _build_review_tab(self, tab: QWidget) -> None:
-    outer = QVBoxLayout(tab)
+    def _build_review_tab(self, tab: QWidget) -> None:
+        outer = QVBoxLayout(tab)
 
-    # --------------------------------------------------------------
-    # Chapter selector + refresh
-    # --------------------------------------------------------------
-    controls = QHBoxLayout()
-    controls.addWidget(QLabel("Chapter:"))
+        # --------------------------------------------------------------
+        # Chapter selector + refresh
+        # --------------------------------------------------------------
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Chapter:"))
 
-    self._review_chapter_combo = QComboBox()
-    self._review_chapter_combo.currentIndexChanged.connect(self._on_review_chapter_changed)
-    controls.addWidget(self._review_chapter_combo, 1)
+        self._review_chapter_combo = QComboBox()
+        self._review_chapter_combo.currentIndexChanged.connect(self._on_review_chapter_changed)
+        controls.addWidget(self._review_chapter_combo, 1)
 
-    self._review_refresh_btn = QPushButton("Refresh")
-    self._review_refresh_btn.clicked.connect(self._refresh_review_data)
-    controls.addWidget(self._review_refresh_btn)
+        self._review_refresh_btn = QPushButton("Refresh")
+        self._review_refresh_btn.clicked.connect(self._refresh_review_data)
+        controls.addWidget(self._review_refresh_btn)
 
-    outer.addLayout(controls)
+        outer.addLayout(controls)
 
-    # --------------------------------------------------------------
-    # Splitter: Left = cleaned/semantic text, Right = characters
-    # --------------------------------------------------------------
-    splitter = QSplitter()
+        # --------------------------------------------------------------
+        # Splitter: Left = cleaned/semantic text, Right = characters
+        # --------------------------------------------------------------
+        splitter = QSplitter()
 
-    # -------------------------
-    # LEFT SIDE: Chapter text
-    # -------------------------
-    chapter_group = QGroupBox("Chapter Content (cleaned → semantic → final)")
-    chapter_layout = QVBoxLayout(chapter_group)
+        # -------------------------
+        # LEFT SIDE: Chapter text
+        # -------------------------
+        chapter_group = QGroupBox("Chapter Content (cleaned → semantic → final)")
+        chapter_layout = QVBoxLayout(chapter_group)
 
-    self._review_text_view = QTextEdit()
-    self._review_text_view.setReadOnly(True)
-    chapter_layout.addWidget(self._review_text_view)
+        self._review_text_view = QTextEdit()
+        self._review_text_view.setReadOnly(True)
+        chapter_layout.addWidget(self._review_text_view)
 
-    splitter.addWidget(chapter_group)
+        splitter.addWidget(chapter_group)
 
-    # -------------------------
-    # RIGHT SIDE: Detected characters
-    # -------------------------
-    detected_group = QGroupBox("Detected Characters (LLM + DB)")
-    detected_layout = QVBoxLayout(detected_group)
+        # -------------------------
+        # RIGHT SIDE: Detected characters
+        # -------------------------
+        detected_group = QGroupBox("Detected Characters (LLM + DB)")
+        detected_layout = QVBoxLayout(detected_group)
 
-    self._detected_char_table = QTableWidget(0, 5)
-    self._detected_char_table.setHorizontalHeaderLabels(
-        ["Name", "Gender", "Voice", "Confidence", "Source Chapter(s)"]
-    )
+        self._detected_char_table = QTableWidget(0, 5)
+        self._detected_char_table.setHorizontalHeaderLabels(
+            ["Name", "Gender", "Voice", "Confidence", "Source Chapter(s)"]
+        )
 
-    # Column sizing
-    self._detected_char_table.horizontalHeader().setSectionResizeMode(
-        0, QHeaderView.ResizeMode.Stretch
-    )
-    self._detected_char_table.horizontalHeader().setSectionResizeMode(
-        1, QHeaderView.ResizeMode.ResizeToContents
-    )
-    self._detected_char_table.horizontalHeader().setSectionResizeMode(
-        2, QHeaderView.ResizeMode.ResizeToContents
-    )
-    self._detected_char_table.horizontalHeader().setSectionResizeMode(
-        3, QHeaderView.ResizeMode.ResizeToContents
-    )
-    self._detected_char_table.horizontalHeader().setSectionResizeMode(
-        4, QHeaderView.ResizeMode.Stretch
-    )
+        # Column sizing
+        self._detected_char_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        self._detected_char_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._detected_char_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._detected_char_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._detected_char_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch
+        )
 
-    detected_layout.addWidget(self._detected_char_table)
+        detected_layout.addWidget(self._detected_char_table)
 
-    # Buttons for character editing
-    detected_btns = QHBoxLayout()
-    self._detected_add_btn = QPushButton("Add Character")
-    self._detected_add_btn.clicked.connect(self._on_add_detected_character)
+        # Buttons for character editing
+        detected_btns = QHBoxLayout()
+        self._detected_add_btn = QPushButton("Add Character")
+        self._detected_add_btn.clicked.connect(self._on_add_detected_character)
 
-    self._detected_remove_btn = QPushButton("Remove Selected")
-    self._detected_remove_btn.clicked.connect(self._on_remove_detected_character)
+        self._detected_remove_btn = QPushButton("Remove Selected")
+        self._detected_remove_btn.clicked.connect(self._on_remove_detected_character)
 
-    self._detected_save_btn = QPushButton("Save Character Edits")
-    self._detected_save_btn.clicked.connect(self._on_save_detected_characters)
+        self._detected_save_btn = QPushButton("Save Character Edits")
+        self._detected_save_btn.clicked.connect(self._on_save_detected_characters)
 
-    detected_btns.addWidget(self._detected_add_btn)
-    detected_btns.addWidget(self._detected_remove_btn)
-    detected_btns.addWidget(self._detected_save_btn)
-    detected_btns.addStretch()
+        detected_btns.addWidget(self._detected_add_btn)
+        detected_btns.addWidget(self._detected_remove_btn)
+        detected_btns.addWidget(self._detected_save_btn)
+        detected_btns.addStretch()
 
-    detected_layout.addLayout(detected_btns)
-    splitter.addWidget(detected_group)
+        detected_layout.addLayout(detected_btns)
+        splitter.addWidget(detected_group)
 
-    splitter.setStretchFactor(0, 3)
-    splitter.setStretchFactor(1, 2)
-    outer.addWidget(splitter)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        outer.addWidget(splitter)
 
-    # Default message
-    self._review_text_view.setPlainText(
-        "Run 'Run to Review' to load cleaned and semantic chapter content."
-    )
+        # Default message
+        self._review_text_view.setPlainText(
+            "Run 'Run to Review' to load cleaned and semantic chapter content."
+        )
 
     def _require_project(self) -> bool:
         if not self.project_manager:
@@ -602,10 +593,9 @@ def _build_review_tab(self, tab: QWidget) -> None:
             self._tabs.setCurrentIndex(1)
             QMessageBox.information(
                 self,
-                "Review Required",
-                "Text + semantic processing is complete.\n\n"
-                "Review cleaned text and detected characters in the Review tab,\n"
-                "then click 'Continue Audio + Export' to generate audio and EPUB.",
+                "Character Review Required",
+                "Chapter parsing is complete. Review scraped text and detected "
+                "characters in the Review tab, then click 'Continue Audio + Export'.",
             )
 
     def _on_worker_failed(self, message: str) -> None:
@@ -659,7 +649,6 @@ def _build_review_tab(self, tab: QWidget) -> None:
             return
         start, end = result
 
-        self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", False)
         self._persist_scraper_options()
         self.project_manager.set_selected_range(start, end)
@@ -683,7 +672,6 @@ def _build_review_tab(self, tab: QWidget) -> None:
         start = max(1, int(selected.get("start", 1)))
         end = max(start, int(selected.get("end", 0)) or start)
 
-        self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", True)
 
         self.log.log("Starting audio generation and EPUB build…", level="INFO")
