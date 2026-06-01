@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -27,6 +27,7 @@ from ebook_app.ui.pages._base_page import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
 _EMPTY_MODEL_LABEL = "(blank)"
+_TTS_STARTUP_DELAY_MS = 1500
 
 
 class _ServiceHealthThread(QThread):
@@ -185,6 +186,10 @@ class SettingsPage(BasePage):
         self._svc_status_label.setStyleSheet("color: steelblue;")
         svc_status_row.addWidget(self._svc_status_label)
         svc_status_row.addStretch()
+        self._start_tts_btn = QPushButton("Start TTS Server")
+        self._start_tts_btn.setToolTip("Launch the local TTS service using the repository TTS environment.")
+        self._start_tts_btn.clicked.connect(self._on_start_tts_server)
+        svc_status_row.addWidget(self._start_tts_btn)
         self._test_tts_btn = QPushButton("Test TTS Server")
         self._test_tts_btn.setToolTip("Check that the remote TTS server is reachable and models are loaded")
         self._test_tts_btn.clicked.connect(self._on_test_tts_server)
@@ -193,7 +198,9 @@ class SettingsPage(BasePage):
 
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
-            "Start the TTS service manually: <tt>cd tts_service &amp;&amp; uvicorn tts_server:app</tt>"
+            "Use <b>Start TTS Server</b> for the default local service, or run it manually for "
+            "the default local URL: "
+            "<tt>cd tts_service &amp;&amp; python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005</tt>"
         )
         mode_note.setWordWrap(True)
         backend_vbox.addWidget(mode_note)
@@ -586,6 +593,32 @@ class SettingsPage(BasePage):
         self._svc_health_thread = _ServiceHealthThread(url, parent=self)
         self._svc_health_thread.result.connect(self._on_tts_test_result)
         self._svc_health_thread.start()
+
+    def _on_start_tts_server(self) -> None:
+        from ebook_app.services.tts_service_launcher import launch_tts_service
+        from ebook_app.services.tts_client import TTSClient
+
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
+        existing_health = TTSClient(base_url=url, timeout=1).health()
+        if existing_health.get("status") == "ok":
+            self._on_tts_test_result(existing_health)
+            self.log.log("TTS server is already running; skipped launching a duplicate process.", level="INFO")
+            return
+
+        try:
+            pid = launch_tts_service(url)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            self._svc_status_label.setText(f"🔴 Could not start TTS server: {exc}")
+            self._svc_status_label.setStyleSheet("color: red;")
+            self.log.log(f"Failed to start TTS server: {exc}", level="ERROR")
+            return
+
+        self._svc_status_label.setText(
+            f"⏳ Started local TTS server process (PID {pid}). Checking health…"
+        )
+        self._svc_status_label.setStyleSheet("color: steelblue;")
+        self.log.log(f"Started local TTS server process (PID {pid}).", level="INFO")
+        QTimer.singleShot(_TTS_STARTUP_DELAY_MS, self._on_test_tts_server)
 
     def _on_tts_test_result(self, health: dict) -> None:
         self._test_tts_btn.setEnabled(True)
