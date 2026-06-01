@@ -187,10 +187,7 @@ class SettingsPage(BasePage):
         svc_status_row.addWidget(self._svc_status_label)
         svc_status_row.addStretch()
         self._start_tts_btn = QPushButton("Start TTS Server")
-        self._start_tts_btn.setToolTip(
-            "Launch the local TTS service using the repository TTS environment "
-            "(does not check if the service is already running)"
-        )
+        self._start_tts_btn.setToolTip("Launch the local TTS service using the repository TTS environment")
         self._start_tts_btn.clicked.connect(self._on_start_tts_server)
         svc_status_row.addWidget(self._start_tts_btn)
         self._test_tts_btn = QPushButton("Test TTS Server")
@@ -201,7 +198,8 @@ class SettingsPage(BasePage):
 
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
-            "Use <b>Start TTS Server</b> for the default local service, or run it manually: "
+            "Use <b>Start TTS Server</b> for the default local service, or run it manually for "
+            "the default local URL: "
             "<tt>cd tts_service &amp;&amp; python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005</tt>"
         )
         mode_note.setWordWrap(True)
@@ -598,8 +596,15 @@ class SettingsPage(BasePage):
 
     def _on_start_tts_server(self) -> None:
         from ebook_app.services.tts_service_launcher import launch_tts_service
+        from ebook_app.services.tts_client import TTSClient
 
         url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
+        existing_health = TTSClient(base_url=url, timeout=1).health()
+        if existing_health.get("status") == "ok":
+            self._on_tts_test_result(existing_health)
+            self.log.log("TTS server is already running; skipped launching a duplicate process.", level="INFO")
+            return
+
         try:
             pid = launch_tts_service(url)
         except (FileNotFoundError, OSError, ValueError) as exc:

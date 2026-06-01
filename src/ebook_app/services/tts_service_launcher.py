@@ -119,4 +119,7 @@ def launch_tts_service(base_url: str) -> int:
         process = subprocess.Popen(command, creationflags=creationflags, **kwargs)
     else:
         process = subprocess.Popen(command, start_new_session=True, **kwargs)
-    return int(process.pid)
+    pid = process.pid
+    if pid is None:
+        raise RuntimeError("TTS service process started without a PID.")
+    return int(pid)
