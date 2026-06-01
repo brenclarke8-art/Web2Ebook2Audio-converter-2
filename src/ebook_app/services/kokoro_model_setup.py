@@ -18,6 +18,7 @@ _VOICES_URL = (
     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
     "model-files-v1.0/voices-v1.0.bin"
 )
+_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 def resolve_kokoro_model_paths() -> tuple[Path, Path]:
@@ -31,7 +32,7 @@ def _download_file(url: str, destination: Path) -> None:
         with requests.get(url, stream=True, timeout=120) as response:
             response.raise_for_status()
             with temp_path.open("wb") as fh:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
                     if chunk:
                         fh.write(chunk)
         temp_path.replace(destination)

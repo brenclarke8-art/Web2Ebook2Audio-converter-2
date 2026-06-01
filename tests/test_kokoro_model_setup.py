@@ -10,6 +10,7 @@ from ebook_app.services import kokoro_model_setup
 class _FakeResponse:
     def __init__(self, payload: bytes):
         self._payload = payload
+        self.chunk_size_seen: int | None = None
 
     def __enter__(self):
         return self
@@ -21,6 +22,7 @@ class _FakeResponse:
         return None
 
     def iter_content(self, chunk_size: int = 1024):
+        self.chunk_size_seen = chunk_size
         yield self._payload
 
 
@@ -29,11 +31,14 @@ def test_download_and_setup_kokoro_models_writes_default_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(kokoro_model_setup, "DEFAULT_MODELS_DIR", tmp_path)
+    responses: list[_FakeResponse] = []
 
     def fake_get(url: str, stream: bool, timeout: int):
         assert stream is True
         assert timeout == 120
-        return _FakeResponse(url.encode("utf-8"))
+        response = _FakeResponse(url.encode("utf-8"))
+        responses.append(response)
+        return response
 
     monkeypatch.setattr(kokoro_model_setup.requests, "get", fake_get)
 
@@ -45,6 +50,10 @@ def test_download_and_setup_kokoro_models_writes_default_files(
     assert result["voices_path"] == str(voices_path)
     assert model_path.exists()
     assert voices_path.exists()
+    assert len(responses) == 2
+    assert all(
+        r.chunk_size_seen == kokoro_model_setup._DOWNLOAD_CHUNK_SIZE for r in responses
+    )
 
 
 def test_download_and_setup_kokoro_models_wraps_request_errors(
