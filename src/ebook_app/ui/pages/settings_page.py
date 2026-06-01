@@ -125,6 +125,31 @@ class _LlmHealthThread(QThread):
             )
 
 
+class _KokoroModelSetupThread(QThread):
+    result = Signal(dict)
+
+    def run(self) -> None:
+        from ebook_app.services.kokoro_model_setup import download_and_setup_kokoro_models
+
+        try:
+            paths = download_and_setup_kokoro_models()
+            self.result.emit(
+                {
+                    "status": "ok",
+                    "detail": "",
+                    "model_path": paths["model_path"],
+                    "voices_path": paths["voices_path"],
+                }
+            )
+        except RuntimeError as exc:
+            self.result.emit(
+                {
+                    "status": "error",
+                    "detail": str(exc),
+                }
+            )
+
+
 class SettingsPage(BasePage):
     """Page for viewing and editing all persisted application settings."""
 
@@ -132,6 +157,7 @@ class SettingsPage(BasePage):
         self._svc_health_thread: _ServiceHealthThread | None = None
         self._llm_health_thread: _LlmHealthThread | None = None
         self._preview_thread: _PreviewThread | None = None
+        self._kokoro_setup_thread: _KokoroModelSetupThread | None = None
         # QMediaPlayer and QAudioOutput are created lazily to avoid importing
         # QtMultimedia at module load time (optional dependency).
         self._media_player = None
@@ -190,6 +216,13 @@ class SettingsPage(BasePage):
         self._start_tts_btn.setToolTip("Launch the local TTS service using the repository TTS environment.")
         self._start_tts_btn.clicked.connect(self._on_start_tts_server)
         svc_status_row.addWidget(self._start_tts_btn)
+        self._setup_kokoro_btn = QPushButton("Download + Setup Kokoro Models")
+        self._setup_kokoro_btn.setToolTip(
+            "Download kokoro-v1.0.onnx and voices-v1.0.bin into the default models folder. "
+            "Safe to run again to repair or refresh existing files."
+        )
+        self._setup_kokoro_btn.clicked.connect(self._on_setup_kokoro_models)
+        svc_status_row.addWidget(self._setup_kokoro_btn)
         self._test_tts_btn = QPushButton("Test TTS Server")
         self._test_tts_btn.setToolTip("Check that the remote TTS server is reachable and models are loaded")
         self._test_tts_btn.clicked.connect(self._on_test_tts_server)
@@ -198,8 +231,8 @@ class SettingsPage(BasePage):
 
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
-            "Use <b>Start TTS Server</b> for the default local service, or run it manually for "
-            "the default local URL: "
+            "Use <b>Download + Setup Kokoro Models</b> once, then <b>Start TTS Server</b> for the default local "
+            "service (safe to re-run if files need repair). Alternatively, run it manually for the default local URL: "
             "<tt>cd tts_service &amp;&amp; python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005</tt>"
         )
         mode_note.setWordWrap(True)
@@ -619,6 +652,46 @@ class SettingsPage(BasePage):
         self._svc_status_label.setStyleSheet("color: steelblue;")
         self.log.log(f"Started local TTS server process (PID {pid}).", level="INFO")
         QTimer.singleShot(_TTS_STARTUP_DELAY_MS, self._on_test_tts_server)
+
+    def _on_setup_kokoro_models(self) -> None:
+        if self._kokoro_setup_thread and self._kokoro_setup_thread.isRunning():
+            return
+        if self._kokoro_setup_thread is not None:
+            try:
+                self._kokoro_setup_thread.result.disconnect(self._on_kokoro_setup_result)
+            except RuntimeError:
+                # Signal can already be disconnected when replacing a prior finished thread.
+                pass
+            self._kokoro_setup_thread.deleteLater()
+        self._setup_kokoro_btn.setEnabled(False)
+        self._svc_status_label.setText("⏳ Downloading Kokoro model files…")
+        self._svc_status_label.setStyleSheet("")
+        self._kokoro_setup_thread = _KokoroModelSetupThread(parent=self)
+        self._kokoro_setup_thread.result.connect(self._on_kokoro_setup_result)
+        self._kokoro_setup_thread.start()
+
+    def _on_kokoro_setup_result(self, result: dict) -> None:
+        self._setup_kokoro_btn.setEnabled(True)
+        if result.get("status") == "ok":
+            model_path = result.get("model_path", "")
+            voices_path = result.get("voices_path", "")
+            self._svc_status_label.setText(
+                f"✅ Kokoro models downloaded: {model_path} and {voices_path}"
+            )
+            self._svc_status_label.setStyleSheet("color: green;")
+            self.log.log(
+                "Kokoro models downloaded and ready for TTS service.",
+                level="INFO",
+            )
+            return
+        self._svc_status_label.setText(
+            f"🔴 Kokoro model setup failed: {result.get('detail', 'Unknown error')}"
+        )
+        self._svc_status_label.setStyleSheet("color: red;")
+        self.log.log(
+            f"Kokoro model setup failed: {result.get('detail', 'Unknown error')}",
+            level="ERROR",
+        )
 
     def _on_tts_test_result(self, health: dict) -> None:
         self._test_tts_btn.setEnabled(True)
