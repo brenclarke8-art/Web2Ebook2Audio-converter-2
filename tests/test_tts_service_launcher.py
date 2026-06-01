@@ -43,7 +43,10 @@ def test_resolve_tts_service_python_falls_back_to_current_interpreter(
     assert resolved == current_python.resolve()
 
 
-def test_build_tts_service_launch_spec_uses_local_url_host_and_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_launch_spec_parses_host_and_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service_dir = tmp_path / "tts_service"
     service_dir.mkdir(parents=True)
     venv_python = service_dir / ".venv_tts" / "bin" / "python"

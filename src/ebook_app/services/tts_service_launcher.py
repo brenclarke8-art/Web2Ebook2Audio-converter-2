@@ -65,7 +65,9 @@ def build_tts_service_launch_spec(
 
     parsed = urlparse((base_url or "").strip())
     if not parsed.scheme or not parsed.hostname:
-        raise ValueError("Enter a full local TTS service URL, such as http://127.0.0.1:5005.")
+        raise ValueError(
+            "Invalid URL format. Expected a full local TTS service URL, such as http://127.0.0.1:5005."
+        )
     if parsed.scheme != "http":
         raise ValueError("GUI auto-start only supports local http:// TTS service URLs.")
     if parsed.hostname not in _LOCAL_HOSTS:
@@ -117,6 +119,4 @@ def launch_tts_service(base_url: str) -> int:
         process = subprocess.Popen(command, creationflags=creationflags, **kwargs)
     else:
         process = subprocess.Popen(command, start_new_session=True, **kwargs)
-    if process.pid is None:
-        raise RuntimeError("TTS service process started without a PID.")
     return int(process.pid)
