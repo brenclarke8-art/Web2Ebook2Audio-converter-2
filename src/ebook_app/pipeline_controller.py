@@ -118,7 +118,7 @@ class PipelineController:
         except Exception:
             logger.error("Failed to save JSON to %s", path, exc_info=True)
 
-    def _chapter_id(self, idx: int) -> str:
+    def _chapter_id_for_offset(self, idx: int) -> str:
         return make_chapter_id(idx, start_index=self.selected_start_chapter)
 
     def _merge_pending_characters(
@@ -411,7 +411,7 @@ class PipelineController:
             return
 
         for idx, chapter in enumerate(self.chapters):
-            chapter_id = self._chapter_id(idx)
+            chapter_id = self._chapter_id_for_offset(idx)
             raw_content = str(chapter.get("content", "") or "")
 
             # Simple deterministic cleaning
@@ -541,7 +541,7 @@ class PipelineController:
         aggregated_info = {}
 
         for idx, chapter in enumerate(chapters):
-            chapter_id = self._chapter_id(idx)
+            chapter_id = self._chapter_id_for_offset(idx)
             chapter_number = self.selected_start_chapter + idx
             title = chapter.get("title", f"Chapter {chapter_number}")
 
@@ -599,7 +599,7 @@ class PipelineController:
             chapter_dir.mkdir(parents=True, exist_ok=True)
             self._save_json(chapter_dir / f"{chapter_id}_chapter_info.json", chapter_info)
 
-            aggregated_info[str(chapter_number)] = chapter_info
+            aggregated_info[chapter_id] = chapter_info
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("llm_semantic_analysis", percent)
@@ -629,7 +629,7 @@ class PipelineController:
             return
 
         for idx in range(total):
-            chapter_id = self._chapter_id(idx)
+            chapter_id = self._chapter_id_for_offset(idx)
             raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
 
             if not raw_path.exists():
@@ -731,7 +731,7 @@ class PipelineController:
         needs_review = []
 
         for idx in range(total):
-            chapter_id = self._chapter_id(idx)
+            chapter_id = self._chapter_id_for_offset(idx)
             norm_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
 
             if not norm_path.exists():
@@ -938,7 +938,7 @@ class PipelineController:
         tts_speed = float(self.settings.get("tts_speed", 1.0))
 
         for idx in range(total):
-            chapter_id = self._chapter_id(idx)
+            chapter_id = self._chapter_id_for_offset(idx)
             final_info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
             if not final_info_path.exists():
@@ -1098,7 +1098,7 @@ class PipelineController:
         audio_root = self.work_dir / "audio"
 
         for idx, ch in enumerate(chapters):
-            chapter_id = self._chapter_id(idx)
+            chapter_id = self._chapter_id_for_offset(idx)
             final_info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
             if not final_info_path.exists():
@@ -1200,7 +1200,7 @@ class PipelineController:
         Generate TTS audio for a single semantic segment (preview).
         Uses the same multi-speaker logic as full TTS.
         """
-        chapter_id = self._chapter_id(chapter_index)
+        chapter_id = self._chapter_id_for_offset(chapter_index)
         info_file = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
         if not info_file.exists():
