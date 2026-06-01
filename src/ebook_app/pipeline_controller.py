@@ -686,7 +686,7 @@ class PipelineController:
             if not name:
                 continue
             normalized_name = self._normalize_name(name)
-            if any(self._normalize_name(existing.get("name", "")) == normalized_name for existing in character_db):
+            if normalized_name in known_names:
                 continue
             gender = str(entry.get("gender", "unknown") or "unknown").strip().lower()
             voice = str(entry.get("voice", "") or "").strip()
@@ -700,6 +700,7 @@ class PipelineController:
                     "description": "",
                 }
             )
+            known_names.add(normalized_name)
         pending_names = {self._normalize_name(c["name"]) for c in pending if c.get("name")}
         review_approved = bool(self.settings.get("character_review_approved", False))
 
