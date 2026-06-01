@@ -106,6 +106,9 @@ def launch_tts_service(base_url: str) -> int:
     command = [spec.program, *spec.arguments]
 
     if os.name == "nt":
+        # Fall back to 0 so this still works on Python builds where one or both
+        # constants are not exposed; in that case the process still launches, but
+        # without the extra Windows detachment flags.
         creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
             subprocess,
             "CREATE_NEW_PROCESS_GROUP",
@@ -114,4 +117,6 @@ def launch_tts_service(base_url: str) -> int:
         process = subprocess.Popen(command, creationflags=creationflags, **kwargs)
     else:
         process = subprocess.Popen(command, start_new_session=True, **kwargs)
+    if process.pid is None:
+        raise RuntimeError("TTS service process started without a PID.")
     return int(process.pid)

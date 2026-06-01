@@ -10,7 +10,10 @@ from ebook_app.services.tts_service_launcher import (
 )
 
 
-def test_resolve_tts_service_python_prefers_repo_tts_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_tts_service_python_prefers_tts_service_venv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     venv_python = tmp_path / "tts_service" / ".venv_tts" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("", encoding="utf-8")

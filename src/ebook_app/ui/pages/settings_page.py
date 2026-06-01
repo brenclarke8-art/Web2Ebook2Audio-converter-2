@@ -27,6 +27,7 @@ from ebook_app.ui.pages._base_page import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
 _EMPTY_MODEL_LABEL = "(blank)"
+_TTS_STARTUP_DELAY_MS = 1500
 
 
 class _ServiceHealthThread(QThread):
@@ -609,7 +610,7 @@ class SettingsPage(BasePage):
         )
         self._svc_status_label.setStyleSheet("color: steelblue;")
         self.log.log(f"Started local TTS server process (PID {pid}).", level="INFO")
-        QTimer.singleShot(1500, self._on_test_tts_server)
+        QTimer.singleShot(_TTS_STARTUP_DELAY_MS, self._on_test_tts_server)
 
     def _on_tts_test_result(self, health: dict) -> None:
         self._test_tts_btn.setEnabled(True)
