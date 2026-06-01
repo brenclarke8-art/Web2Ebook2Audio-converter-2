@@ -191,14 +191,14 @@ Model files are downloaded and saved to `<repo>/.ebook_audio_studio/models/` by 
 
 1. Launch the application: `ebook-audio-studio`
 2. Navigate to the **Settings** page
-3. Click **"Download Models from GitHub"**
+3. Click **"Download + Setup Kokoro Models"**
 4. Wait for the download to complete — the status indicator turns green when ready
 
 **Method B — Command line:**
 
 ```python
-from ebook_app.models.tts_engine_cli import download_kokoro_models
-download_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models/
+from ebook_app.services.kokoro_model_setup import download_and_setup_kokoro_models
+download_and_setup_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models/
 ```
 
 **Method C — Manual placement:**
