@@ -165,6 +165,8 @@ cd tts_service
 python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005
 ```
 
+You can also launch the default local service from **Settings → TTS Backend → Start TTS Server**.
+
 ### 5) Launch the GUI
 
 In a separate terminal, from the repository root, activate the GUI venv and run:
