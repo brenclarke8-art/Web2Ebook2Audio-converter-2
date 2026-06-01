@@ -32,10 +32,12 @@ def test_download_and_setup_kokoro_models_writes_default_files(
 ) -> None:
     monkeypatch.setattr(kokoro_model_setup, "DEFAULT_MODELS_DIR", tmp_path)
     responses: list[_FakeResponse] = []
+    seen_urls: list[str] = []
 
     def fake_get(url: str, stream: bool, timeout: int):
         assert stream is True
         assert timeout == 120
+        seen_urls.append(url)
         response = _FakeResponse(url.encode("utf-8"))
         responses.append(response)
         return response
@@ -51,6 +53,10 @@ def test_download_and_setup_kokoro_models_writes_default_files(
     assert model_path.exists()
     assert voices_path.exists()
     assert len(responses) == 2
+    assert seen_urls == [
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    ]
     assert all(
         r.chunk_size_seen == kokoro_model_setup._DOWNLOAD_CHUNK_SIZE for r in responses
     )

@@ -218,7 +218,8 @@ class SettingsPage(BasePage):
         svc_status_row.addWidget(self._start_tts_btn)
         self._setup_kokoro_btn = QPushButton("Download + Setup Kokoro Models")
         self._setup_kokoro_btn.setToolTip(
-            "Download kokoro-v1.0.onnx and voices-v1.0.bin into the default models folder."
+            "Download kokoro-v1.0.onnx and voices-v1.0.bin into the default models folder. "
+            "Safe to run again to repair or refresh existing files."
         )
         self._setup_kokoro_btn.clicked.connect(self._on_setup_kokoro_models)
         svc_status_row.addWidget(self._setup_kokoro_btn)
