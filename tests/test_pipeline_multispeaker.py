@@ -10,14 +10,11 @@ class DummySettings:
     def __init__(self):
         self.data = {
             "output_dir": "output",
-            "tts_backend_mode": "local",
             "tts_backend_url": "http://127.0.0.1:5005",
             "kokoro_model_path": "",
             "kokoro_voices_path": "",
             "tts_speed": 1.0,
             "tts_voice": "af_heart",
-            "ollama_url": "http://127.0.0.1:11434/api/generate",
-            "ollama_model": "mistral",
             "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
             "dialogue_llm_model": "mistral:instruct",
             "dialogue_llm_mode": "full",
@@ -28,10 +25,11 @@ class DummySettings:
             "character_confidence_threshold": 0.8,
             "pending_character_additions": [],
             "character_db": [],
-            "multispeaker_enabled": True,
             "narrator_voice": "af_heart",
             "default_male_voice": "am_adam",
             "default_female_voice": "af_heart",
+            "speaker_conf_threshold": 0.8,
+            "character_conf_threshold": 0.8,
         }
 
     def get(self, key, default=None):
@@ -43,10 +41,6 @@ class DummySettings:
     @property
     def output_dir(self):
         return self.data["output_dir"]
-
-    @property
-    def tts_backend_mode(self):
-        return self.data["tts_backend_mode"]
 
     @property
     def tts_backend_url(self):
@@ -65,11 +59,17 @@ class DummySettings:
         return self.data["tts_speed"]
 
 
-def test_parse_dialogue_persists_chapter_info_and_pending_characters(tmp_path, monkeypatch):
+def test_llm_semantic_analysis_persists_raw_and_chapter_info(tmp_path, monkeypatch):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))
     controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
-    controller.translated_chapters = [{"title": "Chapter 1", "content": "Text"}]
+
+    chapters = [{"title": "Chapter 1", "content": "Text"}]
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "chapters.json").write_text(json.dumps(chapters), encoding="utf-8")
+    (work_dir / "clean_review_plan.json").write_text(json.dumps({"needs_review": []}), encoding="utf-8")
+    (work_dir / "ch000_cleaned.txt").write_text("Text", encoding="utf-8")
 
     def _fake_parse(self, text, chapter_id="ch"):
         return ParseResult(
@@ -81,47 +81,47 @@ def test_parse_dialogue_persists_chapter_info_and_pending_characters(tmp_path, m
         )
 
     monkeypatch.setattr("ebook_app.models.dialogue_parser.DialogueParser.parse", _fake_parse)
-    controller.parse_dialogue()
+    controller.llm_semantic_analysis()
 
-    chapter_info = tmp_path / "pipeline_work" / "ch000" / "chapter_info.json"
+    raw_path = work_dir / "ch000_llm_raw.json"
+    chapter_info = work_dir / "ch000" / "ch000_chapter_info.json"
+
+    assert raw_path.exists()
     assert chapter_info.exists()
+
     with chapter_info.open(encoding="utf-8") as handle:
         data = json.load(handle)
+
     assert data["segments"][0]["type"] == "narration"
-
-    pending = settings.get("pending_character_additions", [])
-    assert [item["name"] for item in pending] == ["Alice"]
+    assert [item["name"] for item in data["detected_characters"]] == ["Alice", "Bob"]
 
 
-def test_multispeaker_tts_uses_character_db_and_default_voices(tmp_path):
+def test_write_final_chapter_files_assigns_known_and_default_voices(tmp_path):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))
-    settings.set(
-        "character_db",
-        [{"name": "Alice", "voice": "bf_emma", "gender": "female", "description": ""}],
-    )
     controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
-    controller.dialogue_segments = {
-        0: [
-            Segment(text="Hi", type="dialogue", speaker="Alice", gender="female"),
-            Segment(text="Hello", type="dialogue", speaker="Guard", gender="male"),
-        ]
-    }
 
-    captured = {}
+    character_db = [{"name": "Alice", "voice": "bf_emma", "gender": "female", "description": ""}]
 
-    class FakeEngine:
-        def generate_multi_voice_audio(self, **kwargs):
-            captured.update(kwargs)
-            out = tmp_path / "pipeline_work" / "audio" / kwargs["output_filename"]
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(b"wav")
-            return out
+    controller._write_final_chapter_files(
+        chapter_id="ch000",
+        segments=[
+            {"text": "Hi", "type": "dialogue", "speaker": "Alice", "gender": "female"},
+            {"text": "Hello", "type": "dialogue", "speaker": "Guard", "gender": "male"},
+        ],
+        detected_chars=[
+            {"name": "Alice", "gender": "female", "confidence": 0.9},
+            {"name": "Guard", "gender": "male", "confidence": 0.9},
+        ],
+        narrator_voice="af_heart",
+        default_male="am_adam",
+        default_female="af_heart",
+        character_db=character_db,
+    )
 
-    controller._make_tts_backend = lambda output_dir=None: FakeEngine()  # type: ignore[assignment]
-    controller.multispeaker_tts()
+    with (tmp_path / "pipeline_work" / "ch000_characters_final.json").open(encoding="utf-8") as handle:
+        final_chars = json.load(handle)
 
-    assert captured["voice_mappings"]["Alice"] == "bf_emma"
-    assert captured["voice_mappings"]["narrator"] == "af_heart"
-    assert captured["default_male_voice"] == "am_adam"
-    assert captured["default_female_voice"] == "af_heart"
+    assert final_chars[0]["voice"] == "bf_emma"
+    assert final_chars[1]["voice"] == "am_adam"
+    assert any(char["name"] == "Guard" and char["voice"] == "am_adam" for char in character_db)

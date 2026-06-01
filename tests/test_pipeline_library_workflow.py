@@ -10,14 +10,11 @@ class DummySettings:
         self.data = {
             "output_dir": "output",
             "index_url": "https://example.com/index",
-            "tts_backend_mode": "local",
             "tts_backend_url": "http://127.0.0.1:5005",
             "kokoro_model_path": "",
             "kokoro_voices_path": "",
             "tts_speed": 1.0,
             "tts_voice": "af_heart",
-            "ollama_url": "http://127.0.0.1:11434/api/generate",
-            "ollama_model": "mistral",
             "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
             "dialogue_llm_model": "mistral:instruct",
             "dialogue_llm_mode": "full",
@@ -28,12 +25,13 @@ class DummySettings:
             "character_confidence_threshold": 0.8,
             "pending_character_additions": [],
             "character_db": [],
-            "multispeaker_enabled": True,
             "narrator_voice": "af_heart",
             "default_male_voice": "am_adam",
             "default_female_voice": "af_heart",
-            "character_review_approved": False,
-            "audio_output_mode": "per_chapter",
+            "clean_review_mode": "semi",
+            "clean_review_sample_chapters": 3,
+            "speaker_conf_threshold": 0.8,
+            "character_conf_threshold": 0.8,
         }
 
     def get(self, key, default=None):
@@ -45,10 +43,6 @@ class DummySettings:
     @property
     def output_dir(self):
         return self.data["output_dir"]
-
-    @property
-    def tts_backend_mode(self):
-        return self.data["tts_backend_mode"]
 
     @property
     def tts_backend_url(self):
@@ -130,27 +124,15 @@ def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
     assert len(controller.chapters) == 3
 
 
-def test_run_all_pauses_before_audio_until_review_approved(tmp_path):
+def test_run_all_executes_new_pipeline_steps_in_order(tmp_path):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))
-    settings.set("character_review_approved", False)
     controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
 
     called = []
-    for step in [
-        "scrape_index",
-        "scrape_chapters",
-        "translate_chapters",
-        "parse_dialogue",
-        "multispeaker_tts",
-        "batch_tts",
-        "forced_alignment",
-        "smil_generation",
-        "epub_export",
-    ]:
+    for step in controller.STEPS:
         setattr(controller, step, lambda step_name=step: called.append(step_name))
 
     controller.run_all()
 
-    assert called == ["scrape_index", "scrape_chapters", "translate_chapters", "parse_dialogue"]
-    assert controller.review_required is True
+    assert called == controller.STEPS

@@ -129,9 +129,9 @@ class _ServiceHealthThread(QThread):
 class _LlmHealthThread(QThread):
     result = Signal(dict)
 
-    def __init__(self, ollama_url: str, model: str, parent=None):
+    def __init__(self, llm_url: str, model: str, parent=None):
         super().__init__(parent)
-        self._ollama_url = ollama_url.strip()
+        self._llm_url = llm_url.strip()
         self._model = model.strip()
 
     @staticmethod
@@ -144,13 +144,13 @@ class _LlmHealthThread(QThread):
         import requests
 
         try:
-            parsed = urlparse(self._ollama_url)
+            parsed = urlparse(self._llm_url)
             if not parsed.scheme or not parsed.netloc:
                 self.result.emit(
                     {
                         "status": "unreachable",
                         "detail": "Invalid Ollama URL.",
-                        "ollama_url": self._ollama_url,
+                        "llm_url": self._llm_url,
                     }
                 )
                 return
@@ -174,7 +174,7 @@ class _LlmHealthThread(QThread):
                 {
                     "status": "ok",
                     "detail": "",
-                    "ollama_url": self._ollama_url,
+                    "llm_url": self._llm_url,
                     "tags_url": tags_url,
                     "model": self._model,
                     "model_configured": model_configured,
@@ -186,7 +186,7 @@ class _LlmHealthThread(QThread):
                 {
                     "status": "unreachable",
                     "detail": str(exc),
-                    "ollama_url": self._ollama_url,
+                    "llm_url": self._llm_url,
                 }
             )
 
@@ -323,52 +323,21 @@ class SettingsPage(BasePage):
 
         inner.addWidget(model_group)
 
-        # ── LLM / Translation API Connection ──────────────────────────
-        llm_group = QGroupBox("LLM / Translation API Connection")
+        # ── Dialogue LLM Connection ───────────────────────────────────
+        llm_group = QGroupBox("Dialogue LLM Connection")
         llm_form = QFormLayout(llm_group)
 
-        self._llm_url_input = QLineEdit(
-            str(self.settings.get("llm_api_url", "http://localhost:5000/translate"))
+        self._dialogue_llm_url_input = QLineEdit(
+            str(self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/chat"))
         )
-        self._llm_url_input.setPlaceholderText("http://localhost:5000/translate")
-        llm_form.addRow("API URL:", self._llm_url_input)
+        self._dialogue_llm_url_input.setPlaceholderText("http://127.0.0.1:11434/api/chat")
+        llm_form.addRow("Dialogue LLM URL:", self._dialogue_llm_url_input)
 
-        self._ollama_url_input = QLineEdit(
-            str(
-                self.settings.get(
-                    "dialogue_llm_url",
-                    self.settings.get("ollama_url", "http://127.0.0.1:11434/api/chat"),
-                )
-            )
+        self._dialogue_llm_model_input = QLineEdit(
+            str(self.settings.get("dialogue_llm_model", "mistral:instruct"))
         )
-        self._ollama_url_input.setPlaceholderText("http://127.0.0.1:11434/api/chat")
-        llm_form.addRow("Dialogue LLM URL:", self._ollama_url_input)
-
-        self._ollama_model_input = QLineEdit(
-            str(
-                self.settings.get(
-                    "dialogue_llm_model",
-                    self.settings.get("ollama_model", "mistral:instruct"),
-                )
-            )
-        )
-        self._ollama_model_input.setPlaceholderText("mistral:instruct")
-        llm_form.addRow("Dialogue LLM model:", self._ollama_model_input)
-
-        self._llm_key_input = QLineEdit(str(self.settings.get("llm_api_key", "")))
-        self._llm_key_input.setPlaceholderText("Leave blank if no key is required")
-        self._llm_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        llm_key_row = QHBoxLayout()
-        llm_key_row.addWidget(self._llm_key_input)
-        self._llm_key_show_btn = QPushButton("Show")
-        self._llm_key_show_btn.setCheckable(True)
-        self._llm_key_show_btn.toggled.connect(self._on_toggle_api_key_visibility)
-        llm_key_row.addWidget(self._llm_key_show_btn)
-        llm_form.addRow("API Key:", llm_key_row)
-
-        key_note = QLabel("<i>⚠ API key is stored in plain text in your settings file.</i>")
-        key_note.setWordWrap(True)
-        llm_form.addRow("", key_note)
+        self._dialogue_llm_model_input.setPlaceholderText("mistral:instruct")
+        llm_form.addRow("Dialogue LLM model:", self._dialogue_llm_model_input)
 
         llm_status_row = QHBoxLayout()
         self._llm_status_label = QLabel()
@@ -389,15 +358,9 @@ class SettingsPage(BasePage):
 
         inner.addWidget(llm_group)
 
-        # ── Multi-speaker TTS ──────────────────────────────────────────
-        ms_group = QGroupBox("Multi-speaker TTS")
+        # ── Voice Routing ──────────────────────────────────────────────
+        ms_group = QGroupBox("Voice Routing")
         ms_form = QFormLayout(ms_group)
-
-        self._multispeaker_check = QCheckBox("Enable multi-speaker mode")
-        self._multispeaker_check.setChecked(
-            bool(self.settings.get("multispeaker_enabled", False))
-        )
-        ms_form.addRow("", self._multispeaker_check)
 
         self._narrator_voice_combo = QComboBox()
         self._narrator_voice_combo.addItems(KOKORO_VOICE_LIST)
@@ -556,14 +519,6 @@ class SettingsPage(BasePage):
             self._voices_path_input.setText(path)
             self._refresh_model_status()
 
-    def _on_toggle_api_key_visibility(self, checked: bool) -> None:
-        if checked:
-            self._llm_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
-            self._llm_key_show_btn.setText("Hide")
-        else:
-            self._llm_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-            self._llm_key_show_btn.setText("Show")
-
     def _load_character_db(self) -> None:
         """Populate the character table from saved settings."""
         chars = self.settings.get("character_db", [])
@@ -688,18 +643,14 @@ class SettingsPage(BasePage):
 
     def _on_save(self) -> None:
         self.settings.set("output_dir", self._output_dir_input.text().strip())
-        self.settings.set("tts_backend_mode", "remote")
         self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
         self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
         self.settings.set("kokoro_model_path", self._model_path_input.text().strip())
         self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
-        self.settings.set("llm_api_url", self._llm_url_input.text().strip())
-        self.settings.set("llm_api_key", self._llm_key_input.text())
-        dialogue_llm_url = self._ollama_url_input.text().strip()
-        dialogue_llm_model = self._ollama_model_input.text().strip()
+        dialogue_llm_url = self._dialogue_llm_url_input.text().strip()
+        dialogue_llm_model = self._dialogue_llm_model_input.text().strip()
         self.settings.set("dialogue_llm_url", dialogue_llm_url)
         self.settings.set("dialogue_llm_model", dialogue_llm_model)
-        self.settings.set("multispeaker_enabled", self._multispeaker_check.isChecked())
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
@@ -894,12 +845,12 @@ class SettingsPage(BasePage):
                 # Signal may already be disconnected if the prior thread was cleaned up.
                 pass
             self._llm_health_thread.deleteLater()
-        ollama_url = self._ollama_url_input.text().strip()
-        model = self._ollama_model_input.text().strip()
+        llm_url = self._dialogue_llm_url_input.text().strip()
+        model = self._dialogue_llm_model_input.text().strip()
         self._llm_status_label.setText("⏳ Checking local LLM connection…")
         self._llm_status_label.setStyleSheet("")
         self._llm_troubleshoot_label.hide()
-        self._llm_health_thread = _LlmHealthThread(ollama_url, model, parent=self)
+        self._llm_health_thread = _LlmHealthThread(llm_url, model, parent=self)
         self._llm_health_thread.result.connect(self._on_llm_health_result)
         self._llm_health_thread.start()
 
@@ -926,15 +877,15 @@ class SettingsPage(BasePage):
         self._llm_status_label.setStyleSheet("color: red;")
         self._llm_troubleshoot_label.setText(
             self._build_llm_troubleshoot_text(
-                result.get("ollama_url", "").strip(),
+                result.get("llm_url", "").strip(),
                 result.get("detail", "").strip(),
             )
         )
         self._llm_troubleshoot_label.show()
 
     @staticmethod
-    def _build_llm_troubleshoot_text(ollama_url: str, detail: str) -> str:
-        target = ollama_url or "the configured Ollama URL"
+    def _build_llm_troubleshoot_text(llm_url: str, detail: str) -> str:
+        target = llm_url or "the configured Dialogue LLM URL"
         detail_line = f"Details: {detail}" if detail else "Details: Connection failed."
         return (
             f"Troubleshooting for {target}:\n"
@@ -944,90 +895,3 @@ class SettingsPage(BasePage):
             "4) If it still fails, check firewall/proxy settings and retry.\n"
             f"{detail_line}"
         )
-    # ------------------------------------------------------------------
-    # Save settings
-    # ------------------------------------------------------------------
-
-    def _on_save(self) -> None:
-        # General
-        self.settings.set("output_dir", self._output_dir_input.text().strip())
-        self.settings.set("tts_backend_mode", "remote")
-        self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
-        self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
-
-        # Kokoro model paths
-        self.settings.set("kokoro_model_path", self._model_path_input.text().strip())
-        self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
-
-        # LLM settings
-        self.settings.set("llm_api_url", self._llm_url_input.text().strip())
-        self.settings.set("llm_api_key", self._llm_key_input.text())
-        self.settings.set("dialogue_llm_url", self._ollama_url_input.text().strip())
-        self.settings.set("dialogue_llm_model", self._ollama_model_input.text().strip())
-
-        # Multi-speaker defaults
-        self.settings.set("multispeaker_enabled", self._multispeaker_check.isChecked())
-        self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
-        self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
-        self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
-        self.settings.set(
-            "character_confidence_threshold",
-            float(self._char_confidence_spin.value()),
-        )
-
-        # Character DB + pending additions
-        self.settings.set("character_db", self._collect_character_db())
-        self.settings.set("pending_character_additions", self._collect_pending_additions())
-
-        # Persist to disk
-        self.settings.save()
-        self.log.log("Settings saved successfully.", level="SUCCESS")
-
-    # ------------------------------------------------------------------
-    # Pending character actions
-    # ------------------------------------------------------------------
-
-    def _on_accept_pending_character(self) -> None:
-        selected = self._pending_table.selectedItems()
-        if not selected:
-            return
-
-        rows = sorted({item.row() for item in selected}, reverse=True)
-        for row in rows:
-            name_item = self._pending_table.item(row, 0)
-            gender_item = self._pending_table.item(row, 1)
-            voice_item = self._pending_table.item(row, 2)
-
-            name = name_item.text().strip() if name_item else ""
-            gender = gender_item.text().strip() if gender_item else "unknown"
-            voice = voice_item.text().strip() if voice_item else self._default_voice_for_gender(gender)
-
-            if name:
-                self._insert_character_row(
-                    name=name,
-                    voice=voice,
-                    gender=gender,
-                    description="",
-                )
-
-            self._pending_table.removeRow(row)
-
-        self.settings.set("pending_character_additions", self._collect_pending_additions())
-        self.settings.set("character_db", self._collect_character_db())
-        self.settings.save()
-
-        self.log.log("Accepted selected pending characters.", level="SUCCESS")
-
-    def _on_reject_pending_character(self) -> None:
-        selected = self._pending_table.selectedItems()
-        if not selected:
-            return
-
-        rows = sorted({item.row() for item in selected}, reverse=True)
-        for row in rows:
-            self._pending_table.removeRow(row)
-
-        self.settings.set("pending_character_additions", self._collect_pending_additions())
-        self.settings.save()
-
-        self.log.log("Rejected selected pending characters.", level="INFO")

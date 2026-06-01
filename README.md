@@ -270,7 +270,7 @@ The application follows a project-based workflow:
 #### 4. **Generate Audio + EPUB**
    - Return to the **Pipeline** page
    - Click **Continue Audio + Export**
-   - The system generates audio, runs forced alignment, builds SMIL, and exports the EPUB
+   - The system generates per-segment audio, builds timing data, and exports the EPUB
    - Audio files are saved in `<project>/pipeline_work/audio/`
 
 #### 5. **Export & Enjoy**
@@ -295,12 +295,13 @@ pipeline = PipelineController(settings)
 # Run individual steps
 pipeline.scrape_index()
 pipeline.scrape_chapters()
-pipeline.translate_chapters()  # Optional
-pipeline.parse_dialogue()
-pipeline.multispeaker_tts()
-pipeline.forced_alignment()
-pipeline.smil_generation()
-pipeline.epub_export()
+pipeline.clean_chapters()
+pipeline.plan_clean_review()
+pipeline.llm_semantic_analysis()
+pipeline.normalize_llm_output()
+pipeline.smart_review_dialogue()
+pipeline.tts_generate()
+pipeline.epub_build()
 
 # Or run all steps at once
 pipeline.run_all()
@@ -319,8 +320,10 @@ output/
     │   ├── audio/                # Generated audio files
     │   │   ├── chapter_001.wav
     │   │   └── ...
-    │   ├── alignment/            # Forced alignment data
-    │   └── smil/                 # SMIL Media Overlay files
+    │   ├── audio_timing.json     # Paragraph-to-audio timing map
+    │   ├── chapter_info_all.json # Aggregated semantic analysis output
+    │   ├── character_database.json
+    │   └── semantic_review_plan.json
     └── <project-name>.epub       # Final EPUB3 output
 ```
 
@@ -361,8 +364,6 @@ Custom paths can be set in **Settings → Kokoro ONNX Models**.
 | **Dialogue LLM model** | Ollama model for chapter segmentation | `mistral:instruct` |
 | **Dialogue LLM mode** | Segmentation mode (`full` or `off`) | `full` |
 | **Dialogue LLM timeout / retries** | Network timeout and retry count for LLM requests | `120s / 1` |
-
-Legacy `ollama_url` and `ollama_model` settings are migrated to the new `dialogue_llm_*` keys automatically, and existing settings files remain compatible.
 
 ### Available Voices (Kokoro 1.0)
 

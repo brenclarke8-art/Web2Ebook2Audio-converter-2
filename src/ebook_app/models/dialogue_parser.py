@@ -4,6 +4,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Literal, Any, List
+from urllib.parse import urlparse, urlunparse
 
 from ebook_app.services.dialogue_segmentation_service import DialogueSegmentationService
 from ebook_app.services.llm_client import OllamaChatClient
@@ -38,6 +39,10 @@ class DetectedCharacter:
 class DialogueParseResult:
     segments: List[Segment]
     detected_characters: List[DetectedCharacter]
+
+
+# Backward-compatible alias expected by older imports/tests.
+ParseResult = DialogueParseResult
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +251,17 @@ class DialogueParser:
     # -----------------------------------------------------------------------
     # Helpers (unchanged from your implementation)
     # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_chat_url(url: str) -> str:
+        cleaned = (url or "").strip()
+        if not cleaned:
+            return cleaned
+        parsed = urlparse(cleaned)
+        if parsed.path.endswith("/api/generate"):
+            chat_path = parsed.path[: -len("/api/generate")] + "/api/chat"
+            return urlunparse((parsed.scheme, parsed.netloc, chat_path, parsed.params, parsed.query, parsed.fragment))
+        return cleaned
 
     @staticmethod
     def _fallback_segment(text: str, chapter_id: str, index: int) -> Segment:
