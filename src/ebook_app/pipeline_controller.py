@@ -13,7 +13,7 @@ from ebook_app.core.tts.voice_router import VoiceRouter
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
 from ebook_app.models.scraper import HttpWebScraper, WebScraper
-from ebook_app.pipeline_contracts import TextSegment
+from ebook_app.pipeline_contracts import TextSegment, chapter_id as make_chapter_id
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +118,8 @@ class PipelineController:
         except Exception:
             logger.error("Failed to save JSON to %s", path, exc_info=True)
 
-    @staticmethod
-    def _chapter_id(idx: int) -> str:
-        return f"ch{idx:03d}"
+    def _chapter_id(self, idx: int) -> str:
+        return make_chapter_id(idx, start_index=self.selected_start_chapter)
 
     # ------------------------------------------------------------------
     # TTS backend factory
@@ -431,9 +430,16 @@ class PipelineController:
         if mode == "skip":
             needs_review = []
         elif mode == "full":
-            needs_review = list(range(total))
+            needs_review = list(
+                range(self.selected_start_chapter, self.selected_start_chapter + total)
+            )
         else:  # semi
-            needs_review = list(range(min(sample_n, total)))
+            needs_review = list(
+                range(
+                    self.selected_start_chapter,
+                    self.selected_start_chapter + min(sample_n, total),
+                )
+            )
 
         plan = {
             "mode": mode,
@@ -503,7 +509,8 @@ class PipelineController:
 
         for idx, chapter in enumerate(chapters):
             chapter_id = self._chapter_id(idx)
-            title = chapter.get("title", f"Chapter {idx + 1}")
+            chapter_number = self.selected_start_chapter + idx
+            title = chapter.get("title", f"Chapter {chapter_number}")
 
             # Determine which cleaned file to use
             cleaned_final = self.work_dir / f"{chapter_id}_cleaned_final.txt"
@@ -524,7 +531,7 @@ class PipelineController:
 
             # Build chapter_info structure
             chapter_info = {
-                "chapter_index": idx,
+                "chapter_index": chapter_number,
                 "chapter_id": chapter_id,
                 "title": title,
                 "segments": [
@@ -557,9 +564,9 @@ class PipelineController:
             # Save per-chapter chapter_info
             chapter_dir = self.work_dir / chapter_id
             chapter_dir.mkdir(parents=True, exist_ok=True)
-            self._save_json(chapter_dir / "chXXX_chapter_info.json".replace("XXX", chapter_id[2:]), chapter_info)
+            self._save_json(chapter_dir / f"{chapter_id}_chapter_info.json", chapter_info)
 
-            aggregated_info[str(idx)] = chapter_info
+            aggregated_info[str(chapter_number)] = chapter_info
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("llm_semantic_analysis", percent)
@@ -667,14 +674,34 @@ class PipelineController:
 
         known_names = {self._normalize_name(c["name"]) for c in character_db if c.get("name")}
 
-        # Pending additions (still stored in settings for UI)
-        pending = self.settings.get("pending_character_additions", []) or []
-        pending_names = {self._normalize_name(c["name"]) for c in pending if c.get("name")}
-
         # Default voices
         narrator_voice = self.settings.get("narrator_voice", "af_heart")
         default_male = self.settings.get("default_male_voice", "am_adam")
         default_female = self.settings.get("default_female_voice", "af_heart")
+
+        # Pending additions (still stored in settings for UI)
+        pending = self.settings.get("pending_character_additions", []) or []
+        for entry in pending:
+            name = str(entry.get("name", "")).strip()
+            if not name:
+                continue
+            normalized_name = self._normalize_name(name)
+            if any(self._normalize_name(existing.get("name", "")) == normalized_name for existing in character_db):
+                continue
+            gender = str(entry.get("gender", "unknown") or "unknown").strip().lower()
+            voice = str(entry.get("voice", "") or "").strip()
+            if not voice:
+                voice = default_male if gender == "male" else default_female if gender == "female" else narrator_voice
+            character_db.append(
+                {
+                    "name": name,
+                    "gender": gender or "unknown",
+                    "voice": voice,
+                    "description": "",
+                }
+            )
+        pending_names = {self._normalize_name(c["name"]) for c in pending if c.get("name")}
+        review_approved = bool(self.settings.get("character_review_approved", False))
 
         # Load chapters.json
         chapters = self._load_json(self.work_dir / "chapters.json", default=[])
@@ -741,8 +768,8 @@ class PipelineController:
             # ------------------------------------------------------
             # AUTO-APPROVE OR FLAG FOR REVIEW
             # ------------------------------------------------------
-            if review_flag:
-                needs_review.append(idx)
+            if review_flag and not review_approved:
+                needs_review.append(self.selected_start_chapter + idx)
             else:
                 self._write_final_chapter_files(
                     chapter_id=chapter_id,

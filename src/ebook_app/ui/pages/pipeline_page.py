@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from ebook_app.ui.pages._base_page import BasePage
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
+from ebook_app.pipeline_contracts import chapter_id as make_chapter_id
 
 
 # ----------------------------------------------------------------------
@@ -747,7 +748,7 @@ class PipelinePage(BasePage):
 
         chapter = self._review_chapters[index]
         work_dir = self.project_manager.get_work_dir()
-        chapter_id = f"ch{index:03d}"
+        chapter_id = self._chapter_id_for_offset(index)
 
         # --------------------------------------------------------------
         # 1. cleaned_final.txt (user-approved cleaned text)
@@ -768,7 +769,7 @@ class PipelinePage(BasePage):
         # --------------------------------------------------------------
         # 3. semantic segments (chapter_info.json)
         # --------------------------------------------------------------
-        chapter_info_file = work_dir / chapter_id / "chapter_info.json"
+        chapter_info_file = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
         if chapter_info_file.exists():
             try:
                 ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
@@ -814,7 +815,7 @@ class PipelinePage(BasePage):
         # --------------------------------------------------------------
         if work_dir:
             for idx in range(len(self._review_chapters)):
-                chapter_id = f"ch{idx:03d}"
+                chapter_id = self._chapter_id_for_offset(idx)
                 norm_path = work_dir / f"{chapter_id}_llm_normalized.json"
                 if not norm_path.exists():
                     continue
@@ -881,6 +882,11 @@ class PipelinePage(BasePage):
                 confidence=item["confidence"],
                 source=", ".join(sorted(item["sources"])),
             )
+
+    def _chapter_id_for_offset(self, offset: int) -> str:
+        selected = self.project_manager.get_selected_range() if self.project_manager else {}
+        start = max(1, int(selected.get("start", 1)))
+        return make_chapter_id(offset, start_index=start)
     # ------------------------------------------------------------------
     # Character table helpers (Phase 6)
     # ------------------------------------------------------------------

@@ -38,9 +38,10 @@ PIPELINE_STEPS: List[str] = [
 ProgressCallback = Callable[[str, int], None]
 
 
-def chapter_id(idx: int) -> str:
-    """Canonical chapter ID format: ch000, ch001, ..."""
-    return f"ch{idx:03d}"
+def chapter_id(idx: int, *, start_index: int = 1) -> str:
+    """Canonical chapter ID format: ch1, ch2, ... based on chapter index."""
+    chapter_number = max(1, int(start_index) + int(idx))
+    return f"ch{chapter_number}"
 
 
 # ---------------------------------------------------------------------------

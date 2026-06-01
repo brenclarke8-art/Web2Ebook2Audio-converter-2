@@ -69,7 +69,7 @@ def test_llm_semantic_analysis_persists_raw_and_chapter_info(tmp_path, monkeypat
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "chapters.json").write_text(json.dumps(chapters), encoding="utf-8")
     (work_dir / "clean_review_plan.json").write_text(json.dumps({"needs_review": []}), encoding="utf-8")
-    (work_dir / "ch000_cleaned.txt").write_text("Text", encoding="utf-8")
+    (work_dir / "ch1_cleaned.txt").write_text("Text", encoding="utf-8")
 
     def _fake_parse(self, text, chapter_id="ch"):
         return ParseResult(
@@ -83,8 +83,8 @@ def test_llm_semantic_analysis_persists_raw_and_chapter_info(tmp_path, monkeypat
     monkeypatch.setattr("ebook_app.models.dialogue_parser.DialogueParser.parse", _fake_parse)
     controller.llm_semantic_analysis()
 
-    raw_path = work_dir / "ch000_llm_raw.json"
-    chapter_info = work_dir / "ch000" / "ch000_chapter_info.json"
+    raw_path = work_dir / "ch1_llm_raw.json"
+    chapter_info = work_dir / "ch1" / "ch1_chapter_info.json"
 
     assert raw_path.exists()
     assert chapter_info.exists()
@@ -104,7 +104,7 @@ def test_write_final_chapter_files_assigns_known_and_default_voices(tmp_path):
     character_db = [{"name": "Alice", "voice": "bf_emma", "gender": "female", "description": ""}]
 
     controller._write_final_chapter_files(
-        chapter_id="ch000",
+        chapter_id="ch1",
         segments=[
             {"text": "Hi", "type": "dialogue", "speaker": "Alice", "gender": "female"},
             {"text": "Hello", "type": "dialogue", "speaker": "Guard", "gender": "male"},
@@ -119,7 +119,7 @@ def test_write_final_chapter_files_assigns_known_and_default_voices(tmp_path):
         character_db=character_db,
     )
 
-    with (tmp_path / "pipeline_work" / "ch000_characters_final.json").open(encoding="utf-8") as handle:
+    with (tmp_path / "pipeline_work" / "ch1_characters_final.json").open(encoding="utf-8") as handle:
         final_chars = json.load(handle)
 
     assert final_chars[0]["voice"] == "bf_emma"
