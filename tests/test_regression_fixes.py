@@ -43,6 +43,7 @@ def test_epub_builder_writes_nav_namespace_overlay_and_unique_id(tmp_path):
     assert 'xmlns:epub="http://www.idpf.org/2007/ops"' in nav
     assert 'media-overlay="ch000_smil"' in opf
     assert "urn:uuid:12345" not in opf
+    assert "2025-01-01T00:00:00Z" not in opf
     assert re.search(r"urn:uuid:[0-9a-f-]{36}", opf)
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+
 @dataclass
 class Character:
     """Represents a named character and their assigned TTS voice.
