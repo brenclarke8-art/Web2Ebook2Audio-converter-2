@@ -68,10 +68,11 @@ This split setup is the supported path: GUI in Python 3.10 and Kokoro service in
 
 ## Installation
 
-The app runs in remote mode, so you must set up **both** environments:
+The app runs in remote mode, so you must set up **both** environments from the
+repository root:
 
-1. GUI environment (Python 3.10+)
-2. TTS service environment (Python 3.14 recommended)
+1. GUI environment (`.venv_gui`, Python 3.10+)
+2. TTS service environment (`tts_service/.venv_tts`, Python 3.14 recommended)
 
 ### 1) Clone and enter the repository root
 
@@ -85,6 +86,8 @@ Before installing, confirm you are in the repo root (must contain `pyproject.tom
 ### Quick setup helpers (recommended)
 
 Use one command to create both virtual environments and install dependencies.
+These helpers are the easiest way to get a working install because they use the
+same venv layout and startup commands documented below.
 
 **Windows (PowerShell):**
 
@@ -159,7 +162,7 @@ From the repository root, with the TTS venv active:
 
 ```bash
 cd tts_service
-uvicorn tts_server:app --host 127.0.0.1 --port 5005
+python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005
 ```
 
 ### 5) Launch the GUI
@@ -167,13 +170,13 @@ uvicorn tts_server:app --host 127.0.0.1 --port 5005
 In a separate terminal, from the repository root, activate the GUI venv and run:
 
 ```bash
-ebook-audio-studio
+python -m ebook_app.main
 ```
 
-If the command is not found:
+After the editable install, the console entry point is also available:
 
 ```bash
-python -m ebook_app.main
+ebook-audio-studio
 ```
 
 ### 6) Download Kokoro ONNX model files
@@ -205,8 +208,8 @@ Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
 
 #### Optional: Browser scraping support (Playwright)
 
-If the target site requires JavaScript rendering, install Playwright in the GUI
-environment:
+If the target site requires JavaScript rendering, either use the setup helper
+with browser support enabled or install Playwright in the GUI environment:
 
 ```bash
 python -m pip install -e ".[browser]"

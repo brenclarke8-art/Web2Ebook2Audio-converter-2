@@ -3,12 +3,8 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
-from pathlib import Path
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -26,90 +22,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ebook_app.core.settings_manager import APP_HOME_DIR
-from ebook_app.models.tts_engine_cli import (
-    DEFAULT_MODELS_DIR,
-    download_kokoro_models,
-)
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.ui.pages._base_page import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
 _EMPTY_MODEL_LABEL = "(blank)"
-
-# ---------------------------------------------------------------------------
-# Resolve TTS service paths from repository layout
-# ---------------------------------------------------------------------------
-_REPO_ROOT = APP_HOME_DIR.parent
-_TTS_SERVICE_DIR = _REPO_ROOT / "tts_service"
-_TTS_VENV_DIR = _TTS_SERVICE_DIR / ".venv_tts"
-if sys.platform == "win32":
-    _TTS_PYTHON = _TTS_VENV_DIR / "Scripts" / "python.exe"
-else:
-    _TTS_PYTHON = _TTS_VENV_DIR / "bin" / "python"
-
-
-class _TtsServiceManager:
-    """Module-level manager for the TTS server subprocess.
-
-    Using class variables means the process outlives individual page instances
-    (the settings page can be destroyed/recreated without killing the server).
-    """
-
-    _process: subprocess.Popen | None = None  # type: ignore[type-arg]
-
-    @classmethod
-    def start(cls, python_exe: Path, server_dir: Path, host: str, port: int) -> str:
-        """Start the TTS uvicorn server.  Returns one of: 'started', 'already_running', 'error:<msg>'."""
-        if cls.is_running():
-            return "already_running"
-        exe = str(python_exe)
-        if not python_exe.exists():
-            return f"error:TTS venv Python not found at {python_exe}"
-        cmd = [exe, "-m", "uvicorn", "tts_server:app", "--host", host, "--port", str(port)]
-        try:
-            cls._process = subprocess.Popen(
-                cmd,
-                cwd=str(server_dir),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            return "started"
-        except Exception as exc:
-            return f"error:{exc}"
-
-    @classmethod
-    def stop(cls) -> None:
-        if cls._process is not None:
-            try:
-                cls._process.terminate()
-            except Exception:
-                pass
-            cls._process = None
-
-    @classmethod
-    def is_running(cls) -> bool:
-        return cls._process is not None and cls._process.poll() is None
-
-
-class _DownloadThread(QThread):
-    progress = Signal(str)
-    finished = Signal(str, str)   # model_path, voices_path
-    error = Signal(str)
-
-    def __init__(self, dest_dir: Path, parent=None):
-        super().__init__(parent)
-        self.dest_dir = dest_dir
-
-    def run(self):
-        try:
-            model, voices = download_kokoro_models(
-                dest_dir=self.dest_dir,
-                progress_callback=self.progress.emit,
-            )
-            self.finished.emit(str(model), str(voices))
-        except Exception as exc:
-            self.error.emit(str(exc))
 
 
 class _ServiceHealthThread(QThread):
@@ -124,6 +41,22 @@ class _ServiceHealthThread(QThread):
 
         client = TTSClient(base_url=self._url)
         self.result.emit(client.health())
+
+
+class _PreviewThread(QThread):
+    result = Signal(dict)
+
+    def __init__(self, url: str, voice: str, speed: float, parent=None):
+        super().__init__(parent)
+        self._url = url
+        self._voice = voice
+        self._speed = speed
+
+    def run(self) -> None:
+        from ebook_app.services.tts_client import TTSClient
+
+        client = TTSClient(base_url=self._url)
+        self.result.emit(client.preview(voice=self._voice, speed=self._speed))
 
 
 class _LlmHealthThread(QThread):
@@ -195,10 +128,13 @@ class SettingsPage(BasePage):
     """Page for viewing and editing all persisted application settings."""
 
     def __init__(self, **kwargs) -> None:
-        self._download_thread: _DownloadThread | None = None
         self._svc_health_thread: _ServiceHealthThread | None = None
         self._llm_health_thread: _LlmHealthThread | None = None
-        self._start_check_timer: QTimer | None = None
+        self._preview_thread: _PreviewThread | None = None
+        # QMediaPlayer and QAudioOutput are created lazily to avoid importing
+        # QtMultimedia at module load time (optional dependency).
+        self._media_player = None
+        self._audio_output = None
         super().__init__(**kwargs)
 
     def _build_ui(self) -> None:
@@ -241,87 +177,28 @@ class SettingsPage(BasePage):
         self._backend_url_input.setPlaceholderText(_DEFAULT_TTS_SERVICE_URL)
         backend_form.addRow("Service URL:", self._backend_url_input)
 
-        self._autostart_check = QCheckBox("Auto-start TTS service on launch")
-        self._autostart_check.setChecked(
-            bool(self.settings.get("tts_autostart_service", False))
-        )
-        backend_form.addRow("", self._autostart_check)
-
         backend_vbox.addLayout(backend_form)
 
         # Service status row
         svc_status_row = QHBoxLayout()
-        self._svc_status_label = QLabel()
+        self._svc_status_label = QLabel("ℹ️ TTS server not checked yet.")
+        self._svc_status_label.setStyleSheet("color: steelblue;")
         svc_status_row.addWidget(self._svc_status_label)
         svc_status_row.addStretch()
-        self._start_svc_btn = QPushButton("▶ Start Service")
-        self._start_svc_btn.setToolTip(
-            "Launch the TTS service using the .venv_tts virtual environment"
-        )
-        self._start_svc_btn.clicked.connect(self._on_start_service)
-        svc_status_row.addWidget(self._start_svc_btn)
-        self._stop_svc_btn = QPushButton("■ Stop Service")
-        self._stop_svc_btn.setToolTip("Terminate the running TTS service process")
-        self._stop_svc_btn.clicked.connect(self._on_stop_service)
-        svc_status_row.addWidget(self._stop_svc_btn)
-        self._check_svc_btn = QPushButton("Check Service")
-        self._check_svc_btn.clicked.connect(self._on_check_service)
-        svc_status_row.addWidget(self._check_svc_btn)
+        self._test_tts_btn = QPushButton("Test TTS Server")
+        self._test_tts_btn.setToolTip("Check that the remote TTS server is reachable and models are loaded")
+        self._test_tts_btn.clicked.connect(self._on_test_tts_server)
+        svc_status_row.addWidget(self._test_tts_btn)
         backend_vbox.addLayout(svc_status_row)
-        self._refresh_service_buttons()
 
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
-            "Use Python 3.10 for GUI and run the TTS service in Python 3.14."
+            "Start the TTS service manually: <tt>cd tts_service &amp;&amp; uvicorn tts_server:app</tt>"
         )
         mode_note.setWordWrap(True)
         backend_vbox.addWidget(mode_note)
 
         inner.addWidget(backend_group)
-
-        # ── Kokoro ONNX Models ─────────────────────────────────────────
-        model_group = QGroupBox("Kokoro ONNX Models (for backend service)")
-        model_vbox = QVBoxLayout(model_group)
-
-        model_form = QFormLayout()
-
-        self._model_path_input = QLineEdit(str(self.settings.get("kokoro_model_path", "")))
-        self._model_path_input.setPlaceholderText(
-            f"Leave blank to use default: {DEFAULT_MODELS_DIR / 'kokoro-v1.0.onnx'}"
-        )
-        model_row = QHBoxLayout()
-        model_row.addWidget(self._model_path_input)
-        browse_model = QPushButton("Browse…")
-        browse_model.clicked.connect(self._browse_model_path)
-        model_row.addWidget(browse_model)
-        model_form.addRow("Model file (.onnx):", model_row)
-
-        self._voices_path_input = QLineEdit(str(self.settings.get("kokoro_voices_path", "")))
-        self._voices_path_input.setPlaceholderText(
-            f"Leave blank to use default: {DEFAULT_MODELS_DIR / 'voices-v1.0.bin'}"
-        )
-        voices_row = QHBoxLayout()
-        voices_row.addWidget(self._voices_path_input)
-        browse_voices = QPushButton("Browse…")
-        browse_voices.clicked.connect(self._browse_voices_path)
-        voices_row.addWidget(browse_voices)
-        model_form.addRow("Voices file (.bin):", voices_row)
-
-        model_vbox.addLayout(model_form)
-
-        # Status label + download button
-        status_row = QHBoxLayout()
-        self._model_status_label = QLabel()
-        self._refresh_model_status()
-        status_row.addWidget(self._model_status_label)
-        status_row.addStretch()
-
-        self._download_btn = QPushButton("Download Models from GitHub")
-        self._download_btn.clicked.connect(self._on_download_models)
-        status_row.addWidget(self._download_btn)
-        model_vbox.addLayout(status_row)
-
-        inner.addWidget(model_group)
 
         # ── Dialogue LLM Connection ───────────────────────────────────
         llm_group = QGroupBox("Dialogue LLM Connection")
@@ -390,6 +267,30 @@ class SettingsPage(BasePage):
             float(self.settings.get("character_confidence_threshold", 0.8))
         )
         ms_form.addRow("New character threshold:", self._char_confidence_spin)
+
+        self._tts_speed_spin = QDoubleSpinBox()
+        self._tts_speed_spin.setRange(0.5, 2.0)
+        self._tts_speed_spin.setSingleStep(0.1)
+        self._tts_speed_spin.setDecimals(1)
+        self._tts_speed_spin.setValue(float(self.settings.get("tts_speed", 1.0)))
+        ms_form.addRow("TTS speed:", self._tts_speed_spin)
+
+        # Preview Voice row
+        preview_row = QHBoxLayout()
+        self._preview_voice_combo = QComboBox()
+        self._preview_voice_combo.addItems(KOKORO_VOICE_LIST)
+        preview_voice = self.settings.get("narrator_voice", "af_heart")
+        if preview_voice in KOKORO_VOICE_LIST:
+            self._preview_voice_combo.setCurrentText(preview_voice)
+        preview_row.addWidget(self._preview_voice_combo)
+        self._preview_voice_btn = QPushButton("Preview Voice")
+        self._preview_voice_btn.setToolTip("Send a test phrase to the TTS server and play back the audio")
+        self._preview_voice_btn.clicked.connect(self._on_preview_voice)
+        preview_row.addWidget(self._preview_voice_btn)
+        self._preview_status_label = QLabel()
+        preview_row.addWidget(self._preview_status_label)
+        preview_row.addStretch()
+        ms_form.addRow("Preview voice:", preview_row)
 
         inner.addWidget(ms_group)
 
@@ -475,49 +376,10 @@ class SettingsPage(BasePage):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _refresh_model_status(self) -> None:
-        from ebook_app.models.tts_engine_cli import _resolve_model_paths
-        model_path, voices_path = _resolve_model_paths(
-            self._model_path_input.text().strip() or None,
-            self._voices_path_input.text().strip() or None,
-        )
-        model_ok = model_path.exists()
-        voices_ok = voices_path.exists()
-        if model_ok and voices_ok:
-            self._model_status_label.setText(
-                "✅ Model files found for the remote TTS backend service."
-            )
-            self._model_status_label.setStyleSheet("color: green;")
-        else:
-            missing = []
-            if not model_ok:
-                missing.append("model (.onnx)")
-            if not voices_ok:
-                missing.append("voices (.bin)")
-            msg = f"⚠ Missing: {', '.join(missing)}. Click Download to fetch them."
-            self._model_status_label.setText(msg)
-            self._model_status_label.setStyleSheet("color: orange;")
-
     def _browse_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if path:
             self._output_dir_input.setText(path)
-
-    def _browse_model_path(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Kokoro ONNX Model File", "", "ONNX files (*.onnx)"
-        )
-        if path:
-            self._model_path_input.setText(path)
-            self._refresh_model_status()
-
-    def _browse_voices_path(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Kokoro Voices File", "", "Binary files (*.bin)"
-        )
-        if path:
-            self._voices_path_input.setText(path)
-            self._refresh_model_status()
 
     def _load_character_db(self) -> None:
         """Populate the character table from saved settings."""
@@ -644,9 +506,6 @@ class SettingsPage(BasePage):
     def _on_save(self) -> None:
         self.settings.set("output_dir", self._output_dir_input.text().strip())
         self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
-        self.settings.set("tts_autostart_service", self._autostart_check.isChecked())
-        self.settings.set("kokoro_model_path", self._model_path_input.text().strip())
-        self.settings.set("kokoro_voices_path", self._voices_path_input.text().strip())
         dialogue_llm_url = self._dialogue_llm_url_input.text().strip()
         dialogue_llm_model = self._dialogue_llm_model_input.text().strip()
         self.settings.set("dialogue_llm_url", dialogue_llm_url)
@@ -654,11 +513,11 @@ class SettingsPage(BasePage):
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
+        self.settings.set("tts_speed", self._tts_speed_spin.value())
         self.settings.set("character_confidence_threshold", self._char_confidence_spin.value())
         self.settings.set("character_db", self._collect_character_db())
         self.settings.set("pending_character_additions", self._collect_pending_additions())
         self.settings.save()
-        self._refresh_model_status()
         self.log.log("Settings saved.", level="SUCCESS")
 
     def _on_add_character(self) -> None:
@@ -711,129 +570,46 @@ class SettingsPage(BasePage):
         for row in rows:
             self._pending_table.removeRow(row)
 
-    def _refresh_service_buttons(self) -> None:
-        running = _TtsServiceManager.is_running()
-        self._start_svc_btn.setEnabled(not running)
-        self._stop_svc_btn.setEnabled(running)
-
-    def _on_start_service(self) -> None:
-        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            host = parsed.hostname or "127.0.0.1"
-            port = parsed.port or 5005
-        except Exception:
-            host, port = "127.0.0.1", 5005
-
-        self._svc_status_label.setText("⏳ Starting TTS service…")
-        self._svc_status_label.setStyleSheet("")
-        self._start_svc_btn.setEnabled(False)
-
-        result = _TtsServiceManager.start(_TTS_PYTHON, _TTS_SERVICE_DIR, host, port)
-        if result == "already_running":
-            self._svc_status_label.setText("ℹ️ Service was already running.")
-            self._svc_status_label.setStyleSheet("color: steelblue;")
-            self._refresh_service_buttons()
-        elif result.startswith("error:"):
-            msg = result[6:]
-            self._svc_status_label.setText(f"🔴 Could not start service: {msg}")
-            self._svc_status_label.setStyleSheet("color: red;")
-            self.log.log(f"TTS service start failed: {msg}", level="ERROR")
-            self._refresh_service_buttons()
-        else:
-            self._svc_status_label.setText("⏳ Service starting — checking health in 3 s…")
-            self.log.log("TTS service process launched.", level="INFO")
-            self._refresh_service_buttons()
-            # Auto-check health after a short delay to let the server come up
-            if self._start_check_timer is not None:
-                self._start_check_timer.stop()
-                self._start_check_timer.deleteLater()
-                self._start_check_timer = None
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(self._on_check_service)
-            timer.start(3000)
-            self._start_check_timer = timer
-
-    def _on_stop_service(self) -> None:
-        _TtsServiceManager.stop()
-        self._svc_status_label.setText("⬛ Service stopped.")
-        self._svc_status_label.setStyleSheet("color: gray;")
-        self.log.log("TTS service process terminated.", level="INFO")
-        self._refresh_service_buttons()
-
-    def _on_check_service(self) -> None:
+    def _on_test_tts_server(self) -> None:
         if self._svc_health_thread and self._svc_health_thread.isRunning():
             return
-        # Discard old thread before creating a new one to avoid signal leaks.
         if self._svc_health_thread is not None:
             try:
-                self._svc_health_thread.result.disconnect(self._on_service_health_result)
+                self._svc_health_thread.result.disconnect(self._on_tts_test_result)
             except RuntimeError:
                 pass
             self._svc_health_thread.deleteLater()
         url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
-        self._svc_status_label.setText("⏳ Checking…")
+        self._svc_status_label.setText("⏳ Testing TTS server…")
         self._svc_status_label.setStyleSheet("")
+        self._test_tts_btn.setEnabled(False)
         self._svc_health_thread = _ServiceHealthThread(url, parent=self)
-        self._svc_health_thread.result.connect(self._on_service_health_result)
+        self._svc_health_thread.result.connect(self._on_tts_test_result)
         self._svc_health_thread.start()
 
-    def _on_service_health_result(self, health: dict) -> None:
+    def _on_tts_test_result(self, health: dict) -> None:
+        self._test_tts_btn.setEnabled(True)
         status = health.get("status", "unknown")
         models_ready = health.get("models_ready", False)
         url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
 
         if status == "unreachable":
-            self._svc_status_label.setText(f"🔴 Service not reachable at {url}")
+            self._svc_status_label.setText(f"🔴 TTS server not reachable at {url}")
             self._svc_status_label.setStyleSheet("color: red;")
         elif status == "ok" and models_ready:
-            self._svc_status_label.setText("✅ Service running — models ready.")
+            self._svc_status_label.setText("✅ TTS server running — models ready.")
             self._svc_status_label.setStyleSheet("color: green;")
         elif status == "ok":
             model_path = health.get("model_path", "")
             self._svc_status_label.setText(
-                f"⚠ Service running but models missing at {model_path}"
+                f"⚠ TTS server running but models missing at {model_path}"
             )
             self._svc_status_label.setStyleSheet("color: orange;")
         else:
             self._svc_status_label.setText(
-                f"⚠ Service error: {health.get('detail', '')}"
+                f"⚠ TTS server error: {health.get('detail', '')}"
             )
             self._svc_status_label.setStyleSheet("color: orange;")
-        self._refresh_service_buttons()
-
-    def _on_download_models(self) -> None:
-        if self._download_thread and self._download_thread.isRunning():
-            return
-
-        self._download_btn.setEnabled(False)
-        self._model_status_label.setText("⏳ Downloading models…")
-        self._model_status_label.setStyleSheet("")
-
-        dest = DEFAULT_MODELS_DIR
-        self._download_thread = _DownloadThread(dest, parent=self)
-        self._download_thread.progress.connect(
-            lambda msg: self._model_status_label.setText(f"⏳ {msg}")
-        )
-        self._download_thread.finished.connect(self._on_download_finished)
-        self._download_thread.error.connect(self._on_download_error)
-        self._download_thread.start()
-
-    def _on_download_finished(self, model_path: str, voices_path: str) -> None:
-        self._download_btn.setEnabled(True)
-        # If the user hasn't specified custom paths, leave the fields blank so
-        # the engine auto-discovers files in the default directory.
-        self._refresh_model_status()
-        self.log.log(
-            f"Kokoro models downloaded to {DEFAULT_MODELS_DIR}", level="SUCCESS"
-        )
-
-    def _on_download_error(self, error: str) -> None:
-        self._download_btn.setEnabled(True)
-        self._refresh_model_status()
-        self.log.log(f"Model download failed: {error}", level="ERROR")
 
     def _on_check_llm_connection(self) -> None:
         if self._llm_health_thread and self._llm_health_thread.isRunning():
@@ -895,3 +671,56 @@ class SettingsPage(BasePage):
             "4) If it still fails, check firewall/proxy settings and retry.\n"
             f"{detail_line}"
         )
+
+    def _on_preview_voice(self) -> None:
+        if self._preview_thread and self._preview_thread.isRunning():
+            return
+        if self._preview_thread is not None:
+            try:
+                self._preview_thread.result.disconnect(self._on_preview_result)
+            except RuntimeError:
+                pass
+            self._preview_thread.deleteLater()
+        url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
+        voice = self._preview_voice_combo.currentText()
+        speed = self._tts_speed_spin.value()
+        self._preview_status_label.setText("⏳ Generating…")
+        self._preview_status_label.setStyleSheet("")
+        self._preview_voice_btn.setEnabled(False)
+        self._preview_thread = _PreviewThread(url, voice, speed, parent=self)
+        self._preview_thread.result.connect(self._on_preview_result)
+        self._preview_thread.start()
+
+    def _on_preview_result(self, result: dict) -> None:
+        self._preview_voice_btn.setEnabled(True)
+        if "error" in result:
+            self._preview_status_label.setText("🔴 Preview failed.")
+            self._preview_status_label.setStyleSheet("color: red;")
+            self.log.log(f"Voice preview failed: {result['error']}", level="ERROR")
+            return
+
+        audio_path = result.get("audio_path", "")
+        if not audio_path:
+            self._preview_status_label.setText("⚠ No audio returned.")
+            self._preview_status_label.setStyleSheet("color: orange;")
+            return
+
+        self._preview_status_label.setText("🔊 Playing…")
+        self._preview_status_label.setStyleSheet("color: green;")
+        self._play_audio(audio_path)
+
+    def _play_audio(self, path: str) -> None:
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtCore import QUrl
+
+            if self._media_player is None:
+                self._audio_output = QAudioOutput(self)
+                self._media_player = QMediaPlayer(self)
+                self._media_player.setAudioOutput(self._audio_output)
+
+            self._media_player.stop()
+            self._media_player.setSource(QUrl.fromLocalFile(path))
+            self._media_player.play()
+        except Exception as exc:
+            self.log.log(f"Audio playback error: {exc}", level="WARNING")
