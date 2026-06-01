@@ -873,223 +873,288 @@ class PipelineController:
 
         logger.debug("Final chapter files written for %s", chapter_id)
        
+       
     # ------------------------------------------------------------------
-    # PHASE 7 — TTS Generation (multi-speaker, timed)
+    # PHASE 7 — TTS generation (per-segment, contract-compliant)
     # ------------------------------------------------------------------
 
     def tts_generate(self) -> None:
         """
         Phase 7:
-        - Multi-speaker TTS per segment
-        - Use VoiceRouter for voice selection
-        - Generate per-segment WAVs
-        - Concatenate into per-chapter WAVs
-        - Produce timing metadata for SMIL
-        - Store audio in per-chapter folders
+        - Read chXXX_chapter_info_final.json (ChapterInfoFinal)
+        - Generate per-segment WAVs: audio/chXXX/chXXX_segYYY.wav
+        - Concatenate per-chapter WAV: audio/chXXX/chXXX.wav
+        - Write audio_timing.json (AudioTimingMap)
         """
-        logger.info("[Phase 7] Generating multi-speaker TTS…")
+        logger.info("[Phase 7] Generating TTS audio…")
 
-        # Load character DB
-        db_path = self.work_dir / "character_database.json"
-        character_db = self._load_json(db_path, default=[])
-        voice_map = {
-            self._normalize_name(c["name"]): c.get("voice", "")
-            for c in character_db
-        }
-
-        # Load chapters
+        # Load chapters.json to know how many chapters exist
         chapters = self._load_json(self.work_dir / "chapters.json", default=[])
         total = len(chapters)
+        if total == 0:
+            logger.warning("No chapters.json found — skipping TTS generation.")
+            return
 
-        # Build TTS backend
-        engine = self._make_tts_backend()
+        # Build TTS backend (must implement TTSEngineContract)
+        audio_root = self.work_dir / "audio"
+        audio_root.mkdir(parents=True, exist_ok=True)
+        engine = self._make_tts_backend(output_dir=str(audio_root))
 
-        self.audio_files = {}
-        timing_data = {}
+        # Global timing map: chapter_id -> list[AudioTimingEntry]
+        audio_timing: dict[str, list[dict]] = {}
+
+        # Global TTS settings
+        tts_speed = float(self.settings.get("tts_speed", 1.0))
 
         for idx in range(total):
             chapter_id = self._chapter_id(idx)
-            seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
+            final_info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
-            if not seg_path.exists():
-                logger.warning("Missing final segments for %s — skipping.", chapter_id)
+            if not final_info_path.exists():
+                logger.warning(
+                    "Missing final chapter info for %s — skipping TTS for this chapter.",
+                    chapter_id,
+                )
                 continue
 
-            segments = self._load_json(seg_path, default=[])
+            data = self._load_json(final_info_path, default={})
+            segments = data.get("segments", [])
+            if not segments:
+                logger.warning("No segments found in %s — skipping.", final_info_path)
+                continue
 
-            # Per-chapter audio folder
-            chapter_audio_dir = self.work_dir / "audio" / chapter_id
+            logger.info("Generating audio for %s (%d/%d)…", chapter_id, idx + 1, total)
+
+            chapter_audio_dir = audio_root / chapter_id
             chapter_audio_dir.mkdir(parents=True, exist_ok=True)
 
-            segment_wavs = []
-            segment_timings = []
+            segment_files: list[str] = []
+            timing_entries: list[dict] = []
 
-            # --------------------------------------------------------------
-            # Generate per-segment audio
-            # --------------------------------------------------------------
-            current_time = 0.0
+            current_time = 0.0  # seconds
 
-            for s_idx, seg in enumerate(segments):
-                text = seg.get("text", "").strip()
+            for seg_idx, seg in enumerate(segments):
+                text = str(seg.get("text", "") or "").strip()
                 if not text:
                     continue
 
-                seg_type = seg.get("type", "narration")
-                speaker = seg.get("speaker", "narrator")
-                gender = seg.get("gender", "unknown")
+                seg_type = str(seg.get("type", "narration") or "narration")
+                speaker = str(seg.get("speaker", "narrator") or "narrator")
+                gender = str(seg.get("gender", "unknown") or "unknown")
 
-                # Voice selection
-                voice_name = self.voice_router.get_voice_for_segment(
+                # Resolve voice via VoiceRouter
+                voice = self.voice_router.get_voice_for_segment(
                     speaker=speaker,
                     seg_type=seg_type,
                     gender=gender,
                 )
 
-                out_name = f"{chapter_id}_seg{s_idx:03d}.wav"
-                out_path = chapter_audio_dir / out_name
+                seg_filename = f"{chapter_id}_seg{seg_idx:03d}.wav"
+                seg_path = chapter_audio_dir / seg_filename
 
-                # Generate audio
-                wav_path = engine.generate_audio(
-                    text=text,
-                    output_filename=out_name,
-                    voice=voice_name,
-                    speed=self.settings.tts_speed,
+                try:
+                    engine.generate_audio(
+                        text=text,
+                        output_filename=str(seg_path),
+                        voice=voice,
+                        speed=tts_speed,
+                    )
+                    duration = float(engine.get_last_audio_duration() or 0.0)
+                except Exception:
+                    logger.error(
+                        "TTS generation failed for %s segment %d",
+                        chapter_id,
+                        seg_idx,
+                        exc_info=True,
+                    )
+                    continue
+
+                # Record timing entry
+                paragraph_id = seg.get("paragraph_id", f"{chapter_id}_p{seg_idx}")
+                timing_entries.append(
+                    {
+                        "paragraph_id": paragraph_id,
+                        "clip_begin": current_time,
+                        "clip_end": current_time + duration,
+                    }
                 )
-
-                # Duration (engine returns metadata)
-                duration = engine.get_last_audio_duration()
-
-                segment_wavs.append(str(wav_path))
-                segment_timings.append({
-                    "paragraph_id": seg.get("paragraph_id"),
-                    "clip_begin": current_time,
-                    "clip_end": current_time + duration,
-                })
-
                 current_time += duration
+                segment_files.append(str(seg_path))
 
-            # --------------------------------------------------------------
-            # Concatenate into chapter WAV
-            # --------------------------------------------------------------
+            if not segment_files:
+                logger.warning("No audio segments generated for %s — skipping concat.", chapter_id)
+                continue
+
+            # Concatenate per-chapter audio
             chapter_wav = chapter_audio_dir / f"{chapter_id}.wav"
-            engine.concatenate_audio_files(segment_wavs, chapter_wav)
+            try:
+                engine.concatenate_audio_files(segment_files, chapter_wav)
+            except Exception:
+                logger.error(
+                    "Failed to concatenate audio for %s",
+                    chapter_id,
+                    exc_info=True,
+                )
+                continue
 
-            self.audio_files[idx] = chapter_wav
-            timing_data[chapter_id] = segment_timings
+            audio_timing[chapter_id] = timing_entries
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("tts_generate", percent)
 
-        # Save timing metadata for EPUB
-        self._save_json(self.work_dir / "audio_timing.json", timing_data)
+        # Save global audio timing map
+        timing_path = self.work_dir / "audio_timing.json"
+        self._save_json(timing_path, audio_timing)
 
-        logger.info("Phase 7 — Multi-speaker TTS complete.")
+        logger.info(
+            "Phase 7 — TTS generation complete. %d chapters with timing data.",
+            len(audio_timing),
+        )
 
+       
     # ------------------------------------------------------------------
-    # PHASE 8 — EPUB Build (real SMIL timing)
+    # PHASE 8 — EPUB build (EPUB3 + SMIL, contract-compliant)
     # ------------------------------------------------------------------
 
     def epub_build(self) -> None:
         """
         Phase 8:
-        - Build XHTML from final segments
-        - Build SMIL overlays using real timing metadata
-        - Use EPUBBuilder to produce final .epub
+        - Load final chapter info (chXXX_chapter_info_final.json)
+        - Load audio_timing.json (AudioTimingMap)
+        - Build per-chapter XHTML with per-segment <p id=paragraph_id>
+        - Attach audio + timing via EPUBBuilder.add_audio()
+        - Build final EPUB via EPUBBuilder.build()
         """
-        logger.info("[Phase 8] Building EPUB with real SMIL timing…")
+        logger.info("[Phase 8] Building EPUB…")
 
+        # Load chapter inventory for titles
         chapters = self._load_json(self.work_dir / "chapters.json", default=[])
-        if not chapters:
-            logger.error("Missing chapters.json — cannot build EPUB.")
+        total = len(chapters)
+        if total == 0:
+            logger.warning("No chapters.json found — cannot build EPUB.")
             return
 
-        timing_data = self._load_json(self.work_dir / "audio_timing.json", default={})
+        # Load audio timing map
+        timing_path = self.work_dir / "audio_timing.json"
+        audio_timing = self._load_json(timing_path, default={})
+        if not audio_timing:
+            logger.warning("audio_timing.json missing or empty — EPUB will have no media overlays.")
 
-        title = "Book"
-        author = "Unknown"
+        # Book metadata
+        title = str(self.settings.get("book_title", "Untitled Book") or "Untitled Book")
+        author = str(self.settings.get("book_author", "Unknown Author") or "Unknown Author")
 
-        # IMPORTANT: pass work_dir into EPUBBuilder
+        # EPUB work dir (separate from general pipeline work_dir to keep things clean)
+        epub_work_dir = self.work_dir / "epub_build"
+        epub_work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Instantiate EPUBBuilder (implements EPUBBuilderContract)
         builder = EPUBBuilder(
             title=title,
             author=author,
-            output_dir=str(self.settings.output_dir),
-            work_dir=str(self.work_dir),
+            output_dir=self.settings.output_dir,
+            work_dir=str(epub_work_dir),
         )
 
-        total = len(chapters)
+        # Helper: simple HTML escaping
+        def _escape_html(text: str) -> str:
+            return (
+                text.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+            )
 
-        for idx, chapter in enumerate(chapters):
+        audio_root = self.work_dir / "audio"
+
+        for idx, ch in enumerate(chapters):
             chapter_id = self._chapter_id(idx)
-            chapter_title = chapter.get("title", f"Chapter {idx + 1}")
+            final_info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
-            seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
-            if not seg_path.exists():
-                logger.warning("Missing final segments for %s — skipping.", chapter_id)
+            if not final_info_path.exists():
+                logger.warning("Missing final chapter info for %s — skipping.", chapter_id)
                 continue
 
-            segments = self._load_json(seg_path, default=[])
+            final_info = self._load_json(final_info_path, default={})
+            segments = final_info.get("segments", [])
+            if not segments:
+                logger.warning("No segments in %s — skipping.", final_info_path)
+                continue
 
-            # --------------------------------------------------------------
-            # Build XHTML with rich structure
-            # --------------------------------------------------------------
-            xhtml_lines = [
-                '<?xml version="1.0" encoding="UTF-8"?>',
-                '<!DOCTYPE html>',
-                '<html xmlns="http://www.w3.org/1999/xhtml">',
-                "<head>",
-                f"<title>{chapter_title}</title>",
-                '<link rel="stylesheet" type="text/css" href="stylesheet.css"/>',
-                "</head>",
-                "<body>",
-                f"<h1>{chapter_title}</h1>",
-            ]
+            ch_title = (
+                final_info.get("title")
+                or ch.get("title")
+                or f"Chapter {idx + 1}"
+            )
 
-            for s in segments:
-                pid = s["paragraph_id"]
-                text = s["text"]
-                seg_type = s.get("type", "narration")
-                speaker = s.get("speaker", "narrator")
+            # Build XHTML with one <p> per semantic segment, id = paragraph_id
+            body_parts: list[str] = []
+            for seg in segments:
+                text = _escape_html(str(seg.get("text", "") or ""))
+                if not text:
+                    continue
+                pid = str(seg.get("paragraph_id", f"{chapter_id}_p0"))
+                body_parts.append(f'<p id="{pid}">{text}</p>')
 
-                xhtml_lines.append(
-                    f'<p id="{pid}" class="{seg_type}">'
-                    f'<span class="speaker">{speaker}:</span> '
-                    f'<span class="text">{text}</span>'
-                    f'</p>'
-                )
+            xhtml_body = "\n".join(body_parts)
+            chapter_filename = f"{chapter_id}.xhtml"
 
-            xhtml_lines.append("</body></html>")
-            xhtml = "\n".join(xhtml_lines)
+            xhtml = f"""<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>{_escape_html(ch_title)}</title>
+  </head>
+  <body>
+    <h1>{_escape_html(ch_title)}</h1>
+    {xhtml_body}
+  </body>
+</html>
+ """
 
-            filename = f"{chapter_id}.xhtml"
-            builder.add_chapter(filename=filename, xhtml=xhtml, title=chapter_title)
+            # Add chapter to EPUB
+            builder.add_chapter(
+                filename=chapter_filename,
+                xhtml=xhtml,
+                title=ch_title,
+            )
 
-            # --------------------------------------------------------------
-            # Attach audio + real SMIL timing
-            # --------------------------------------------------------------
-            audio_path = self.audio_files.get(idx)
-            if audio_path:
-                smil_segments = []
-                for t in timing_data.get(chapter_id, []):
-                    smil_segments.append(
-                        TextSegment(
-                            paragraph_id=t["paragraph_id"],
-                            clip_begin=t["clip_begin"],
-                            clip_end=t["clip_end"],
+            # Attach audio + timing if available
+            chapter_audio_dir = audio_root / chapter_id
+            chapter_audio_path = chapter_audio_dir / f"{chapter_id}.wav"
+
+            timings_raw = audio_timing.get(chapter_id, [])
+            if chapter_audio_path.exists() and timings_raw:
+                ts_segments: list[TextSegment] = []
+                for t in timings_raw:
+                    try:
+                        ts_segments.append(
+                            {
+                                "paragraph_id": t.get("paragraph_id", ""),
+                                "clip_begin": float(t.get("clip_begin", 0.0)),
+                                "clip_end": float(t.get("clip_end", 0.0)),
+                            }
                         )
-                    )
+                    except Exception:
+                        logger.debug("Invalid timing entry for %s: %r", chapter_id, t, exc_info=True)
 
-                # audio_path is the FULL PATH to chXXX.wav
-                builder.add_audio(
-                    chapter_filename=filename,
-                    audio_path=str(audio_path),
-                    segments=smil_segments,
+                if ts_segments:
+                    builder.add_audio(
+                        chapter_filename=chapter_filename,
+                        audio_path=str(chapter_audio_path),
+                        segments=ts_segments,
+                    )
+            else:
+                logger.info(
+                    "No audio or timing for %s — chapter will be text-only in EPUB.",
+                    chapter_id,
                 )
 
-            percent = int((idx + 1) * 100 / total)
+            percent = int((idx + 1) * 100 / max(total, 1))
             self._on_progress("epub_build", percent)
 
-        out_path = builder.build()
-        logger.info("Phase 8 — EPUB Build complete: %s", out_path)
+        # Build final EPUB
+        epub_path = builder.build()
+        logger.info("Phase 8 — EPUB build complete: %s", epub_path)
+        self._on_progress("epub_build", 100)
 
     # ------------------------------------------------------------------
     # TTS Preview — upgraded to multi-speaker logic

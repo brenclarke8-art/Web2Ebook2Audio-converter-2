@@ -39,6 +39,9 @@ class SettingsManager(QObject):
     }
 
     DEFAULTS = {
+
+        self.debug_pipeline = False
+
         # ------------------------------
         # UI + Window
         # ------------------------------
