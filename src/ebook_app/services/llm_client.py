@@ -51,6 +51,8 @@ class OllamaChatClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
             ],
+            "format": "json",
+            "options": {"temperature": 0},
             "stream": False,
         }
 
@@ -97,20 +99,74 @@ class OllamaChatClient:
     def _parse_json_content(content: str) -> dict[str, Any]:
         if not content:
             return {}
+        raw = content.strip()
         try:
-            parsed = json.loads(content)
+            parsed = json.loads(raw)
             return parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
             pass
 
-        match = re.search(r"\{.*?\}", content, re.DOTALL)
-        if not match:
-            return {}
-        try:
-            parsed = json.loads(match.group(0))
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            return {}
+        for candidate in OllamaChatClient._json_candidates(raw):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    @staticmethod
+    def _json_candidates(content: str) -> list[str]:
+        candidates = [content]
+        for fence in re.findall(r"```(?:json)?\s*(.*?)```", content, re.DOTALL | re.IGNORECASE):
+            stripped = fence.strip()
+            if stripped:
+                candidates.append(stripped)
+
+        candidates.extend(OllamaChatClient._balanced_json_objects(content))
+
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                ordered.append(candidate)
+        return ordered
+
+    @staticmethod
+    def _balanced_json_objects(content: str) -> list[str]:
+        objects: list[str] = []
+        start = -1
+        depth = 0
+        in_string = False
+        escape = False
+
+        for idx, ch in enumerate(content):
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+                continue
+
+            if ch == "{":
+                if depth == 0:
+                    start = idx
+                depth += 1
+            elif ch == "}":
+                if depth == 0:
+                    continue
+                depth -= 1
+                if depth == 0 and start != -1:
+                    objects.append(content[start : idx + 1])
+                    start = -1
+        return objects
 
     def _repair_json_content(self, content: str) -> dict[str, Any]:
         repair_payload = {

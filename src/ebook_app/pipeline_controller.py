@@ -12,8 +12,9 @@ from ebook_app.core.epub.epub_builder import EPUBBuilder
 from ebook_app.core.tts.voice_router import VoiceRouter
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
-from ebook_app.models.scraper import HttpWebScraper, WebScraper
+from ebook_app.models.scraper import HttpWebScraper, TextCleaner, WebScraper
 from ebook_app.pipeline_contracts import TextSegment, chapter_id as make_chapter_id
+from ebook_app.services.dialogue_segmentation_service import DialogueSegmentationService
 
 logger = logging.getLogger(__name__)
 
@@ -414,11 +415,11 @@ class PipelineController:
             chapter_id = self._chapter_id_for_offset(idx)
             raw_content = str(chapter.get("content", "") or "")
 
-            # Simple deterministic cleaning
             text = raw_content.replace("\r\n", "\n").replace("\r", "\n")
-            lines = [ln.strip() for ln in text.split("\n")]
-            lines = [ln for ln in lines if ln]  # drop empty lines
-            cleaned = "\n\n".join(lines)
+            normalized = TextCleaner.clean_text(text)
+            cleaned = DialogueSegmentationService.clean_text_for_llm(normalized)
+            if not cleaned.strip():
+                cleaned = normalized
 
             out_path = self.work_dir / f"{chapter_id}_cleaned.txt"
             out_path.parent.mkdir(parents=True, exist_ok=True)
