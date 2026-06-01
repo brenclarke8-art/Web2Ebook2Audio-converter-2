@@ -16,10 +16,10 @@ class _FakeResponse:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        return None
+        return False
 
     def raise_for_status(self) -> None:
-        return None
+        pass
 
     def iter_content(self, chunk_size: int = 1024):
         self.chunk_size_seen = chunk_size

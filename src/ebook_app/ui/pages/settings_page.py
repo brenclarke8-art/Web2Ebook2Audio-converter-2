@@ -231,7 +231,7 @@ class SettingsPage(BasePage):
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
             "Use <b>Download + Setup Kokoro Models</b> once, then <b>Start TTS Server</b> for the default local "
-            "service, or run it manually for the default local URL: "
+            "service. Alternatively, run it manually for the default local URL: "
             "<tt>cd tts_service &amp;&amp; python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005</tt>"
         )
         mode_note.setWordWrap(True)
@@ -659,6 +659,7 @@ class SettingsPage(BasePage):
             try:
                 self._kokoro_setup_thread.result.disconnect(self._on_kokoro_setup_result)
             except RuntimeError:
+                # Signal can already be disconnected when replacing a prior finished thread.
                 pass
             self._kokoro_setup_thread.deleteLater()
         self._setup_kokoro_btn.setEnabled(False)

@@ -36,7 +36,7 @@ def _download_file(url: str, destination: Path) -> None:
                     if chunk:
                         fh.write(chunk)
         temp_path.replace(destination)
-    except Exception:
+    except (requests.RequestException, OSError):
         temp_path.unlink(missing_ok=True)
         raise
 
