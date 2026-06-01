@@ -812,12 +812,7 @@ class PipelineController:
 
             # Hybrid voice assignment
             if norm in voice_map:
-                # Known character → VoiceRouter
-                voice = self.voice_router.get_voice_for_segment(
-                    speaker=name,
-                    seg_type="dialogue",
-                    gender=gender,
-                )
+                voice = voice_map[norm]
             else:
                 # Unknown character → fallback
                 if gender == "male":
