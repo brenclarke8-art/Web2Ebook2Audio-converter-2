@@ -10,7 +10,6 @@ class DummySettings:
     def __init__(self):
         self.data = {
             "output_dir": "output",
-            "tts_backend_mode": "local",
             "tts_backend_url": "http://127.0.0.1:5005",
             "kokoro_model_path": "",
             "kokoro_voices_path": "",
@@ -23,10 +22,6 @@ class DummySettings:
     @property
     def output_dir(self):
         return self.data["output_dir"]
-
-    @property
-    def tts_backend_mode(self):
-        return self.data["tts_backend_mode"]
 
     @property
     def tts_backend_url(self):

@@ -62,20 +62,16 @@ class PipelineController:
         self.chapter_urls: list[str] = []
         self.raw_chapter_urls: list[str] = []
         self.chapters: list[dict] = []
-        self.translated_chapters: list[dict] = []  # legacy, will be removed later
         self.dialogue_segments: dict[int, list[Segment]] = {}
         self.audio_files: dict[int, Path] = {}
-        self.alignment_data: dict[int, list] = {}  # legacy, will be removed later
 
         self.selected_start_chapter: int = 1
         self.selected_end_chapter: int = 0
-        self.review_required: bool = False
 
         # Future-ready semantic + review state
         self.clean_review_plan: dict = {}
         self.semantic_review_plan: dict = {}
         self.character_db: list[dict] = []
-        self.speaker_style_model: dict = {}
 
         # Voice routing
         self.voice_router = VoiceRouter(
@@ -237,22 +233,6 @@ class PipelineController:
 
     def run_all(self) -> None:
         """Execute the full new pipeline."""
-        legacy_overrides = any(
-            name in self.__dict__
-            for name in (
-                "translate_chapters",
-                "parse_dialogue",
-                "multispeaker_tts",
-                "batch_tts",
-                "forced_alignment",
-                "smil_generation",
-                "epub_export",
-            )
-        )
-        if legacy_overrides:
-            self._run_all_legacy()
-            return
-
         self._running = True
         steps = [(name, getattr(self, name)) for name in self.STEPS]
 
@@ -270,27 +250,6 @@ class PipelineController:
                 break
 
         self._running = False
-
-    def _run_all_legacy(self) -> None:
-        """Compatibility execution path for legacy monkeypatched method names."""
-        self._running = True
-        pre_review = ["scrape_index", "scrape_chapters", "translate_chapters", "parse_dialogue"]
-        for key in pre_review:
-            if not self._running:
-                return
-            if hasattr(self, key):
-                getattr(self, key)()
-
-        if not bool(self.settings.get("character_review_approved", False)):
-            self.review_required = True
-            return
-
-        post_review = ["multispeaker_tts", "batch_tts", "forced_alignment", "smil_generation", "epub_export"]
-        for key in post_review:
-            if not self._running:
-                return
-            if hasattr(self, key):
-                getattr(self, key)()
 
     def stop(self) -> None:
         """Signal the pipeline to stop after the current step."""
@@ -400,102 +359,6 @@ class PipelineController:
 
         logger.info("Scraped %d chapters successfully.", len(self.chapters))
         self._on_progress("scrape_chapters", 100)
-
-    # ------------------------------------------------------------------
-    # Legacy compatibility methods
-    # ------------------------------------------------------------------
-
-    def translate_chapters(self) -> None:
-        """Legacy alias for chapter text preparation."""
-        self.clean_chapters()
-
-    def parse_dialogue(self) -> None:
-        """Legacy alias for dialogue parsing with legacy chapter_info output."""
-        chapters = self.translated_chapters or self._load_json(self.work_dir / "chapters.json", default=[]) or []
-        if not chapters:
-            return
-
-        parser = DialogueParser(
-            ollama_url=self.settings.get("dialogue_llm_url", "") or self.settings.get("ollama_url", ""),
-            model=self.settings.get("dialogue_llm_model", "") or self.settings.get("ollama_model", ""),
-            timeout_s=int(self.settings.get("dialogue_llm_timeout", 120)),
-            retries=int(self.settings.get("dialogue_llm_retries", 1)),
-            llm_mode=str(self.settings.get("dialogue_llm_mode", "full")),
-            llm_strict_quotes=bool(self.settings.get("dialogue_llm_strict_quotes", False)),
-            llm_log_path=str(self.work_dir / "llm_communication.jsonl"),
-        )
-
-        threshold = float(self.settings.get("character_confidence_threshold", 0.8))
-        pending = self.settings.get("pending_character_additions", []) or []
-        pending_names = {self._normalize_name(item.get("name", "")) for item in pending}
-
-        for idx, chapter in enumerate(chapters):
-            chapter_id = self._chapter_id(idx)
-            text = str(chapter.get("content", "") or "")
-            result = parser.parse(text=text, chapter_id=chapter_id)
-            self.dialogue_segments[idx] = list(result.segments)
-
-            chapter_info = {
-                "chapter_index": idx,
-                "chapter_id": chapter_id,
-                "title": chapter.get("title", f"Chapter {idx + 1}"),
-                "segments": [self._segment_to_dict(s) for s in result.segments],
-                "detected_characters": [
-                    {"name": c.name, "gender": c.gender, "confidence": c.confidence}
-                    for c in result.detected_characters
-                ],
-            }
-            chapter_dir = self.work_dir / chapter_id
-            chapter_dir.mkdir(parents=True, exist_ok=True)
-            self._save_json(chapter_dir / "chapter_info.json", chapter_info)
-
-            for c in result.detected_characters:
-                norm = self._normalize_name(c.name)
-                if c.confidence >= threshold and norm and norm not in pending_names:
-                    pending.append({"name": c.name, "gender": c.gender, "confidence": c.confidence})
-                    pending_names.add(norm)
-
-        self.settings.set("pending_character_additions", pending)
-
-    def multispeaker_tts(self) -> None:
-        """Legacy multi-speaker TTS entry point."""
-        voice_mappings = {"narrator": self.settings.get("narrator_voice", "af_heart")}
-        for entry in self.settings.get("character_db", []) or []:
-            name = str(entry.get("name", "")).strip()
-            voice = str(entry.get("voice", "")).strip()
-            if name and voice:
-                voice_mappings[name] = voice
-
-        engine = self._make_tts_backend(output_dir=str(self.work_dir / "audio"))
-        for chapter_idx, segments in sorted(self.dialogue_segments.items()):
-            chapter_id = self._chapter_id(chapter_idx)
-            if hasattr(engine, "generate_multi_voice_audio"):
-                audio_path = engine.generate_multi_voice_audio(
-                    segments=segments,
-                    output_filename=f"{chapter_id}.wav",
-                    voice_mappings=voice_mappings,
-                    narrator_voice=self.settings.get("narrator_voice", "af_heart"),
-                    default_male_voice=self.settings.get("default_male_voice", "am_adam"),
-                    default_female_voice=self.settings.get("default_female_voice", "af_heart"),
-                    speed=float(self.settings.get("tts_speed", 1.0)),
-                )
-                self.audio_files[chapter_idx] = Path(audio_path)
-
-    def batch_tts(self) -> None:
-        """Legacy alias for TTS generation."""
-        self.tts_generate()
-
-    def forced_alignment(self) -> None:
-        """Legacy no-op retained for compatibility."""
-        return
-
-    def smil_generation(self) -> None:
-        """Legacy no-op retained for compatibility."""
-        return
-
-    def epub_export(self) -> None:
-        """Legacy alias for EPUB export."""
-        self.epub_build()
 
     # ------------------------------------------------------------------
     # NEW Phase 3 — Deterministic cleaning
@@ -618,8 +481,8 @@ class PipelineController:
             return
 
         # Prepare LLM parser
-        llm_url = self.settings.get("dialogue_llm_url", "") or self.settings.get("ollama_url", "")
-        llm_model = self.settings.get("dialogue_llm_model", "") or self.settings.get("ollama_model", "")
+        llm_url = self.settings.get("dialogue_llm_url", "")
+        llm_model = self.settings.get("dialogue_llm_model", "")
         llm_log_path = self.work_dir / "llm_communication.jsonl"
 
         parser = DialogueParser(

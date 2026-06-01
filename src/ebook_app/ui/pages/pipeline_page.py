@@ -291,15 +291,6 @@ class PipelinePage(BasePage):
         self._max_index_pages_spin.setValue(int(self.settings.get("scraper_max_index_pages", 50)))
         inventory_layout.addRow("Max index pages:", self._max_index_pages_spin)
 
-        # Audio mode
-        self._audio_mode_combo = QComboBox()
-        self._audio_mode_combo.addItems(["per_chapter", "single_file"])
-        current_mode = self.settings.get("audio_output_mode", "per_chapter")
-        self._audio_mode_combo.setCurrentText(
-            current_mode if current_mode in {"per_chapter", "single_file"} else "per_chapter"
-        )
-        inventory_layout.addRow("Audio output mode:", self._audio_mode_combo)
-
         # -------------------------
         # Action buttons
         # -------------------------
@@ -658,7 +649,6 @@ class PipelinePage(BasePage):
             return
         start, end = result
 
-        self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", False)
         self._persist_scraper_options()
         self.project_manager.set_selected_range(start, end)
@@ -682,7 +672,6 @@ class PipelinePage(BasePage):
         start = max(1, int(selected.get("start", 1)))
         end = max(start, int(selected.get("end", 0)) or start)
 
-        self.settings.set("audio_output_mode", self._audio_mode_combo.currentText())
         self.settings.set("character_review_approved", True)
 
         self.log.log("Starting audio generation and EPUB build…", level="INFO")
