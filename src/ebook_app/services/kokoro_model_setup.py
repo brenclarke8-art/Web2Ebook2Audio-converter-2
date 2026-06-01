@@ -45,11 +45,24 @@ def download_and_setup_kokoro_models() -> dict[str, str]:
     model_path, voices_path = resolve_kokoro_model_paths()
     try:
         _download_file(_MODEL_URL, model_path)
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Failed to download Kokoro model file ({MODEL_FILENAME}): {exc}"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"Failed to write Kokoro model file ({MODEL_FILENAME}): {exc}"
+        ) from exc
+    try:
         _download_file(_VOICES_URL, voices_path)
     except requests.RequestException as exc:
-        raise RuntimeError(f"Failed to download Kokoro model files: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to download Kokoro voices file ({VOICES_FILENAME}): {exc}"
+        ) from exc
     except OSError as exc:
-        raise RuntimeError(f"Failed to write Kokoro model files: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to write Kokoro voices file ({VOICES_FILENAME}): {exc}"
+        ) from exc
     return {
         "model_path": str(model_path),
         "voices_path": str(voices_path),

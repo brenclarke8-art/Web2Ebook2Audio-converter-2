@@ -67,5 +67,5 @@ def test_download_and_setup_kokoro_models_wraps_request_errors(
 
     monkeypatch.setattr(kokoro_model_setup.requests, "get", fake_get)
 
-    with pytest.raises(RuntimeError, match="Failed to download Kokoro model files"):
+    with pytest.raises(RuntimeError, match="Failed to download Kokoro model file"):
         kokoro_model_setup.download_and_setup_kokoro_models()
