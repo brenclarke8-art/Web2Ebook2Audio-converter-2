@@ -66,7 +66,7 @@ def build_tts_service_launch_spec(
     parsed = urlparse((base_url or "").strip())
     if not parsed.scheme or not parsed.hostname:
         raise ValueError(
-            "Invalid URL format. Expected a full local TTS service URL, such as http://127.0.0.1:5005."
+            "Invalid URL format. Expected a complete local URL with scheme and hostname, such as http://127.0.0.1:5005."
         )
     if parsed.scheme != "http":
         raise ValueError("GUI auto-start only supports local http:// TTS service URLs.")
@@ -108,9 +108,9 @@ def launch_tts_service(base_url: str) -> int:
     command = [spec.program, *spec.arguments]
 
     if os.name == "nt":
-        # Fall back to 0 so this still works on Python builds where one or both
-        # constants are not exposed; in that case the process still launches, but
-        # without the extra Windows detachment flags.
+        # Use 0 as the default if one or both constants are not exposed; in that
+        # case the process still launches, but without the extra Windows
+        # detachment flags.
         creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
             subprocess,
             "CREATE_NEW_PROCESS_GROUP",

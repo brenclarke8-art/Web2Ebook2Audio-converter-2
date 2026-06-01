@@ -187,7 +187,7 @@ class SettingsPage(BasePage):
         svc_status_row.addWidget(self._svc_status_label)
         svc_status_row.addStretch()
         self._start_tts_btn = QPushButton("Start TTS Server")
-        self._start_tts_btn.setToolTip("Launch the local TTS service using the repository TTS environment")
+        self._start_tts_btn.setToolTip("Launch the local TTS service using the repository TTS environment.")
         self._start_tts_btn.clicked.connect(self._on_start_tts_server)
         svc_status_row.addWidget(self._start_tts_btn)
         self._test_tts_btn = QPushButton("Test TTS Server")
