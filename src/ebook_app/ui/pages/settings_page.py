@@ -232,7 +232,7 @@ class SettingsPage(BasePage):
         mode_note = QLabel(
             "<i>Remote-only</i>: GUI always calls tts_service/tts_server.py over HTTP.<br>"
             "Use <b>Download + Setup Kokoro Models</b> once, then <b>Start TTS Server</b> for the default local "
-            "service. Alternatively, run it manually for the default local URL: "
+            "service (safe to re-run if files need repair). Alternatively, run it manually for the default local URL: "
             "<tt>cd tts_service &amp;&amp; python -m uvicorn tts_server:app --host 127.0.0.1 --port 5005</tt>"
         )
         mode_note.setWordWrap(True)
@@ -674,7 +674,10 @@ class SettingsPage(BasePage):
         self._setup_kokoro_btn.setEnabled(True)
         if result.get("status") == "ok":
             model_path = result.get("model_path", "")
-            self._svc_status_label.setText(f"✅ Kokoro models downloaded: {model_path}")
+            voices_path = result.get("voices_path", "")
+            self._svc_status_label.setText(
+                f"✅ Kokoro models downloaded: {model_path} and {voices_path}"
+            )
             self._svc_status_label.setStyleSheet("color: green;")
             self.log.log(
                 "Kokoro models downloaded and ready for TTS service.",

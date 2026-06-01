@@ -36,7 +36,7 @@ def test_download_and_setup_kokoro_models_writes_default_files(
 
     def fake_get(url: str, stream: bool, timeout: int):
         assert stream is True
-        assert timeout == 120
+        assert timeout == kokoro_model_setup._REQUEST_TIMEOUT_SECONDS
         seen_urls.append(url)
         response = _FakeResponse(url.encode("utf-8"))
         responses.append(response)
@@ -73,5 +73,5 @@ def test_download_and_setup_kokoro_models_wraps_request_errors(
 
     monkeypatch.setattr(kokoro_model_setup.requests, "get", fake_get)
 
-    with pytest.raises(RuntimeError, match="Failed to download Kokoro model file"):
+    with pytest.raises(RuntimeError, match="Failed to set up Kokoro model file"):
         kokoro_model_setup.download_and_setup_kokoro_models()
