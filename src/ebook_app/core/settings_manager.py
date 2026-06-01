@@ -151,8 +151,8 @@ class SettingsManager(QObject):
         changed = False
         for key, value in self.DEFAULTS.items():
             if key not in self.data:
-            self.data[key] = value
-            changed = True
+                self.data[key] = value
+                changed = True
 
         for legacy_key in (
             "tts_backend_mode",
@@ -164,8 +164,8 @@ class SettingsManager(QObject):
             "multispeaker_enabled",
         ):
             if legacy_key in self.data:
-            self.data.pop(legacy_key, None)
-            changed = True
+                self.data.pop(legacy_key, None)
+                changed = True
 
         self._settings = self.data
         if changed:

@@ -3,6 +3,8 @@ import zipfile
 from pathlib import Path
 from typing import List, Dict
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from ebook_app.pipeline_contracts import TextSegment
 
@@ -33,6 +35,7 @@ class EPUBBuilder:
 
         self.chapters: List[Dict] = []
         self.audio_map: Dict[str, Dict] = {}
+        self.book_uuid = str(uuid4())
 
         # Prepare directory structure
         self.text_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +151,7 @@ class EPUBBuilder:
         )
 
         nav_xhtml = f"""<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
   <head><title>Navigation</title></head>
   <body>
     <nav epub:type="toc" id="toc">
@@ -171,7 +174,6 @@ class EPUBBuilder:
 
         manifest_items = []
         spine_items = []
-        overlay_items = []
 
         for idx, c in enumerate(self.chapters):
             chapter_id = Path(c["filename"]).stem
@@ -179,16 +181,17 @@ class EPUBBuilder:
             manifest_items.append(
                 f'<item id="{chapter_id}" href="text/{c["filename"]}" media-type="application/xhtml+xml"/>'
             )
-            spine_items.append(f'<itemref idref="{chapter_id}"/>')
 
             if c["filename"] in self.audio_map:
                 manifest_items.append(
                     f'<item id="{chapter_id}_smil" href="smil/{chapter_id}.smil" '
                     f'media-type="application/smil+xml"/>'
                 )
-                overlay_items.append(
-                    f'<itemref idref="{chapter_id}" properties="media-overlay"/>'
+                spine_items.append(
+                    f'<itemref idref="{chapter_id}" media-overlay="{chapter_id}_smil"/>'
                 )
+            else:
+                spine_items.append(f'<itemref idref="{chapter_id}"/>')
 
         # Audio files
         for info in self.audio_map.values():
@@ -199,6 +202,7 @@ class EPUBBuilder:
 
         manifest_xml = "\n".join(manifest_items)
         spine_xml = "\n".join(spine_items)
+        modified = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
         opf = f"""<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0"
@@ -206,8 +210,8 @@ class EPUBBuilder:
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>{self.title}</dc:title>
     <dc:creator>{self.author}</dc:creator>
-    <dc:identifier id="bookid">urn:uuid:12345</dc:identifier>
-    <meta property="dcterms:modified">2025-01-01T00:00:00Z</meta>
+    <dc:identifier id="bookid">urn:uuid:{self.book_uuid}</dc:identifier>
+    <meta property="dcterms:modified">{modified}</meta>
   </metadata>
 
   <manifest>
