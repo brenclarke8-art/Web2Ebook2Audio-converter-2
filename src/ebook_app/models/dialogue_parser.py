@@ -40,6 +40,10 @@ class DialogueParseResult:
     detected_characters: List[DetectedCharacter]
 
 
+# Backward-compatible alias expected by older imports/tests.
+ParseResult = DialogueParseResult
+
+
 # ---------------------------------------------------------------------------
 # Contract‑compliant DialogueParser
 # ---------------------------------------------------------------------------

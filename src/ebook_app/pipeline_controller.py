@@ -8,13 +8,12 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from ebook_app.core.epub.epub_builder import EPUBBuilder
+from ebook_app.core.tts.voice_router import VoiceRouter
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
-from ebook_app.models.epub_builder import EPUBBuilder
 from ebook_app.models.scraper import HttpWebScraper, WebScraper
-from ebook_app.models.epub_builder import EPUBBuilder, TextSegment
-
-from ebook_app.voice.voice_router import VoiceRouter
+from ebook_app.pipeline_contracts import TextSegment
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +79,10 @@ class PipelineController:
 
         # Voice routing
         self.voice_router = VoiceRouter(
-            character_voices=self.settings.character_voice_map,
-            default_male_voice=self.settings.default_male_voice,
-            default_female_voice=self.settings.default_female_voice,
-            narrator_voice=self.settings.narrator_voice,
+            character_voices=self.settings.get("character_voice_map", {}) or {},
+            default_male_voice=str(self.settings.get("default_male_voice", "am_adam")),
+            default_female_voice=str(self.settings.get("default_female_voice", "af_heart")),
+            narrator_voice=str(self.settings.get("narrator_voice", "af_heart")),
         )
 
     # ------------------------------------------------------------------
@@ -132,21 +131,12 @@ class PipelineController:
     # ------------------------------------------------------------------
 
     def _make_tts_backend(self, output_dir: str | None = None):
-        """Return a TTSEngine (local) or TTSClient (remote) per settings."""
+        """Return the contract-compliant TTS backend."""
         effective_output_dir = output_dir or str(self.work_dir / "audio")
-
-        if self.settings.tts_backend_mode == "remote":
-            from ebook_app.services.tts_client import TTSClient
-            return TTSClient(
-                output_dir=effective_output_dir,
-                base_url=self.settings.tts_backend_url,
-            )
-
-        from ebook_app.models.tts_engine_cli import TTSEngine
+        from ebook_app.core.tts.tts_engine import TTSEngine
         return TTSEngine(
             output_dir=effective_output_dir,
-            model_path=self.settings.kokoro_model_path or None,
-            voices_path=self.settings.kokoro_voices_path or None,
+            server_url=str(self.settings.get("tts_backend_url", "http://127.0.0.1:5005")),
         )
 
     # ------------------------------------------------------------------

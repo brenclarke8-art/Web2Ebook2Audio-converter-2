@@ -39,15 +39,12 @@ class SettingsManager(QObject):
     }
 
     DEFAULTS = {
-
-        self.debug_pipeline = False
-
         # ------------------------------
         # UI + Window
         # ------------------------------
         "theme": "dark",
         "window_width": 1200,
-        "window_height": 800",
+        "window_height": 800,
 
         # ------------------------------
         # Output
