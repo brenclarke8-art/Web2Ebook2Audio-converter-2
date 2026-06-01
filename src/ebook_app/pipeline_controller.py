@@ -701,7 +701,6 @@ class PipelineController:
                 }
             )
             known_names.add(normalized_name)
-        pending_names = {self._normalize_name(c["name"]) for c in pending if c.get("name")}
         review_approved = bool(self.settings.get("character_review_approved", False))
 
         # Load chapters.json
@@ -730,7 +729,7 @@ class PipelineController:
             # 1. New characters
             for c in detected_chars:
                 norm = self._normalize_name(c["name"])
-                if norm and norm not in known_names and norm not in pending_names:
+                if norm and norm not in known_names:
                     review_flag = True
 
             # 2. Low confidence segments
