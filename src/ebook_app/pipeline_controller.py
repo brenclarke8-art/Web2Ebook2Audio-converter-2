@@ -121,6 +121,39 @@ class PipelineController:
     def _chapter_id(self, idx: int) -> str:
         return make_chapter_id(idx, start_index=self.selected_start_chapter)
 
+    def _merge_pending_characters(
+        self,
+        character_db: list[dict],
+        known_names: set[str],
+        pending: list[dict],
+        *,
+        narrator_voice: str,
+        default_male: str,
+        default_female: str,
+    ) -> None:
+        for entry in pending:
+            name = str(entry.get("name", "")).strip()
+            if not name:
+                continue
+            normalized_name = self._normalize_name(name)
+            if normalized_name in known_names:
+                continue
+
+            gender = str(entry.get("gender", "unknown") or "unknown").strip().lower()
+            voice = str(entry.get("voice", "") or "").strip()
+            if not voice:
+                voice = default_male if gender == "male" else default_female if gender == "female" else narrator_voice
+
+            character_db.append(
+                {
+                    "name": name,
+                    "gender": gender or "unknown",
+                    "voice": voice,
+                    "description": "",
+                }
+            )
+            known_names.add(normalized_name)
+
     # ------------------------------------------------------------------
     # TTS backend factory
     # ------------------------------------------------------------------
@@ -681,26 +714,14 @@ class PipelineController:
 
         # Pending additions (still stored in settings for UI)
         pending = self.settings.get("pending_character_additions", []) or []
-        for entry in pending:
-            name = str(entry.get("name", "")).strip()
-            if not name:
-                continue
-            normalized_name = self._normalize_name(name)
-            if normalized_name in known_names:
-                continue
-            gender = str(entry.get("gender", "unknown") or "unknown").strip().lower()
-            voice = str(entry.get("voice", "") or "").strip()
-            if not voice:
-                voice = default_male if gender == "male" else default_female if gender == "female" else narrator_voice
-            character_db.append(
-                {
-                    "name": name,
-                    "gender": gender or "unknown",
-                    "voice": voice,
-                    "description": "",
-                }
-            )
-            known_names.add(normalized_name)
+        self._merge_pending_characters(
+            character_db,
+            known_names,
+            pending,
+            narrator_voice=narrator_voice,
+            default_male=default_male,
+            default_female=default_female,
+        )
         review_approved = bool(self.settings.get("character_review_approved", False))
 
         # Load chapters.json

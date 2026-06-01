@@ -39,8 +39,10 @@ ProgressCallback = Callable[[str, int], None]
 
 
 def chapter_id(idx: int, *, start_index: int = 1) -> str:
-    """Canonical chapter ID format: ch1, ch2, ... based on chapter index."""
-    chapter_number = max(1, int(start_index) + int(idx))
+    """Canonical chapter ID format: ch1, ch2, ... from 0-based offsets."""
+    chapter_number = int(start_index) + int(idx)
+    if chapter_number < 1:
+        chapter_number = 1
     return f"ch{chapter_number}"
 
 
