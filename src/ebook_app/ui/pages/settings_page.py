@@ -131,7 +131,10 @@ class SettingsPage(BasePage):
         self._svc_health_thread: _ServiceHealthThread | None = None
         self._llm_health_thread: _LlmHealthThread | None = None
         self._preview_thread: _PreviewThread | None = None
-        self._media_player = None  # QMediaPlayer created lazily to avoid import at module level
+        # QMediaPlayer and QAudioOutput are created lazily to avoid importing
+        # QtMultimedia at module load time (optional dependency).
+        self._media_player = None
+        self._audio_output = None
         super().__init__(**kwargs)
 
     def _build_ui(self) -> None:
@@ -712,8 +715,8 @@ class SettingsPage(BasePage):
             from PySide6.QtCore import QUrl
 
             if self._media_player is None:
-                self._media_player = QMediaPlayer(self)
                 self._audio_output = QAudioOutput(self)
+                self._media_player = QMediaPlayer(self)
                 self._media_player.setAudioOutput(self._audio_output)
 
             self._media_player.stop()

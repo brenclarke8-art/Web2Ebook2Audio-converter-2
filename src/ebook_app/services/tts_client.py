@@ -30,13 +30,21 @@ class TTSClient:
             return {"status": "unreachable", "detail": str(exc)}
 
     def preview(self, voice: str = "af_heart", speed: float = 1.0, lang: str = "a") -> dict:
-        """POST /preview — synthesise a short preview phrase and return audio_path."""
+        """POST /preview — synthesise a short preview phrase and return audio_path.
+
+        Args:
+            voice: Voice name recognised by the server (e.g. "af_heart").
+            speed: Playback speed multiplier (0.5–2.0).
+            lang: Language/phonemiser code; "a" selects American English.
+        """
         import requests
 
+        # Use a longer timeout for synthesis which may take several seconds on first run.
+        synthesis_timeout = max(self.timeout, 30)
         url = f"{self.base_url}/preview"
         payload = {"voice": voice, "speed": speed, "lang": lang}
         try:
-            resp = requests.post(url, json=payload, timeout=30)
+            resp = requests.post(url, json=payload, timeout=synthesis_timeout)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
