@@ -18,7 +18,7 @@ class VoiceRouter:
         *,
         character_voices: Optional[Dict[str, str]] = None,
         default_male_voice: str = "am_adam",
-        default_female_voice: str = "af_heart",
+        default_female_voice: str = "af_bella",
         narrator_voice: str = "af_heart",
         thought_voice: Optional[str] = None,
         system_voice: Optional[str] = None,

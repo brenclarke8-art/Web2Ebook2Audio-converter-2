@@ -295,7 +295,7 @@ class SettingsPage(BasePage):
 
         self._default_female_voice_combo = QComboBox()
         self._default_female_voice_combo.addItems(KOKORO_VOICE_LIST)
-        default_female = self.settings.get("default_female_voice", "af_heart")
+        default_female = self.settings.get("default_female_voice", "af_bella")
         if default_female in KOKORO_VOICE_LIST:
             self._default_female_voice_combo.setCurrentText(default_female)
         ms_form.addRow("Default female voice:", self._default_female_voice_combo)
@@ -429,7 +429,7 @@ class SettingsPage(BasePage):
             self._insert_character_row(
                 char.get("name", ""),
                 char.get("voice", KOKORO_VOICE_LIST[0] if KOKORO_VOICE_LIST else ""),
-                char.get("gender", "unknown"),
+                char.get("gender", "other"),
                 char.get("description", ""),
             )
 
@@ -437,7 +437,7 @@ class SettingsPage(BasePage):
         self,
         name: str = "",
         voice: str = "",
-        gender: str = "unknown",
+        gender: str = "other",
         description: str = "",
     ) -> None:
         row = self._char_table.rowCount()
@@ -451,9 +451,9 @@ class SettingsPage(BasePage):
         self._char_table.setCellWidget(row, 1, voice_combo)
 
         gender_combo = QComboBox()
-        gender_combo.addItems(["unknown", "male", "female"])
-        if gender in {"unknown", "male", "female"}:
-            gender_combo.setCurrentText(gender)
+        gender_combo.addItems(["male", "other", "female"])
+        normalized_gender = self._normalize_gender(gender)
+        gender_combo.setCurrentText(normalized_gender)
         self._char_table.setCellWidget(row, 2, gender_combo)
 
         self._char_table.setItem(row, 3, QTableWidgetItem(description))
@@ -468,7 +468,7 @@ class SettingsPage(BasePage):
             desc_item = self._char_table.item(row, 3)
             name = name_item.text().strip() if name_item else ""
             voice = voice_widget.currentText() if voice_widget else ""
-            gender = gender_widget.currentText() if gender_widget else "unknown"
+            gender = self._normalize_gender(gender_widget.currentText()) if gender_widget else "other"
             description = desc_item.text().strip() if desc_item else ""
             if name:
                 chars.append(
@@ -486,8 +486,8 @@ class SettingsPage(BasePage):
         for item in self.settings.get("pending_character_additions", []) or []:
             self._insert_pending_row(
                 name=item.get("name", ""),
-                gender=item.get("gender", "unknown"),
-                voice=item.get("voice", self._default_voice_for_gender(item.get("gender", "unknown"))),
+                gender=item.get("gender", "other"),
+                voice=item.get("voice", self._default_voice_for_gender(item.get("gender", "other"))),
                 confidence=float(item.get("confidence", 0.0)),
                 source=item.get("source_chapter", ""),
             )
@@ -521,9 +521,9 @@ class SettingsPage(BasePage):
             pending.append(
                 {
                     "name": name,
-                    "gender": (gender_item.text().strip() if gender_item else "unknown") or "unknown",
+                    "gender": self._normalize_gender((gender_item.text().strip() if gender_item else "other") or "other"),
                     "voice": (voice_item.text().strip() if voice_item else "") or self._default_voice_for_gender(
-                        gender_item.text().strip() if gender_item else "unknown"
+                        gender_item.text().strip() if gender_item else "other"
                     ),
                     "confidence": confidence,
                     "source_chapter": source_item.text().strip() if source_item else "",
@@ -532,12 +532,21 @@ class SettingsPage(BasePage):
         return pending
 
     def _default_voice_for_gender(self, gender: str) -> str:
-        gender_lc = (gender or "").strip().lower()
+        gender_lc = self._normalize_gender(gender)
         if gender_lc == "male":
             return self._default_male_voice_combo.currentText() or "am_adam"
         if gender_lc == "female":
-            return self._default_female_voice_combo.currentText() or "af_heart"
+            return self._default_female_voice_combo.currentText() or "af_bella"
         return self._narrator_voice_combo.currentText() or "af_heart"
+
+    @staticmethod
+    def _normalize_gender(gender: str) -> str:
+        gender_lc = (gender or "").strip().lower()
+        if gender_lc == "male":
+            return "male"
+        if gender_lc == "female":
+            return "female"
+        return "other"
 
     # ------------------------------------------------------------------
     # Handlers

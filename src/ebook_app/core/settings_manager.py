@@ -103,7 +103,7 @@ class SettingsManager(QObject):
         # ------------------------------
         "narrator_voice": "af_heart",
         "default_male_voice": "am_adam",
-        "default_female_voice": "af_heart",
+        "default_female_voice": "af_bella",
 
         # Character DB + pending additions
         "character_db": [],

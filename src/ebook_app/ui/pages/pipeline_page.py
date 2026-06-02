@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import html
 import json
+from functools import partial
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
@@ -191,6 +196,10 @@ class PipelinePage(BasePage):
         self._current_book_id: str | None = None
         self._worker: _PipelineWorker | None = None
         self._review_chapters: list[dict[str, Any]] = []
+        self._current_review_chapter_id: str | None = None
+        self._current_review_segments: list[dict[str, Any]] = []
+        self._current_review_row_segment_indexes: list[int] = []
+        self._current_review_segment_file: Path | None = None
         super().__init__(**kwargs)
         self._reload_projects()
 
@@ -303,12 +312,9 @@ class PipelinePage(BasePage):
         self._run_selected_btn = QPushButton("Run to Review (Scrape → Clean → Semantic)")
         self._run_selected_btn.clicked.connect(self._on_run_to_review)
 
-        self._continue_audio_btn = QPushButton("Continue Audio + Export")
-        self._continue_audio_btn.clicked.connect(self._on_continue_audio)
-
         action_row.addWidget(self._check_index_btn)
         action_row.addWidget(self._run_selected_btn)
-        action_row.addWidget(self._continue_audio_btn)
+        action_row.addStretch()
 
         inventory_layout.addRow("", action_row)
         pipeline_layout.addWidget(inventory_group)
@@ -433,6 +439,27 @@ class PipelinePage(BasePage):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         outer.addWidget(splitter)
+
+        segments_group = QGroupBox("Semantic Segments (speaker review)")
+        segments_layout = QVBoxLayout(segments_group)
+        self._segment_table = QTableWidget(0, 3)
+        self._segment_table.setHorizontalHeaderLabels(["Text", "Speaker", "Type"])
+        self._segment_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._segment_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._segment_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        segments_layout.addWidget(self._segment_table)
+
+        segment_btns = QHBoxLayout()
+        self._segment_save_btn = QPushButton("Save Segment Speaker Changes")
+        self._segment_save_btn.clicked.connect(self._on_save_segment_speakers)
+        segment_btns.addWidget(self._segment_save_btn)
+
+        self._continue_audio_btn = QPushButton("Confirm Chapter Review + Continue Audio + Export")
+        self._continue_audio_btn.clicked.connect(self._on_confirm_review_and_continue)
+        segment_btns.addWidget(self._continue_audio_btn)
+        segment_btns.addStretch()
+        segments_layout.addLayout(segment_btns)
+        outer.addWidget(segments_group)
 
         # Default message
         self._review_text_view.setPlainText(
@@ -711,11 +738,13 @@ class PipelinePage(BasePage):
                 "Load or create a book project to review chapter content."
             )
             self._detected_char_table.setRowCount(0)
+            self._segment_table.setRowCount(0)
             return
 
         selected_chapter_idx = self._review_chapter_combo.currentData()
         chapters = self.project_manager.get_chapters() or []
         self._review_chapters = chapters
+        self._load_detected_characters()
 
         # Populate chapter dropdown
         self._review_chapter_combo.blockSignals(True)
@@ -736,12 +765,16 @@ class PipelinePage(BasePage):
             self._review_chapter_combo.setCurrentIndex(index_to_use)
             self._on_review_chapter_changed(index_to_use)
 
-        self._load_detected_characters()
-
     def _on_review_chapter_changed(self, index: int) -> None:
         """
         Loads cleaned text → cleaned_final → semantic segments → final segments.
         """
+        self._current_review_chapter_id = None
+        self._current_review_segment_file = None
+        self._current_review_segments = []
+        self._current_review_row_segment_indexes = []
+        self._segment_table.setRowCount(0)
+
         if index < 0 or index >= len(self._review_chapters):
             self._review_text_view.setPlainText("")
             return
@@ -749,6 +782,7 @@ class PipelinePage(BasePage):
         chapter = self._review_chapters[index]
         work_dir = self.project_manager.get_work_dir()
         chapter_id = self._chapter_id_for_offset(index)
+        self._current_review_chapter_id = chapter_id
 
         # --------------------------------------------------------------
         # 1. cleaned_final.txt (user-approved cleaned text)
@@ -775,17 +809,7 @@ class PipelinePage(BasePage):
                 ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
                 segments = ch_data.get("segments", [])
                 if segments:
-                    lines = []
-                    for seg in segments:
-                        text = seg.get("text", "").strip()
-                        if not text:
-                            continue
-                        if seg.get("type") == "narration":
-                            lines.append(text)
-                        else:
-                            speaker = seg.get("speaker", "narrator").upper()
-                            lines.append(f"[{speaker}] {text}")
-                    self._review_text_view.setPlainText("\n\n".join(lines))
+                    self._load_review_segments(chapter_info_file, segments)
                     return
             except Exception:
                 pass
@@ -795,6 +819,174 @@ class PipelinePage(BasePage):
         # --------------------------------------------------------------
         content = str(chapter.get("content", "")).strip()
         self._review_text_view.setPlainText(content or "[No content available for this chapter.]")
+
+    def _load_review_segments(self, chapter_info_file: Path, segments: list[dict[str, Any]]) -> None:
+        self._current_review_segment_file = chapter_info_file
+        self._current_review_segments = [dict(seg) for seg in segments]
+        self._current_review_row_segment_indexes = []
+        self._segment_table.setRowCount(0)
+
+        speakers = ["narrator", *self._detected_character_names()]
+
+        for seg_index, seg in enumerate(self._current_review_segments):
+            text = str(seg.get("text", "")).strip()
+            if not text:
+                continue
+            seg_type = str(seg.get("type", "narration")).strip() or "narration"
+            speaker = str(seg.get("speaker", "narrator")).strip() or "narrator"
+
+            row = self._segment_table.rowCount()
+            self._segment_table.insertRow(row)
+            self._current_review_row_segment_indexes.append(seg_index)
+
+            text_item = QTableWidgetItem(text)
+            self._segment_table.setItem(row, 0, text_item)
+
+            speaker_combo = QComboBox()
+            speaker_combo.addItems(speakers)
+            if speaker not in speakers:
+                speaker_combo.addItem(speaker)
+            speaker_combo.setCurrentText(speaker)
+            speaker_combo.currentTextChanged.connect(self._render_current_segments_preview)
+            self._segment_table.setCellWidget(row, 1, speaker_combo)
+
+            type_item = QTableWidgetItem(seg_type)
+            self._segment_table.setItem(row, 2, type_item)
+
+        self._render_current_segments_preview()
+
+    def _detected_character_names(self) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for row in range(self._detected_char_table.rowCount()):
+            item = self._detected_char_table.item(row, 0)
+            if item is None:
+                continue
+            name = item.text().strip()
+            key = name.lower()
+            if name and key not in seen:
+                names.append(name)
+                seen.add(key)
+        return names
+
+    def _refresh_segment_speaker_options(self) -> None:
+        if self._segment_table.rowCount() <= 0:
+            return
+        speakers = ["narrator", *self._detected_character_names()]
+        for row in range(self._segment_table.rowCount()):
+            widget = self._segment_table.cellWidget(row, 1)
+            if not isinstance(widget, QComboBox):
+                continue
+            current = widget.currentText().strip() or "narrator"
+            widget.blockSignals(True)
+            widget.clear()
+            widget.addItems(speakers)
+            if current not in speakers:
+                widget.addItem(current)
+            widget.setCurrentText(current)
+            widget.blockSignals(False)
+        self._render_current_segments_preview()
+
+    def _speaker_color(self, speaker: str) -> str:
+        key = (speaker or "narrator").strip().lower()
+        digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+        hue = int(digest[:8], 16) % 360
+        return f"hsl({hue}, 60%, 78%)"
+
+    def _render_current_segments_preview(self) -> None:
+        if self._segment_table.rowCount() <= 0:
+            return
+        lines: list[str] = []
+        for row in range(self._segment_table.rowCount()):
+            text_item = self._segment_table.item(row, 0)
+            type_item = self._segment_table.item(row, 2)
+            speaker_widget = self._segment_table.cellWidget(row, 1)
+            text = text_item.text().strip() if text_item else ""
+            if not text:
+                continue
+            seg_type = type_item.text().strip().lower() if type_item else "narration"
+            speaker = (
+                speaker_widget.currentText().strip()
+                if isinstance(speaker_widget, QComboBox)
+                else "narrator"
+            ) or "narrator"
+            color = self._speaker_color(speaker)
+            text_html = html.escape(text)
+            speaker_html = html.escape(speaker.upper())
+            if seg_type == "narration":
+                lines.append(f"<p style='margin:0 0 8px 0'>{text_html}</p>")
+            else:
+                lines.append(
+                    f"<p style='margin:0 0 8px 0'>"
+                    f"<span style='background:{color};padding:1px 6px;border-radius:4px'>[{speaker_html}]</span> "
+                    f"{text_html}</p>"
+                )
+        self._review_text_view.setHtml("".join(lines))
+
+    def _on_save_segment_speakers(self) -> None:
+        chapter_id = self._current_review_chapter_id
+        if not chapter_id:
+            self.log.log("Select a chapter first.", level="WARNING")
+            return
+        if self._segment_table.rowCount() <= 0:
+            self.log.log("No semantic segments to save for this chapter.", level="WARNING")
+            return
+
+        updated_segments = copy.deepcopy(self._current_review_segments)
+        for row in range(self._segment_table.rowCount()):
+            text_item = self._segment_table.item(row, 0)
+            type_item = self._segment_table.item(row, 2)
+            speaker_widget = self._segment_table.cellWidget(row, 1)
+            text = text_item.text().strip() if text_item else ""
+            if not text:
+                continue
+            seg_type = type_item.text().strip() if type_item else "narration"
+            speaker = (
+                speaker_widget.currentText().strip()
+                if isinstance(speaker_widget, QComboBox)
+                else "narrator"
+            ) or "narrator"
+            if row >= len(self._current_review_row_segment_indexes):
+                continue
+            seg_index = self._current_review_row_segment_indexes[row]
+            if not (0 <= seg_index < len(updated_segments)):
+                continue
+            updated = updated_segments[seg_index]
+            updated["text"] = text
+            updated["type"] = seg_type
+            updated["speaker"] = speaker
+            if "speaker_confidence" in updated:
+                updated["speaker_confidence"] = 1.0
+
+        work_dir = self.project_manager.get_work_dir()
+        info_path = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
+        if info_path.exists():
+            data = json.loads(info_path.read_text(encoding="utf-8"))
+            data["segments"] = updated_segments
+            info_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        root_final_paths = [
+            work_dir / f"{chapter_id}_segments_final.json",
+            work_dir / f"{chapter_id}_chapter_info_final.json",
+        ]
+        for path in root_final_paths:
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data["segments"] = updated_segments
+            else:
+                data = updated_segments
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        self._current_review_segments = updated_segments
+        self.log.log("Saved segment speaker edits for chapter review.", level="SUCCESS")
+        self._render_current_segments_preview()
+
+    def _on_confirm_review_and_continue(self) -> None:
+        if self._segment_table.rowCount() > 0:
+            self._on_save_segment_speakers()
+        self._on_continue_audio()
 
     # ------------------------------------------------------------------
     # Character Loading (Phase 6)
@@ -831,7 +1023,7 @@ class PipelinePage(BasePage):
                         continue
 
                     key = name.lower()
-                    gender = str(char.get("gender", "unknown")).strip()
+                    gender = self._normalize_gender(str(char.get("gender", "other")).strip())
                     confidence = float(char.get("confidence", 0.0))
 
                     existing = aggregated.get(key)
@@ -857,7 +1049,7 @@ class PipelinePage(BasePage):
             if not name:
                 continue
             key = name.lower()
-            gender = str(item.get("gender", "unknown")).strip()
+            gender = self._normalize_gender(str(item.get("gender", "other")).strip())
             voice = str(item.get("voice", "")).strip() or self._default_voice_for_gender(gender)
             confidence = float(item.get("confidence", 0.0))
             source = str(item.get("source_chapter", "")).strip()
@@ -882,6 +1074,7 @@ class PipelinePage(BasePage):
                 confidence=item["confidence"],
                 source=", ".join(sorted(item["sources"])),
             )
+        self._refresh_segment_speaker_options()
 
     def _chapter_id_for_offset(self, offset: int) -> str:
         selected = self.project_manager.get_selected_range() if self.project_manager else {}
@@ -895,7 +1088,7 @@ class PipelinePage(BasePage):
         self,
         *,
         name: str = "",
-        gender: str = "unknown",
+        gender: str = "other",
         voice: str = "",
         confidence: float = 0.0,
         source: str = "",
@@ -910,14 +1103,18 @@ class PipelinePage(BasePage):
         # Name
         self._detected_char_table.setItem(row, 0, QTableWidgetItem(name))
 
-        # Gender
-        self._detected_char_table.setItem(row, 1, QTableWidgetItem(gender))
+        # Gender dropdown
+        gender_combo = QComboBox()
+        gender_combo.addItems(["male", "other", "female"])
+        normalized_gender = self._normalize_gender(gender)
+        gender_combo.setCurrentText(normalized_gender)
+        self._detected_char_table.setCellWidget(row, 1, gender_combo)
 
         # Voice dropdown
         voice_combo = QComboBox()
         voice_combo.addItems(KOKORO_VOICE_LIST)
 
-        selected_voice = voice.strip() or self._default_voice_for_gender(gender)
+        selected_voice = voice.strip() or self._default_voice_for_gender(normalized_gender)
         if selected_voice in KOKORO_VOICE_LIST:
             voice_combo.setCurrentText(selected_voice)
 
@@ -930,6 +1127,10 @@ class PipelinePage(BasePage):
         # Source chapters
         self._detected_char_table.setItem(row, 4, QTableWidgetItem(source))
 
+        gender_combo.currentTextChanged.connect(
+            partial(self._on_detected_gender_changed, voice_combo=voice_combo)
+        )
+
     def _default_voice_for_gender(self, gender: str) -> str:
         """
         Returns the default voice for a given gender, using settings:
@@ -941,8 +1142,24 @@ class PipelinePage(BasePage):
         if gender_lc == "male":
             return self.settings.get("default_male_voice", "am_adam")
         if gender_lc == "female":
-            return self.settings.get("default_female_voice", "af_heart")
+            return self.settings.get("default_female_voice", "af_bella")
         return self.settings.get("narrator_voice", "af_heart")
+
+    @staticmethod
+    def _normalize_gender(gender: str) -> str:
+        gender_lc = (gender or "").strip().lower()
+        if gender_lc == "male":
+            return "male"
+        if gender_lc == "female":
+            return "female"
+        return "other"
+
+    def _on_detected_gender_changed(self, gender: str, voice_combo: QComboBox) -> None:
+        if not isinstance(voice_combo, QComboBox):
+            return
+        preferred = self._default_voice_for_gender(gender)
+        if preferred in KOKORO_VOICE_LIST:
+            voice_combo.setCurrentText(preferred)
 
     # ------------------------------------------------------------------
     # Character editing actions
@@ -976,7 +1193,7 @@ class PipelinePage(BasePage):
 
         for row in range(self._detected_char_table.rowCount()):
             name_item = self._detected_char_table.item(row, 0)
-            gender_item = self._detected_char_table.item(row, 1)
+            gender_widget = self._detected_char_table.cellWidget(row, 1)
             voice_widget = self._detected_char_table.cellWidget(row, 2)
             confidence_item = self._detected_char_table.item(row, 3)
             source_item = self._detected_char_table.item(row, 4)
@@ -985,7 +1202,10 @@ class PipelinePage(BasePage):
             if not name:
                 continue
 
-            gender = (gender_item.text().strip() if gender_item else "unknown") or "unknown"
+            if isinstance(gender_widget, QComboBox):
+                gender = self._normalize_gender(gender_widget.currentText())
+            else:
+                gender = "other"
 
             voice = (
                 voice_widget.currentText().strip()
@@ -1026,3 +1246,4 @@ class PipelinePage(BasePage):
             )
         else:
             self.log.log("Saved character edits.", level="SUCCESS")
+        self._refresh_segment_speaker_options()
