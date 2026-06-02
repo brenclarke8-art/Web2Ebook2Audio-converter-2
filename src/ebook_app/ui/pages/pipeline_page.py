@@ -116,18 +116,49 @@ class _PipelineWorker(QThread):
             f"Index: raw={inventory['raw_count']}, valid={inventory['valid_count']}."
         )
 
+    def _hydrate_cached_index(self, ctrl) -> dict | None:
+        get_chapter_urls = getattr(self._pm, "get_chapter_urls", None)
+        if not callable(get_chapter_urls):
+            return None
+
+        cached_urls = list(get_chapter_urls() or [])
+        if not cached_urls:
+            return None
+
+        ctrl.chapter_urls = cached_urls
+
+        get_inventory = getattr(self._pm, "get_inventory", None)
+        inventory = get_inventory() if callable(get_inventory) else {}
+        raw_count = int(inventory.get("raw_chapter_count", len(cached_urls)))
+        valid_count = len(cached_urls)
+
+        self.log_message.emit(
+            f"Using cached index inventory ({valid_count} valid chapters).",
+            "INFO",
+        )
+        self.inventory_ready.emit(
+            {
+                "raw_count": raw_count,
+                "valid_count": valid_count,
+                "chapter_urls": cached_urls,
+            }
+        )
+        return {"raw_count": raw_count, "valid_count": valid_count}
+
     def _run_to_review(self, ctrl) -> None:
         ctrl.set_chapter_range(self._start, self._end)
 
         # Phase 1–2
-        self.log_message.emit("Scraping index…", "INFO")
-        ctrl.scrape_index()
-        inventory = ctrl.get_chapter_inventory()
-        self.inventory_ready.emit({
-            "raw_count": inventory["raw_count"],
-            "valid_count": inventory["valid_count"],
-            "chapter_urls": ctrl.chapter_urls,
-        })
+        inventory = self._hydrate_cached_index(ctrl)
+        if inventory is None:
+            self.log_message.emit("Scraping index…", "INFO")
+            ctrl.scrape_index()
+            inventory = ctrl.get_chapter_inventory()
+            self.inventory_ready.emit({
+                "raw_count": inventory["raw_count"],
+                "valid_count": inventory["valid_count"],
+                "chapter_urls": ctrl.chapter_urls,
+            })
 
         if self._end > inventory["valid_count"]:
             self.failed.emit("Requested end chapter exceeds available valid chapters.")
@@ -196,6 +227,9 @@ class PipelinePage(BasePage):
         self._current_book_id: str | None = None
         self._worker: _PipelineWorker | None = None
         self._review_chapters: list[dict[str, Any]] = []
+        self._review_stage_chapter_combos: list[QComboBox] = []
+        self._review_stage_views: dict[str, QTextEdit] = {}
+        self._syncing_review_combo = False
         self._current_review_chapter_id: str | None = None
         self._current_review_segments: list[dict[str, Any]] = []
         self._current_review_row_segment_indexes: list[int] = []
@@ -361,7 +395,7 @@ class PipelinePage(BasePage):
         controls.addWidget(QLabel("Chapter:"))
 
         self._review_chapter_combo = QComboBox()
-        self._review_chapter_combo.currentIndexChanged.connect(self._on_review_chapter_changed)
+        self._review_chapter_combo.currentIndexChanged.connect(self._on_review_chapter_combo_changed)
         controls.addWidget(self._review_chapter_combo, 1)
 
         self._review_refresh_btn = QPushButton("Refresh")
@@ -381,9 +415,23 @@ class PipelinePage(BasePage):
         chapter_group = QGroupBox("Chapter Content (cleaned → semantic → final)")
         chapter_layout = QVBoxLayout(chapter_group)
 
-        self._review_text_view = QTextEdit()
-        self._review_text_view.setReadOnly(True)
-        chapter_layout.addWidget(self._review_text_view)
+        self._review_stage_views = {}
+        self._review_stage_chapter_combos = []
+        self._review_stage_tabs = QTabWidget()
+        for key, label in [
+            ("scraped", "Scraped"),
+            ("cleaned", "Cleaned"),
+            ("cleaned_final", "Cleaned Final"),
+            ("semantic", "Semantic Segments"),
+            ("final_segments", "Final Segments"),
+        ]:
+            page, chapter_combo, stage_view = self._build_review_stage_page()
+            chapter_combo.currentIndexChanged.connect(self._on_review_stage_chapter_changed)
+            self._review_stage_chapter_combos.append(chapter_combo)
+            self._review_stage_views[key] = stage_view
+            self._review_stage_tabs.addTab(page, label)
+        chapter_layout.addWidget(self._review_stage_tabs)
+        self._review_text_view = self._review_stage_views["semantic"]
 
         splitter.addWidget(chapter_group)
 
@@ -462,9 +510,76 @@ class PipelinePage(BasePage):
         outer.addWidget(segments_group)
 
         # Default message
-        self._review_text_view.setPlainText(
-            "Run 'Run to Review' to load cleaned and semantic chapter content."
-        )
+        default_msg = "Run 'Run to Review' to load chapter review content."
+        for view in self._review_stage_views.values():
+            view.setPlainText(default_msg)
+
+    def _build_review_stage_page(self) -> tuple[QWidget, QComboBox, QTextEdit]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Chapter:"))
+        chapter_combo = QComboBox()
+        controls.addWidget(chapter_combo, 1)
+        layout.addLayout(controls)
+
+        text_view = QTextEdit()
+        text_view.setReadOnly(True)
+        layout.addWidget(text_view)
+        return page, chapter_combo, text_view
+
+    def _set_review_stage_chapter_index(self, index: int) -> None:
+        self._syncing_review_combo = True
+        try:
+            for combo in self._review_stage_chapter_combos:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(False)
+        finally:
+            self._syncing_review_combo = False
+
+    def _on_review_chapter_combo_changed(self, index: int) -> None:
+        self._set_review_stage_chapter_index(index)
+        self._on_review_chapter_changed(index)
+
+    def _on_review_stage_chapter_changed(self, index: int) -> None:
+        if self._syncing_review_combo:
+            return
+        self._review_chapter_combo.setCurrentIndex(index)
+
+    def _populate_review_chapter_combo(self, combo: QComboBox, chapters: list[dict[str, Any]]) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        for i, chapter in enumerate(chapters):
+            title = str(chapter.get("title", "")).strip() or f"Chapter {i + 1}"
+            combo.addItem(f"{i + 1}. {title}", i)
+        combo.blockSignals(False)
+
+    def _set_stage_plain_text(self, stage: str, text: str) -> None:
+        view = self._review_stage_views.get(stage)
+        if view is not None:
+            view.setPlainText(text)
+
+    def _segments_to_html(self, segments: list[dict[str, Any]]) -> str:
+        lines: list[str] = []
+        for seg in segments:
+            text = str(seg.get("text", "")).strip()
+            if not text:
+                continue
+            seg_type = str(seg.get("type", "narration")).strip().lower() or "narration"
+            speaker = str(seg.get("speaker", "narrator")).strip() or "narrator"
+            color = self._speaker_color(speaker)
+            text_html = html.escape(text)
+            speaker_html = html.escape(speaker.upper())
+            if seg_type == "narration":
+                lines.append(f"<p style='margin:0 0 8px 0'>{text_html}</p>")
+            else:
+                lines.append(
+                    f"<p style='margin:0 0 8px 0'>"
+                    f"<span style='background:{color};padding:1px 6px;border-radius:4px'>[{speaker_html}]</span> "
+                    f"{text_html}</p>"
+                )
+        return "".join(lines)
 
     def _require_project(self) -> bool:
         if not self.project_manager:
@@ -733,10 +848,14 @@ class PipelinePage(BasePage):
         """
         if not self.project_manager or not self.project_manager.current_book_id:
             self._review_chapter_combo.clear()
+            for combo in self._review_stage_chapter_combos:
+                combo.clear()
             self._review_chapters = []
-            self._review_text_view.setPlainText(
-                "Load or create a book project to review chapter content."
-            )
+            self._set_stage_plain_text("scraped", "Load or create a book project to review chapter content.")
+            self._set_stage_plain_text("cleaned", "Load or create a book project to review chapter content.")
+            self._set_stage_plain_text("cleaned_final", "Load or create a book project to review chapter content.")
+            self._set_stage_plain_text("semantic", "Load or create a book project to review chapter content.")
+            self._set_stage_plain_text("final_segments", "Load or create a book project to review chapter content.")
             self._detected_char_table.setRowCount(0)
             self._segment_table.setRowCount(0)
             return
@@ -746,28 +865,31 @@ class PipelinePage(BasePage):
         self._review_chapters = chapters
         self._load_detected_characters()
 
-        # Populate chapter dropdown
-        self._review_chapter_combo.blockSignals(True)
-        self._review_chapter_combo.clear()
-        for i, chapter in enumerate(chapters):
-            title = str(chapter.get("title", "")).strip() or f"Chapter {i + 1}"
-            self._review_chapter_combo.addItem(f"{i + 1}. {title}", i)
-        self._review_chapter_combo.blockSignals(False)
+        # Populate chapter dropdowns
+        self._populate_review_chapter_combo(self._review_chapter_combo, chapters)
+        for combo in self._review_stage_chapter_combos:
+            self._populate_review_chapter_combo(combo, chapters)
 
         if not chapters:
-            self._review_text_view.setPlainText("No scraped chapters found yet.")
+            self._set_stage_plain_text("scraped", "No scraped chapters found yet.")
+            self._set_stage_plain_text("cleaned", "No cleaned chapter text found yet.")
+            self._set_stage_plain_text("cleaned_final", "No final cleaned chapter text found yet.")
+            self._set_stage_plain_text("semantic", "No semantic segments found yet.")
+            self._set_stage_plain_text("final_segments", "No final segments found yet.")
         else:
             index_to_use = 0
             if isinstance(selected_chapter_idx, int):
                 found = self._review_chapter_combo.findData(selected_chapter_idx)
                 if found >= 0:
                     index_to_use = found
+            self._review_chapter_combo.blockSignals(True)
             self._review_chapter_combo.setCurrentIndex(index_to_use)
-            self._on_review_chapter_changed(index_to_use)
+            self._review_chapter_combo.blockSignals(False)
+            self._on_review_chapter_combo_changed(index_to_use)
 
     def _on_review_chapter_changed(self, index: int) -> None:
         """
-        Loads cleaned text → cleaned_final → semantic segments → final segments.
+        Loads scraped/cleaned/semantic/final review sources for a chapter.
         """
         self._current_review_chapter_id = None
         self._current_review_segment_file = None
@@ -776,7 +898,11 @@ class PipelinePage(BasePage):
         self._segment_table.setRowCount(0)
 
         if index < 0 or index >= len(self._review_chapters):
-            self._review_text_view.setPlainText("")
+            self._set_stage_plain_text("scraped", "")
+            self._set_stage_plain_text("cleaned", "")
+            self._set_stage_plain_text("cleaned_final", "")
+            self._set_stage_plain_text("semantic", "")
+            self._set_stage_plain_text("final_segments", "")
             return
 
         chapter = self._review_chapters[index]
@@ -784,41 +910,66 @@ class PipelinePage(BasePage):
         chapter_id = self._chapter_id_for_offset(index)
         self._current_review_chapter_id = chapter_id
 
-        # --------------------------------------------------------------
-        # 1. cleaned_final.txt (user-approved cleaned text)
-        # --------------------------------------------------------------
-        cleaned_final = work_dir / f"{chapter_id}_cleaned_final.txt"
-        if cleaned_final.exists():
-            self._review_text_view.setPlainText(cleaned_final.read_text(encoding="utf-8"))
-            return
+        # 1. Raw scraped content
+        scraped_content = str(chapter.get("content", "")).strip()
+        self._set_stage_plain_text("scraped", scraped_content or "[No content available for this chapter.]")
 
-        # --------------------------------------------------------------
         # 2. cleaned.txt (deterministic cleaned text)
-        # --------------------------------------------------------------
         cleaned_basic = work_dir / f"{chapter_id}_cleaned.txt"
         if cleaned_basic.exists():
-            self._review_text_view.setPlainText(cleaned_basic.read_text(encoding="utf-8"))
-            return
+            self._set_stage_plain_text("cleaned", cleaned_basic.read_text(encoding="utf-8"))
+        else:
+            self._set_stage_plain_text("cleaned", "[No deterministic cleaned text available for this chapter.]")
 
-        # --------------------------------------------------------------
-        # 3. semantic segments (chapter_info.json)
-        # --------------------------------------------------------------
+        # 3. cleaned_final.txt (user-approved cleaned text)
+        cleaned_final = work_dir / f"{chapter_id}_cleaned_final.txt"
+        if cleaned_final.exists():
+            self._set_stage_plain_text("cleaned_final", cleaned_final.read_text(encoding="utf-8"))
+        else:
+            self._set_stage_plain_text("cleaned_final", "[No final cleaned text available for this chapter.]")
+
+        # 4. semantic segments (chapter_info.json)
+        segments: list[dict[str, Any]] = []
         chapter_info_file = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
         if chapter_info_file.exists():
             try:
                 ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
-                segments = ch_data.get("segments", [])
-                if segments:
-                    self._load_review_segments(chapter_info_file, segments)
-                    return
+                segments = [copy.deepcopy(seg) for seg in ch_data.get("segments", []) if isinstance(seg, dict)]
             except Exception:
-                pass
+                segments = []
+        if segments:
+            self._load_review_segments(chapter_info_file, segments)
+        else:
+            self._set_stage_plain_text("semantic", "[No semantic segments available for this chapter.]")
 
-        # --------------------------------------------------------------
-        # 4. fallback: raw scraped content
-        # --------------------------------------------------------------
-        content = str(chapter.get("content", "")).strip()
-        self._review_text_view.setPlainText(content or "[No content available for this chapter.]")
+        # 5. final segments (segments_final/chapter_info_final)
+        final_segments: list[dict[str, Any]] = []
+        for candidate in [
+            work_dir / f"{chapter_id}_segments_final.json",
+            work_dir / f"{chapter_id}_chapter_info_final.json",
+        ]:
+            if not candidate.exists():
+                continue
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                payload_segments = payload.get("segments", [])
+            elif isinstance(payload, list):
+                payload_segments = payload
+            else:
+                payload_segments = []
+            final_segments = [copy.deepcopy(seg) for seg in payload_segments if isinstance(seg, dict)]
+            if final_segments:
+                break
+
+        final_view = self._review_stage_views.get("final_segments")
+        if final_view is not None:
+            if final_segments:
+                final_view.setHtml(self._segments_to_html(final_segments))
+            else:
+                final_view.setPlainText("[No final segments available for this chapter.]")
 
     def _load_review_segments(self, chapter_info_file: Path, segments: list[dict[str, Any]]) -> None:
         self._current_review_segment_file = chapter_info_file
@@ -896,7 +1047,7 @@ class PipelinePage(BasePage):
     def _render_current_segments_preview(self) -> None:
         if self._segment_table.rowCount() <= 0:
             return
-        lines: list[str] = []
+        preview_segments: list[dict[str, Any]] = []
         for row in range(self._segment_table.rowCount()):
             text_item = self._segment_table.item(row, 0)
             type_item = self._segment_table.item(row, 2)
@@ -910,18 +1061,8 @@ class PipelinePage(BasePage):
                 if isinstance(speaker_widget, QComboBox)
                 else "narrator"
             ) or "narrator"
-            color = self._speaker_color(speaker)
-            text_html = html.escape(text)
-            speaker_html = html.escape(speaker.upper())
-            if seg_type == "narration":
-                lines.append(f"<p style='margin:0 0 8px 0'>{text_html}</p>")
-            else:
-                lines.append(
-                    f"<p style='margin:0 0 8px 0'>"
-                    f"<span style='background:{color};padding:1px 6px;border-radius:4px'>[{speaker_html}]</span> "
-                    f"{text_html}</p>"
-                )
-        self._review_text_view.setHtml("".join(lines))
+            preview_segments.append({"text": text, "type": seg_type, "speaker": speaker})
+        self._review_text_view.setHtml(self._segments_to_html(preview_segments))
 
     def _on_save_segment_speakers(self) -> None:
         chapter_id = self._current_review_chapter_id
