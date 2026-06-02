@@ -934,7 +934,7 @@ class PipelinePage(BasePage):
         if chapter_info_file.exists():
             try:
                 ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
-                segments = [dict(seg) for seg in ch_data.get("segments", []) if isinstance(seg, dict)]
+                segments = [copy.deepcopy(seg) for seg in ch_data.get("segments", []) if isinstance(seg, dict)]
             except Exception:
                 segments = []
         if segments:
@@ -960,7 +960,7 @@ class PipelinePage(BasePage):
                 payload_segments = payload
             else:
                 payload_segments = []
-            final_segments = [dict(seg) for seg in payload_segments if isinstance(seg, dict)]
+            final_segments = [copy.deepcopy(seg) for seg in payload_segments if isinstance(seg, dict)]
             if final_segments:
                 break
 
