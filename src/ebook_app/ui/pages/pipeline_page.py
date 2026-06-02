@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import html
 import json
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -886,7 +889,8 @@ class PipelinePage(BasePage):
 
     def _speaker_color(self, speaker: str) -> str:
         key = (speaker or "narrator").strip().lower()
-        hue = sum(ord(ch) for ch in key) % 360
+        digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+        hue = int(digest[:8], 16) % 360
         return f"hsl({hue}, 60%, 78%)"
 
     def _render_current_segments_preview(self) -> None:
@@ -928,7 +932,7 @@ class PipelinePage(BasePage):
             self.log.log("No semantic segments to save for this chapter.", level="WARNING")
             return
 
-        updated_segments = [dict(seg) for seg in self._current_review_segments]
+        updated_segments = copy.deepcopy(self._current_review_segments)
         for row in range(self._segment_table.rowCount()):
             text_item = self._segment_table.item(row, 0)
             type_item = self._segment_table.item(row, 2)
@@ -1124,7 +1128,7 @@ class PipelinePage(BasePage):
         self._detected_char_table.setItem(row, 4, QTableWidgetItem(source))
 
         gender_combo.currentTextChanged.connect(
-            lambda new_gender, combo=voice_combo: self._on_detected_gender_changed(new_gender, combo)
+            partial(self._on_detected_gender_changed, voice_combo=voice_combo)
         )
 
     def _default_voice_for_gender(self, gender: str) -> str:

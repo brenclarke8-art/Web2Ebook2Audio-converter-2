@@ -29,6 +29,7 @@ class TextCleaner:
         "reset",
         "report bug",
     }
+    MIN_CONTROL_MATCHES = 4
 
     @staticmethod
     def remove_zero_width_chars(text: str) -> str:
@@ -48,7 +49,7 @@ class TextCleaner:
         lines = text.split("\n")
         normalized_lines = [" ".join(line.strip().lower().split()) for line in lines]
         control_matches = sum(1 for line in normalized_lines if line in TextCleaner.CONTROL_TOKENS)
-        if control_matches < 4:
+        if control_matches < TextCleaner.MIN_CONTROL_MATCHES:
             return text
         kept = [line for line, normalized in zip(lines, normalized_lines) if normalized not in TextCleaner.CONTROL_TOKENS]
         return "\n".join(kept)
