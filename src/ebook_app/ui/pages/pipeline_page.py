@@ -116,18 +116,49 @@ class _PipelineWorker(QThread):
             f"Index: raw={inventory['raw_count']}, valid={inventory['valid_count']}."
         )
 
+    def _hydrate_cached_index(self, ctrl) -> dict | None:
+        get_chapter_urls = getattr(self._pm, "get_chapter_urls", None)
+        if not callable(get_chapter_urls):
+            return None
+
+        cached_urls = list(get_chapter_urls() or [])
+        if not cached_urls:
+            return None
+
+        ctrl.chapter_urls = cached_urls
+
+        get_inventory = getattr(self._pm, "get_inventory", None)
+        inventory = get_inventory() if callable(get_inventory) else {}
+        raw_count = int(inventory.get("raw_chapter_count", len(cached_urls)))
+        valid_count = max(int(inventory.get("valid_chapter_count", len(cached_urls))), len(cached_urls))
+
+        self.log_message.emit(
+            f"Using cached index inventory ({valid_count} valid chapters).",
+            "INFO",
+        )
+        self.inventory_ready.emit(
+            {
+                "raw_count": raw_count,
+                "valid_count": valid_count,
+                "chapter_urls": cached_urls,
+            }
+        )
+        return {"raw_count": raw_count, "valid_count": valid_count}
+
     def _run_to_review(self, ctrl) -> None:
         ctrl.set_chapter_range(self._start, self._end)
 
         # Phase 1–2
-        self.log_message.emit("Scraping index…", "INFO")
-        ctrl.scrape_index()
-        inventory = ctrl.get_chapter_inventory()
-        self.inventory_ready.emit({
-            "raw_count": inventory["raw_count"],
-            "valid_count": inventory["valid_count"],
-            "chapter_urls": ctrl.chapter_urls,
-        })
+        inventory = self._hydrate_cached_index(ctrl)
+        if inventory is None:
+            self.log_message.emit("Scraping index…", "INFO")
+            ctrl.scrape_index()
+            inventory = ctrl.get_chapter_inventory()
+            self.inventory_ready.emit({
+                "raw_count": inventory["raw_count"],
+                "valid_count": inventory["valid_count"],
+                "chapter_urls": ctrl.chapter_urls,
+            })
 
         if self._end > inventory["valid_count"]:
             self.failed.emit("Requested end chapter exceeds available valid chapters.")

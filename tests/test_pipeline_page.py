@@ -72,6 +72,14 @@ class _LogCapture:
         self.messages.append((message, level))
 
 
+class _SignalCapture:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def emit(self, *args) -> None:
+        self.calls.append(args)
+
+
 def test_is_busy_ignores_deleted_qt_worker() -> None:
     page = SimpleNamespace(_worker=_DeletedWorker())
 
@@ -119,5 +127,53 @@ def test_on_worker_finished_clears_worker_reference(monkeypatch) -> None:
             "Character Review Required",
             "Chapter parsing is complete. Review scraped text and detected "
             "characters in the Review tab, then click 'Continue Audio + Export'.",
+        )
+    ]
+
+
+def test_run_to_review_reuses_cached_index_inventory(tmp_path) -> None:
+    worker = _PipelineWorker(
+        project_manager=SimpleNamespace(
+            get_chapter_urls=lambda: ["u1", "u2", "u3"],
+            get_inventory=lambda: {"raw_chapter_count": 5, "valid_chapter_count": 3},
+        ),
+        settings=SimpleNamespace(),
+        mode=_PipelineWorker.RUN_TO_REVIEW,
+        start_ch=1,
+        end_ch=2,
+    )
+    worker.log_message = _SignalCapture()
+    worker.inventory_ready = _SignalCapture()
+    worker.finished_ok = _SignalCapture()
+    worker.failed = _SignalCapture()
+
+    review_plan = tmp_path / "semantic_review_plan.json"
+    review_plan.write_text('{"needs_review": []}', encoding="utf-8")
+
+    calls: list[str] = []
+
+    ctrl = SimpleNamespace(
+        work_dir=tmp_path,
+        chapter_urls=[],
+        set_chapter_range=lambda start, end: calls.append(f"range:{start}-{end}"),
+        scrape_index=lambda: calls.append("scrape_index"),
+        scrape_chapters=lambda: calls.append("scrape_chapters"),
+        clean_chapters=lambda: calls.append("clean_chapters"),
+        plan_clean_review=lambda: calls.append("plan_clean_review"),
+        llm_semantic_analysis=lambda: calls.append("llm_semantic_analysis"),
+        normalize_llm_output=lambda: calls.append("normalize_llm_output"),
+        smart_review_dialogue=lambda: calls.append("smart_review_dialogue"),
+    )
+
+    worker._run_to_review(ctrl)
+
+    assert "scrape_index" not in calls
+    assert ctrl.chapter_urls == ["u1", "u2", "u3"]
+    assert worker.inventory_ready.calls == [({"raw_count": 5, "valid_count": 3, "chapter_urls": ["u1", "u2", "u3"]},)]
+    assert worker.failed.calls == []
+    assert worker.finished_ok.calls == [
+        (
+            _PipelineWorker.RUN_TO_REVIEW,
+            "Processing complete. Review detected characters in the Review tab before audio.",
         )
     ]
