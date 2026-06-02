@@ -5,6 +5,30 @@ class TextCleaner:
         "\u200B", "\u200C", "\u200D", "\uFEFF",
         "\u2060", "\u180E",
     ]
+    CONTROL_TOKENS = {
+        "raws",
+        "translate",
+        "forum",
+        "reader settings",
+        "text",
+        "a−",
+        "a-",
+        "a+",
+        "compact",
+        "normal",
+        "wide",
+        "theme",
+        "dark",
+        "sepia",
+        "light",
+        "width",
+        "default",
+        "tools",
+        "bottom",
+        "top",
+        "reset",
+        "report bug",
+    }
 
     @staticmethod
     def remove_zero_width_chars(text: str) -> str:
@@ -20,7 +44,19 @@ class TextCleaner:
         return text.strip()
 
     @staticmethod
+    def remove_reader_controls(text: str) -> str:
+        lines = text.split("\n")
+        normalized_lines = [" ".join(line.strip().lower().split()) for line in lines]
+        control_matches = sum(1 for line in normalized_lines if line in TextCleaner.CONTROL_TOKENS)
+        if control_matches < 4:
+            return text
+        kept = [line for line, normalized in zip(lines, normalized_lines) if normalized not in TextCleaner.CONTROL_TOKENS]
+        return "\n".join(kept)
+
+    @staticmethod
     def clean_text(text: str) -> str:
         return TextCleaner.normalize_whitespace(
-            TextCleaner.remove_zero_width_chars(text)
+            TextCleaner.remove_reader_controls(
+                TextCleaner.remove_zero_width_chars(text)
+            )
         )

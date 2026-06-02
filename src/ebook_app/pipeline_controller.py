@@ -78,7 +78,7 @@ class PipelineController:
         self.voice_router = VoiceRouter(
             character_voices=self.settings.get("character_voice_map", {}) or {},
             default_male_voice=str(self.settings.get("default_male_voice", "am_adam")),
-            default_female_voice=str(self.settings.get("default_female_voice", "af_heart")),
+            default_female_voice=str(self.settings.get("default_female_voice", "af_bella")),
             narrator_voice=str(self.settings.get("narrator_voice", "af_heart")),
         )
 
@@ -711,7 +711,7 @@ class PipelineController:
         # Default voices
         narrator_voice = self.settings.get("narrator_voice", "af_heart")
         default_male = self.settings.get("default_male_voice", "am_adam")
-        default_female = self.settings.get("default_female_voice", "af_heart")
+        default_female = self.settings.get("default_female_voice", "af_bella")
 
         # Pending additions (still stored in settings for UI)
         pending = self.settings.get("pending_character_additions", []) or []
