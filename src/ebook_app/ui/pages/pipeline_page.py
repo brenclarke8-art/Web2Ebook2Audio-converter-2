@@ -130,7 +130,7 @@ class _PipelineWorker(QThread):
         get_inventory = getattr(self._pm, "get_inventory", None)
         inventory = get_inventory() if callable(get_inventory) else {}
         raw_count = int(inventory.get("raw_chapter_count", len(cached_urls)))
-        valid_count = max(int(inventory.get("valid_chapter_count", len(cached_urls))), len(cached_urls))
+        valid_count = len(cached_urls)
 
         self.log_message.emit(
             f"Using cached index inventory ({valid_count} valid chapters).",
