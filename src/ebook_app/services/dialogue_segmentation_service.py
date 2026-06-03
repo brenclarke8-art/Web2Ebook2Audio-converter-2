@@ -54,6 +54,9 @@ If ambiguous:
 - speaker_confidence = 0.0
 
 NEVER guess based on tone, personality, or narrative style.
+When a known-character context block is provided, prefer the canonical known name
+when a title/alias form clearly points to that known character.
+If multiple known characters could match, use "unknown".
 
 ============================================================
 GENDER RULES
@@ -164,7 +167,7 @@ class DialogueSegmentationService:
         *,
         text: str,
         chapter_id: str,
-        known_characters: list[str] | None = None,
+        known_characters: list[str | dict[str, Any]] | None = None,
     ) -> DialogueLLMResult:
         cleaned = self.clean_text_for_llm(text)
         if not cleaned:
@@ -173,7 +176,7 @@ class DialogueSegmentationService:
                 characters=[],
             )
 
-        known = [n for n in (known_characters or []) if isinstance(n, str) and n.strip()]
+        known_context = self._format_known_character_context(known_characters or [])
         chunks = (
             [cleaned]
             if len(cleaned) <= self._MAX_LLM_CHARS
@@ -188,8 +191,8 @@ class DialogueSegmentationService:
             chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
             # Send the chapter text as plain text so it follows "BEGIN INPUT TEXT"
             # in the system prompt naturally. Prepend known characters when available.
-            if known:
-                user_text = f"[Known characters: {', '.join(known)}]\n\n{chunk}"
+            if known_context:
+                user_text = f"{known_context}\n\n{chunk}"
             else:
                 user_text = chunk
             raw = self.client.ask_json(
@@ -339,4 +342,48 @@ class DialogueSegmentationService:
             (len(clean) >= 2 and clean.startswith('"') and clean.endswith('"'))
             or (len(clean) >= 2 and clean.startswith("“") and clean.endswith("”"))
             or bool(re.search(r'"[^"\n]+"', clean))
+        )
+
+    @staticmethod
+    def _format_known_character_context(known_characters: list[str | dict[str, Any]]) -> str:
+        lines: list[str] = []
+        for item in known_characters:
+            if isinstance(item, str):
+                name = item.strip()
+                if name:
+                    lines.append(f"- {name}")
+                continue
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            parts = [name]
+            aliases = item.get("aliases", [])
+            if isinstance(aliases, list):
+                cleaned_aliases: list[str] = []
+                for alias in aliases:
+                    if not isinstance(alias, str):
+                        continue
+                    alias_clean = alias.strip()
+                    if alias_clean:
+                        cleaned_aliases.append(alias_clean)
+                if cleaned_aliases:
+                    parts.append(f"aliases={'; '.join(cleaned_aliases)}")
+            gender = str(item.get("gender", "")).strip().lower()
+            if gender in {"male", "female"}:
+                parts.append(f"gender={gender}")
+            description = str(item.get("description", "")).strip()
+            if description:
+                parts.append(f"description={description}")
+            lines.append(f"- {' | '.join(parts)}")
+
+        if not lines:
+            return ""
+
+        return (
+            "KNOWN CHARACTER CONTEXT (canonical names):\n"
+            + "\n".join(lines)
+            + "\nUse canonical names from this list when alias/title forms clearly match.\n"
+            + "If attribution is ambiguous, use unknown."
         )

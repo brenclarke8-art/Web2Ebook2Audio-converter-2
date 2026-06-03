@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Any, List
 from urllib.parse import urlparse, urlunparse
 
+from ebook_app.models.character_db import Character, normalize_character_name
 from ebook_app.services.dialogue_segmentation_service import DialogueSegmentationService
 from ebook_app.services.llm_client import OllamaChatClient
 
@@ -123,7 +124,11 @@ class DialogueParser:
 
         # Call segmentation service
         try:
-            result = self.service.parse(text=text, chapter_id=chapter_id)
+            result = self.service.parse(
+                text=text,
+                chapter_id=chapter_id,
+                known_characters=self._known_characters_for_llm(),
+            )
         except Exception as exc:
             logger.error("DialogueSegmentationService.parse failed: %s", exc)
             clean = self.service.clean_text_for_llm(text)
@@ -189,6 +194,7 @@ class DialogueParser:
 
             seg_type = self._normalize_type(getattr(item, "type", "narration"))
             speaker = self._normalize_speaker_name(getattr(item, "speaker", "narrator"))
+            speaker, db_gender = self._resolve_speaker(speaker)
             paragraph_id = self._make_paragraph_id(chapter_id, text_val, idx)
 
             gender, gender_conf = self._infer_gender_for_speaker(
@@ -196,6 +202,9 @@ class DialogueParser:
                 text=text_val,
                 character_gender_map=gender_map,
             )
+            if gender == "unknown" and db_gender in {"male", "female"}:
+                gender = db_gender
+                gender_conf = max(gender_conf, 0.95)
 
             # Confidence defaults
             if speaker == "narrator":
@@ -237,17 +246,33 @@ class DialogueParser:
     ) -> List[DetectedCharacter]:
 
         detected: List[DetectedCharacter] = []
+        seen_names: set[str] = set()
 
         for raw in raw_characters:
             name, gender, conf = self._normalize_character_entry(raw)
             if not name:
                 continue
 
+            resolved = self._resolve_character(name)
+            if resolved:
+                canonical, db_gender = resolved
+                if normalize_character_name(canonical) != normalize_character_name(name):
+                    self._merge_alias_into_db(canonical_name=canonical, alias=name)
+                name = canonical
+                if db_gender in {"male", "female"}:
+                    gender = db_gender
+                    conf = max(conf, 0.9)
+
             # Prefer gender from gender_map
             mapped = gender_map.get(name)
             if mapped and mapped != "unknown":
                 gender = mapped
                 conf = max(conf, 0.9)
+
+            dedupe_key = normalize_character_name(name)
+            if dedupe_key in seen_names:
+                continue
+            seen_names.add(dedupe_key)
 
             detected.append(
                 DetectedCharacter(
@@ -317,12 +342,18 @@ class DialogueParser:
             name = name[:-1].rstrip()
         return " ".join(name.split()) or "narrator"
 
-    @staticmethod
-    def _build_character_gender_map(raw_characters: list[Any]) -> dict[str, str]:
+    def _build_character_gender_map(self, raw_characters: list[Any]) -> dict[str, str]:
         mapping: dict[str, str] = {}
         for raw in raw_characters:
             name, gender, _ = DialogueParser._normalize_character_entry(raw)
             if name and gender != "unknown":
+                mapping[name] = gender
+        for known in self._known_characters_for_llm():
+            if not isinstance(known, dict):
+                continue
+            name = str(known.get("name", "")).strip()
+            gender = str(known.get("gender", "")).strip().lower()
+            if name and gender in {"male", "female"} and name not in mapping:
                 mapping[name] = gender
         return mapping
 
@@ -384,15 +415,135 @@ class DialogueParser:
         if not self.character_db:
             return
         try:
-            if hasattr(self.character_db, "get"):
+            resolved = self._resolve_character(name)
+            existing = None
+            if resolved:
+                existing = self.character_db.get(resolved[0]) if hasattr(self.character_db, "get") else None
+            elif hasattr(self.character_db, "get"):
                 existing = self.character_db.get(name)
-            else:
-                existing = None
 
-            if existing and hasattr(self.character_db, "update"):
-                self.character_db.update(name=name, gender=gender, confidence=confidence)
-            elif hasattr(self.character_db, "add"):
-                self.character_db.add(name=name, gender=gender, confidence=confidence)
+            if existing:
+                if getattr(existing, "gender", "unknown") == "unknown" and gender in {"male", "female"}:
+                    existing.gender = gender
+                    if hasattr(self.character_db, "save"):
+                        self.character_db.save()
+                return
 
+            if hasattr(self.character_db, "add"):
+                self.character_db.add(Character(name=name, voice="", gender=gender))
+            elif isinstance(self.character_db, list):
+                target_norm = normalize_character_name(name)
+                exists = any(
+                    normalize_character_name(item.get("name", "")) == target_norm
+                    for item in self.character_db
+                    if isinstance(item, dict)
+                )
+                if not exists:
+                    self.character_db.append({"name": name, "gender": gender, "confidence": confidence})
         except Exception as exc:
-            logger.warning("Failed to merge character into DB (%s): %s", name, exc)
+            logger.warning("Failed to merge character into DB: %s", exc)
+
+    def _resolve_speaker(self, speaker: str) -> tuple[str, str]:
+        if speaker in {"narrator", "unknown"}:
+            return speaker, "unknown"
+        resolved = self._resolve_character(speaker)
+        if not resolved:
+            return speaker, "unknown"
+        canonical, gender = resolved
+        return canonical, gender
+
+    def _resolve_character(self, raw_name: str) -> tuple[str, str] | None:
+        name = (raw_name or "").strip()
+        if not name or not self.character_db:
+            return None
+
+        if hasattr(self.character_db, "resolve_name"):
+            resolved = self.character_db.resolve_name(name)
+            if resolved:
+                return resolved.name, getattr(resolved, "gender", "unknown")
+
+        if isinstance(self.character_db, list):
+            norm = normalize_character_name(name)
+            for item in self.character_db:
+                if not isinstance(item, dict):
+                    continue
+                canonical = str(item.get("name", "")).strip()
+                if not canonical:
+                    continue
+                if normalize_character_name(canonical) == norm:
+                    return canonical, str(item.get("gender", "unknown")).strip().lower()
+                aliases = item.get("aliases", [])
+                if not isinstance(aliases, list):
+                    aliases = []
+                for alias in aliases:
+                    if normalize_character_name(str(alias)) == norm:
+                        return canonical, str(item.get("gender", "unknown")).strip().lower()
+        return None
+
+    def _merge_alias_into_db(self, canonical_name: str, alias: str) -> None:
+        if not self.character_db or not canonical_name or not alias:
+            return
+        if hasattr(self.character_db, "merge_alias"):
+            self.character_db.merge_alias(canonical_name, alias)
+            return
+        if isinstance(self.character_db, list):
+            for item in self.character_db:
+                if not isinstance(item, dict):
+                    continue
+                if normalize_character_name(str(item.get("name", ""))) != normalize_character_name(canonical_name):
+                    continue
+                aliases = item.get("aliases")
+                if not isinstance(aliases, list):
+                    aliases = []
+                alias_clean = " ".join(alias.strip().split())
+                alias_norm = normalize_character_name(alias_clean)
+                if alias_clean and all(normalize_character_name(a) != alias_norm for a in aliases):
+                    aliases.append(alias_clean)
+                    item["aliases"] = aliases
+                return
+
+    def _known_characters_for_llm(self) -> list[dict[str, str | list[str]]]:
+        if not self.character_db:
+            return []
+
+        if hasattr(self.character_db, "all"):
+            out: list[dict[str, str | list[str]]] = []
+            for char in self.character_db.all():
+                out.append(
+                    {
+                        "name": getattr(char, "name", ""),
+                        "aliases": list(getattr(char, "aliases", []) or []),
+                        "gender": getattr(char, "gender", "unknown"),
+                        "description": getattr(char, "description", ""),
+                    }
+                )
+            return out
+
+        if isinstance(self.character_db, list):
+            out = []
+            for item in self.character_db:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", "")).strip()
+                if not name:
+                    continue
+                aliases = item.get("aliases", [])
+                alias_list: list[str] = []
+                if isinstance(aliases, list):
+                    for alias in aliases:
+                        if not isinstance(alias, str):
+                            continue
+                        alias_clean = alias.strip()
+                        if alias_clean:
+                            alias_list.append(alias_clean)
+                out.append(
+                    {
+                        "name": name,
+                        "aliases": alias_list,
+                        "gender": str(item.get("gender", "unknown")).strip().lower() or "unknown",
+                        "description": str(item.get("description", "")).strip(),
+                    }
+                )
+            return out
+
+        return []
