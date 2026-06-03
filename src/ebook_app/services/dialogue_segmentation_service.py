@@ -167,7 +167,7 @@ class DialogueSegmentationService:
         *,
         text: str,
         chapter_id: str,
-        known_characters: list[Any] | None = None,
+        known_characters: list[str | dict[str, Any]] | None = None,
     ) -> DialogueLLMResult:
         cleaned = self.clean_text_for_llm(text)
         if not cleaned:
@@ -345,7 +345,7 @@ class DialogueSegmentationService:
         )
 
     @staticmethod
-    def _format_known_character_context(known_characters: list[Any]) -> str:
+    def _format_known_character_context(known_characters: list[str | dict[str, Any]]) -> str:
         lines: list[str] = []
         for item in known_characters:
             if isinstance(item, str):
@@ -361,9 +361,15 @@ class DialogueSegmentationService:
             parts = [name]
             aliases = item.get("aliases", [])
             if isinstance(aliases, list):
-                cleaned_aliases = [str(alias).strip() for alias in aliases if isinstance(alias, str) and str(alias).strip()]
+                cleaned_aliases: list[str] = []
+                for alias in aliases:
+                    if not isinstance(alias, str):
+                        continue
+                    alias_clean = alias.strip()
+                    if alias_clean:
+                        cleaned_aliases.append(alias_clean)
                 if cleaned_aliases:
-                    parts.append(f"aliases={', '.join(cleaned_aliases)}")
+                    parts.append(f"aliases={'; '.join(cleaned_aliases)}")
             gender = str(item.get("gender", "")).strip().lower()
             if gender in {"male", "female"}:
                 parts.append(f"gender={gender}")

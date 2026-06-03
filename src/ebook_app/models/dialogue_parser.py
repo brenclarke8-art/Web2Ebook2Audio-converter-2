@@ -432,10 +432,16 @@ class DialogueParser:
             if hasattr(self.character_db, "add"):
                 self.character_db.add(Character(name=name, voice="", gender=gender))
             elif isinstance(self.character_db, list):
-                if not any(normalize_character_name(item.get("name", "")) == normalize_character_name(name) for item in self.character_db if isinstance(item, dict)):
+                target_norm = normalize_character_name(name)
+                exists = any(
+                    normalize_character_name(item.get("name", "")) == target_norm
+                    for item in self.character_db
+                    if isinstance(item, dict)
+                )
+                if not exists:
                     self.character_db.append({"name": name, "gender": gender, "confidence": confidence})
         except Exception as exc:
-            logger.warning("Failed to merge character into DB (%s): %s", name, exc)
+            logger.warning("Failed to merge character into DB: %s", exc)
 
     def _resolve_speaker(self, speaker: str) -> tuple[str, str]:
         if speaker in {"narrator", "unknown"}:
@@ -466,7 +472,10 @@ class DialogueParser:
                     continue
                 if normalize_character_name(canonical) == norm:
                     return canonical, str(item.get("gender", "unknown")).strip().lower()
-                for alias in item.get("aliases", []) if isinstance(item.get("aliases"), list) else []:
+                aliases = item.get("aliases", [])
+                if not isinstance(aliases, list):
+                    aliases = []
+                for alias in aliases:
                     if normalize_character_name(str(alias)) == norm:
                         return canonical, str(item.get("gender", "unknown")).strip().lower()
         return None
@@ -487,7 +496,8 @@ class DialogueParser:
                 if not isinstance(aliases, list):
                     aliases = []
                 alias_clean = " ".join(alias.strip().split())
-                if alias_clean and all(normalize_character_name(a) != normalize_character_name(alias_clean) for a in aliases):
+                alias_norm = normalize_character_name(alias_clean)
+                if alias_clean and all(normalize_character_name(a) != alias_norm for a in aliases):
                     aliases.append(alias_clean)
                     item["aliases"] = aliases
                 return
@@ -518,10 +528,18 @@ class DialogueParser:
                 if not name:
                     continue
                 aliases = item.get("aliases", [])
+                alias_list: list[str] = []
+                if isinstance(aliases, list):
+                    for alias in aliases:
+                        if not isinstance(alias, str):
+                            continue
+                        alias_clean = alias.strip()
+                        if alias_clean:
+                            alias_list.append(alias_clean)
                 out.append(
                     {
                         "name": name,
-                        "aliases": [str(a).strip() for a in aliases if isinstance(a, str) and a.strip()] if isinstance(aliases, list) else [],
+                        "aliases": alias_list,
                         "gender": str(item.get("gender", "unknown")).strip().lower() or "unknown",
                         "description": str(item.get("description", "")).strip(),
                     }

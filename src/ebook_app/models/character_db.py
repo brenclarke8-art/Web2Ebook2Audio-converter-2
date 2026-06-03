@@ -11,6 +11,7 @@ import re
 
 
 _TRAILING_PUNCTUATION = ".,!?;:"
+_MIN_FUZZY_SEPARATION = 0.02
 _HONORIFICS = {
     "mr",
     "mrs",
@@ -132,7 +133,7 @@ class CharacterDatabase:
                     elif score > second_best:
                         second_best = score
 
-        if best and best[0] >= min_fuzzy_score and (best[0] - second_best) >= 0.02:
+        if best and best[0] >= min_fuzzy_score and (best[0] - second_best) >= _MIN_FUZZY_SEPARATION:
             return best[1]
         return None
 
