@@ -28,7 +28,7 @@ class OllamaChatClient:
         *,
         model: str = "mistral:instruct",
         url: str = "http://localhost:11434/api/chat",
-        timeout_s: int = 120,
+        timeout_s: int = 300,
         retries: int = 1,
         log_path: Path | str | None = None,
     ) -> None:
@@ -41,15 +41,17 @@ class OllamaChatClient:
         if self.log_path:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def ask_json(self, *, system: str, user: dict[str, Any], chapter_id: str = "ch") -> dict[str, Any]:
+    def ask_json(self, *, system: str, user: str | dict[str, Any], chapter_id: str = "ch") -> dict[str, Any]:
         if self.disabled:
             return {}
+
+        user_content = user if isinstance(user, str) else json.dumps(user, ensure_ascii=False)
 
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+                {"role": "user", "content": user_content},
             ],
             "format": "json",
             "options": {"temperature": 0},

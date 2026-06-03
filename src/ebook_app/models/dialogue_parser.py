@@ -68,7 +68,7 @@ class DialogueParser:
         *,
         ollama_url: str | None = None,
         model: str | None = None,
-        timeout_s: int = 120,
+        timeout_s: int = 300,
         retries: int = 1,
         llm_mode: str = "full",
         llm_strict_quotes: bool = False,
@@ -132,6 +132,20 @@ class DialogueParser:
 
         raw_segments = getattr(result, "segments", []) or []
         raw_characters = getattr(result, "characters", []) or []
+
+        # Warn when the LLM produced only a single narration fallback segment,
+        # which indicates the model timed out or returned empty JSON.
+        if (
+            len(raw_segments) == 1
+            and getattr(raw_segments[0], "type", None) == "narration"
+            and getattr(raw_segments[0], "speaker", None) == "narrator"
+        ):
+            logger.warning(
+                "Chapter %s: LLM returned a single fallback narration segment — "
+                "the model may have timed out or failed to parse the text. "
+                "Consider increasing 'dialogue_llm_timeout' or checking Ollama.",
+                chapter_id,
+            )
 
         # Build gender map from LLM output
         gender_map = self._build_character_gender_map(raw_characters)

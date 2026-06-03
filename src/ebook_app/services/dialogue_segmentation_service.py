@@ -137,7 +137,23 @@ class DialogueSegmentationService:
         r"\blog[\s-]?in\b",
         r"\bsign[\s-]?in\b",
         r"\bsign[\s-]?up\b",
+        # Web novel reader / app boilerplate
+        r"←",                          # back-navigation arrows (← Back to novel, ← Previous)
+        r"\bnext\s*[→»]",              # "Next →" forward navigation
+        r"\bloading\s+chapter",        # "Loading chapter…"
+        r"add\s+this\s+site\s+to",     # "Add this site to your home screen…"
+        r"\bhome\s+screen\b",          # app-install prompts
+        r"app[- ]like\s+reader",       # "app-like reader"
+        r"\breader\s+mode\b",          # "Reader mode with saved preferences…"
+        r"^chapter\s+\d+\s*$",        # standalone chapter-number header (no title after number)
+        r"^novel\s*$",                 # lone "Novel" navigation label
+        r"^install\b",                 # "Install" / "Install Fucknovelpia" prompts
+        r"^later\s*$",                 # lone "Later" dismiss button
     )
+
+    # Maximum characters to send to the LLM in a single request.
+    # Chapters longer than this are split at paragraph boundaries.
+    _MAX_LLM_CHARS = 4000
 
     def __init__(self, *, client: OllamaChatClient, strict_quotes: bool = False) -> None:
         self.client = client
@@ -157,12 +173,77 @@ class DialogueSegmentationService:
                 characters=[],
             )
 
-        payload = {
-            "text": cleaned,
-            "characters": [n for n in (known_characters or []) if isinstance(n, str) and n.strip()],
-        }
-        raw = self.client.ask_json(system=_SEGMENTATION_SYSTEM_PROMPT, user=payload, chapter_id=chapter_id)
-        return self._normalize_payload(raw, source_text=cleaned)
+        known = [n for n in (known_characters or []) if isinstance(n, str) and n.strip()]
+        chunks = (
+            [cleaned]
+            if len(cleaned) <= self._MAX_LLM_CHARS
+            else self._split_into_chunks(cleaned, self._MAX_LLM_CHARS)
+        )
+
+        all_segments: list[DialogueLLMSegment] = []
+        all_characters: list[Any] = []
+        seen_chars: set[str] = set()
+
+        for i, chunk in enumerate(chunks):
+            chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
+            # Send the chapter text as plain text so it follows "BEGIN INPUT TEXT"
+            # in the system prompt naturally. Prepend known characters when available.
+            if known:
+                user_text = f"[Known characters: {', '.join(known)}]\n\n{chunk}"
+            else:
+                user_text = chunk
+            raw = self.client.ask_json(
+                system=_SEGMENTATION_SYSTEM_PROMPT, user=user_text, chapter_id=chunk_id
+            )
+            result = self._normalize_payload(raw, source_text=chunk)
+            all_segments.extend(result.segments)
+            for c in result.characters:
+                key = (c if isinstance(c, str) else c.get("name", "")).casefold()
+                if key and key not in seen_chars:
+                    seen_chars.add(key)
+                    all_characters.append(c)
+
+        if not all_segments:
+            all_segments = [DialogueLLMSegment(text=cleaned, type="narration", speaker="narrator")]
+
+        return DialogueLLMResult(segments=all_segments, characters=all_characters)
+
+    @staticmethod
+    def _split_into_chunks(text: str, max_chars: int) -> list[str]:
+        """Split *text* into chunks of at most *max_chars*, breaking at line boundaries.
+
+        Prefers double-newline paragraph breaks; falls back to single-newline splits
+        when the text contains no blank-line separators.
+        """
+        # Prefer paragraph-level splits (double newlines)
+        double_units = re.split(r"\n\n+", text)
+        if len(double_units) > 1:
+            sep = "\n\n"
+            units = double_units
+        else:
+            # No blank lines — split on individual lines instead
+            sep = "\n"
+            units = text.splitlines()
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+
+        for unit in units:
+            unit_len = len(unit)
+            sep_len = len(sep) if current else 0
+            if current and current_len + sep_len + unit_len > max_chars:
+                chunks.append(sep.join(current))
+                current = [unit]
+                current_len = unit_len
+            else:
+                current.append(unit)
+                current_len += sep_len + unit_len
+
+        if current:
+            chunks.append(sep.join(current))
+
+        return chunks
 
     @classmethod
     def _is_noise_line(cls, line: str) -> bool:

@@ -56,12 +56,10 @@ def test_dialogue_parser_cleans_ui_noise_before_prompt(monkeypatch):
         chapter_id="ch-clean",
     )
 
-    user_msg = captured_payload.get("messages", [{}, {"content": "{}"}])[1].get("content", "{}")
-    user_payload = json.loads(user_msg)
-    cleaned_text = user_payload["text"]
-    assert "Next Chapter" not in cleaned_text
-    assert "Subscribe now" not in cleaned_text
-    assert "Actual story line." in cleaned_text
+    user_msg = captured_payload.get("messages", [{}, {"content": ""}])[1].get("content", "")
+    assert "Next Chapter" not in user_msg
+    assert "Subscribe now" not in user_msg
+    assert "Actual story line." in user_msg
 
 
 def test_dialogue_parser_writes_llm_communication_log(monkeypatch, tmp_path):

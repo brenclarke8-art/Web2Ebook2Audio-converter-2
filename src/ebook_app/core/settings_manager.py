@@ -71,7 +71,7 @@ class SettingsManager(QObject):
         "dialogue_llm_mode": "full",
         "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
         "dialogue_llm_model": "mistral:instruct",
-        "dialogue_llm_timeout": 120,
+        "dialogue_llm_timeout": 300,
         "dialogue_llm_retries": 1,
         "dialogue_llm_strict_quotes": False,
         "llm_preflight_check": True,
