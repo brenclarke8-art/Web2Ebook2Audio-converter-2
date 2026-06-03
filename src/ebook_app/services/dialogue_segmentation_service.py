@@ -2,115 +2,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from ebook_app.services.llm_client import OllamaChatClient
 
 SegmentType = Literal["dialogue", "thought", "narration", "general"]
 
-_SEGMENTATION_SYSTEM_PROMPT = """You are a text‑segmentation and character‑extraction engine.
-Your job is to analyze the provided novel text and output a STRICT JSON object.
-Follow ALL rules exactly. Never add fields not defined here. Never hallucinate.
+_SEGMENTATION_SYSTEM_PROMPT_PREFIX = """You are a deterministic text-analysis engine.
+Your job is to parse a light-novel chapter into structured JSON with perfect consistency.
+Follow the rules exactly. Do not explain anything. Do not add commentary.
+Output ONLY valid JSON. If unsure, output an empty array or empty string instead of guessing.
 
-============================================================
+========================
 GLOBAL RULES
-============================================================
-1. You MUST return valid JSON. No comments, no explanations, no prose.
-2. You MUST segment the text in reading order.
-3. You MUST NOT invent characters, genders, or speakers.
-4. If uncertain, use "unknown" and reduce confidence.
-5. You MUST preserve the original text exactly for each segment.
-6. You MUST NOT merge or split sentences unless required by the rules below.
-7. You MUST NOT infer emotions, motivations, or hidden meaning.
+========================
+1. Do NOT invent characters.
+2. Do NOT merge characters with similar names.
+3. Do NOT infer relationships not explicitly stated.
+4. If a speaker is unknown, set "speaker": "Unknown".
+5. Preserve the original order of all segments.
+6. Never output prose outside the JSON.
+7. Never include trailing commas.
+8. If the chapter contains no dialogue or thoughts, return empty arrays for those fields.
 
-============================================================
-SEGMENTATION RULES
-============================================================
-Segment the text into the following types:
-
-- "dialogue" → text inside quotes spoken aloud by a character.
-- "thought" → internal monologue, often italicized or marked with special brackets.
-- "narration" → everything else.
-
-Each segment MUST contain:
-- the exact text
-- the type
-- the speaker (if known)
-- the speaker_gender (if known)
-- speaker_confidence (0–1)
-- gender_confidence (0–1)
-- character_confidence (0–1)
-- paragraph_id (stable ID based on paragraph order)
-
-============================================================
-SPEAKER ATTRIBUTION RULES
-============================================================
-Assign a speaker ONLY when:
-- the speaker is explicitly named in the same paragraph, OR
-- the speaker is unambiguously the only possible character speaking.
-
-If ambiguous:
-- speaker = "unknown"
-- speaker_confidence = 0.0
-
-NEVER guess based on tone, personality, or narrative style.
-When a known-character context block is provided, prefer the canonical known name
-when a title/alias form clearly points to that known character.
-If multiple known characters could match, use "unknown".
-
-============================================================
-GENDER RULES
-============================================================
-Assign gender ONLY when:
-- explicitly stated (he/she, boy/girl, man/woman)
-- strongly implied by name with high certainty
-
-If uncertain:
-- speaker_gender = "unknown"
-- gender_confidence = 0.0
-
-============================================================
-CHARACTER LIST RULES
-============================================================
-Extract ALL characters explicitly mentioned in the text.
-For each character include:
-- name
-- gender (if known)
-- gender_confidence (0–1)
-
-Do NOT include:
-- inferred characters
-- unnamed characters ("the guard", "the teacher")
-
-============================================================
-JSON OUTPUT FORMAT
-============================================================
-
-{
-  "characters": [
-    {
-      "name": "string",
-      "gender": "male | female | unknown",
-      "gender_confidence": 0.0
-    }
-  ],
-  "segments": [
-    {
-      "paragraph_id": "p001",
-      "text": "string",
-      "type": "dialogue | thought | narration",
-      "speaker": "string",
-      "speaker_gender": "male | female | unknown",
-      "speaker_confidence": 0.0,
-      "gender_confidence": 0.0,
-      "character_confidence": 0.0
-    }
-  ]
-}
-
-============================================================
-BEGIN INPUT TEXT
-============================================================
+========================
+CHARACTER MEMORY (from previous chapters)
+========================
 """
 
 
@@ -154,10 +71,6 @@ class DialogueSegmentationService:
         r"^later\s*$",                 # lone "Later" dismiss button
     )
 
-    # Maximum characters to send to the LLM in a single request.
-    # Chapters longer than this are split at paragraph boundaries.
-    _MAX_LLM_CHARS = 4000
-
     def __init__(self, *, client: OllamaChatClient, strict_quotes: bool = False) -> None:
         self.client = client
         self.strict_quotes = bool(strict_quotes)
@@ -180,78 +93,26 @@ class DialogueSegmentationService:
 
         known_context = self._format_known_character_context(known_characters or [])
         hint_context = self._format_manual_segment_hints(manual_segment_hints or [])
-        chunks = (
-            [cleaned]
-            if len(cleaned) <= self._MAX_LLM_CHARS
-            else self._split_into_chunks(cleaned, self._MAX_LLM_CHARS)
+
+        system_prompt = self._build_system_prompt(
+            [block for block in (story_context_block, known_context) if block]
         )
-
-        all_segments: list[DialogueLLMSegment] = []
-        all_characters: list[Any] = []
-        seen_chars: set[str] = set()
-
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
-            # Send chapter text after optional context blocks.
-            context_blocks = [
-                block for block in (story_context_block, known_context, hint_context) if block
-            ]
-            if context_blocks:
-                user_text = "\n\n".join(context_blocks + [chunk])
-            else:
-                user_text = chunk
-            raw = self.client.ask_json(
-                system=_SEGMENTATION_SYSTEM_PROMPT, user=user_text, chapter_id=chunk_id
-            )
-            result = self._normalize_payload(raw, source_text=chunk)
-            all_segments.extend(result.segments)
-            for c in result.characters:
-                key = (c if isinstance(c, str) else c.get("name", "")).casefold()
-                if key and key not in seen_chars:
-                    seen_chars.add(key)
-                    all_characters.append(c)
-
-        if not all_segments:
-            all_segments = [DialogueLLMSegment(text=cleaned, type="narration", speaker="narrator")]
-
-        return DialogueLLMResult(segments=all_segments, characters=all_characters)
-
-    @staticmethod
-    def _split_into_chunks(text: str, max_chars: int) -> list[str]:
-        """Split *text* into chunks of at most *max_chars*, breaking at line boundaries.
-
-        Prefers double-newline paragraph breaks; falls back to single-newline splits
-        when the text contains no blank-line separators.
-        """
-        # Prefer paragraph-level splits (double newlines)
-        double_units = re.split(r"\n\n+", text)
-        if len(double_units) > 1:
-            sep = "\n\n"
-            units = double_units
+        if hint_context:
+            user_text = "\n\n".join((hint_context, cleaned))
         else:
-            # No blank lines — split on individual lines instead
-            sep = "\n"
-            units = text.splitlines()
+            user_text = cleaned
+        raw = self.client.ask_json(
+            system=system_prompt, user=user_text, chapter_id=chapter_id
+        )
+        result = self._normalize_payload(raw, source_text=cleaned)
 
-        chunks: list[str] = []
-        current: list[str] = []
-        current_len = 0
+        if not result.segments:
+            result = DialogueLLMResult(
+                segments=[DialogueLLMSegment(text=cleaned, type="narration", speaker="narrator")],
+                characters=result.characters,
+            )
 
-        for unit in units:
-            unit_len = len(unit)
-            sep_len = len(sep) if current else 0
-            if current and current_len + sep_len + unit_len > max_chars:
-                chunks.append(sep.join(current))
-                current = [unit]
-                current_len = unit_len
-            else:
-                current.append(unit)
-                current_len += sep_len + unit_len
-
-        if current:
-            chunks.append(sep.join(current))
-
-        return chunks
+        return result
 
     @classmethod
     def _is_noise_line(cls, line: str) -> bool:
@@ -348,6 +209,13 @@ class DialogueSegmentationService:
             or (len(clean) >= 2 and clean.startswith("“") and clean.endswith("”"))
             or bool(re.search(r'"[^"\n]+"', clean))
         )
+
+    @staticmethod
+    def _build_system_prompt(memory_blocks: Iterable[str]) -> str:
+        blocks = [stripped for block in memory_blocks if (stripped := str(block).strip())]
+        if not blocks:
+            return _SEGMENTATION_SYSTEM_PROMPT_PREFIX
+        return _SEGMENTATION_SYSTEM_PROMPT_PREFIX + "\n\n" + "\n\n".join(blocks)
 
     @staticmethod
     def _format_known_character_context(known_characters: list[str | dict[str, Any]]) -> str:

@@ -61,7 +61,7 @@ class DialogueParser:
       - DialogueParseResult
     """
 
-    _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
+    _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
     _DEFAULT_MODEL = "mistral:instruct"
 
     def __init__(
@@ -78,8 +78,8 @@ class DialogueParser:
         debug: bool = False,
     ) -> None:
 
-        # Normalize URL to /api/chat
-        self.ollama_url = self._normalize_chat_url(ollama_url or self._DEFAULT_OLLAMA_URL)
+        # Normalize URL to /api/generate
+        self.ollama_url = self._normalize_generate_url(ollama_url or self._DEFAULT_OLLAMA_URL)
 
         self.model = (model or self._DEFAULT_MODEL).strip()
         self.timeout_s = int(timeout_s)
@@ -311,14 +311,14 @@ class DialogueParser:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_chat_url(url: str) -> str:
+    def _normalize_generate_url(url: str) -> str:
         cleaned = (url or "").strip()
         if not cleaned:
             return cleaned
         parsed = urlparse(cleaned)
-        if parsed.path.endswith("/api/generate"):
-            chat_path = parsed.path[: -len("/api/generate")] + "/api/chat"
-            return urlunparse((parsed.scheme, parsed.netloc, chat_path, parsed.params, parsed.query, parsed.fragment))
+        if parsed.path.endswith("/api/chat"):
+            generate_path = parsed.path[: -len("/api/chat")] + "/api/generate"
+            return urlunparse((parsed.scheme, parsed.netloc, generate_path, parsed.params, parsed.query, parsed.fragment))
         return cleaned
 
     @staticmethod
@@ -359,7 +359,11 @@ class DialogueParser:
             name = name[: name.rfind("(")].rstrip()
         while name and name[-1] in ".!?,":  # strip trailing punctuation
             name = name[:-1].rstrip()
-        return " ".join(name.split()) or "narrator"
+        normalized = " ".join(name.split()) or "narrator"
+        canonical_form = normalized.casefold()
+        if canonical_form in {"unknown", "narrator"}:
+            return canonical_form
+        return normalized
 
     def _build_character_gender_map(self, raw_characters: list[Any]) -> dict[str, str]:
         mapping: dict[str, str] = {}

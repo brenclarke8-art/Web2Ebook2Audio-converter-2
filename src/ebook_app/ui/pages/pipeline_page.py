@@ -7,6 +7,7 @@ import copy
 import hashlib
 import html
 import json
+import logging
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ from ebook_app.ui.pages._base_page import BasePage
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.pipeline_contracts import chapter_id as make_chapter_id
 
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
 # NEW PIPELINE STEPS (UI progress bars)
@@ -46,12 +48,11 @@ _STEPS = [
     ("scrape_index", "1. Scrape index"),
     ("scrape_chapters", "2. Scrape chapters"),
     ("clean_chapters", "3. Clean chapters"),
-    ("plan_clean_review", "4. Plan cleaned-text review"),
-    ("llm_semantic_analysis", "5. LLM semantic analysis"),
-    ("normalize_llm_output", "6. Normalize LLM output"),
-    ("smart_review_dialogue", "7. Smart review (dialogue + characters)"),
-    ("tts_generate", "8. Generate audio"),
-    ("epub_build", "9. Build EPUB3"),
+    ("llm_semantic_analysis", "4. LLM semantic analysis"),
+    ("normalize_llm_output", "5. Normalize LLM output"),
+    ("smart_review_dialogue", "6. Smart review (dialogue + characters)"),
+    ("tts_generate", "7. Generate audio"),
+    ("epub_build", "8. Build EPUB3"),
 ]
 _SEGMENT_TYPE_OPTIONS = ["narration", "dialogue", "thought"]
 _NO_REVIEW_SEGMENTS_MSG = "No semantic segments available for review."
@@ -206,18 +207,13 @@ class _PipelineWorker(QThread):
         if self._abort_if_cancelled():
             return
 
-        # Phase 3–4
+        # Phase 3
         self.log_message.emit("Cleaning chapters…", "INFO")
         ctrl.clean_chapters()
         if self._abort_if_cancelled():
             return
 
-        self.log_message.emit("Planning cleaned-text review…", "INFO")
-        ctrl.plan_clean_review()
-        if self._abort_if_cancelled():
-            return
-
-        # Phase 5–6
+        # Phase 4–5
         self.log_message.emit("Running LLM semantic analysis…", "INFO")
         ctrl.llm_semantic_analysis()
         if self._abort_if_cancelled():
@@ -447,8 +443,12 @@ class PipelinePage(BasePage):
         review_tab = QWidget()
         self._build_review_tab(review_tab)
 
+        llm_log_tab = QWidget()
+        self._build_llm_log_tab(llm_log_tab)
+
         self._tabs.addTab(pipeline_tab, "Pipeline")
         self._tabs.addTab(review_tab, "Review")
+        self._tabs.addTab(llm_log_tab, "LLM Communication")
 
 
     def _build_review_tab(self, tab: QWidget) -> None:
@@ -486,7 +486,6 @@ class PipelinePage(BasePage):
         self._review_stage_tabs = QTabWidget()
         for key, label in [
             ("scraped", "Scraped"),
-            ("cleaned", "Cleaned"),
             ("cleaned_final", "Cleaned Final"),
             ("semantic", "Semantic Segments"),
             ("final_segments", "Final Segments"),
@@ -602,6 +601,49 @@ class PipelinePage(BasePage):
         text_view.setReadOnly(True)
         layout.addWidget(text_view)
         return page, chapter_combo, text_view
+
+    def _build_llm_log_tab(self, tab: QWidget) -> None:
+        layout = QVBoxLayout(tab)
+
+        controls = QHBoxLayout()
+        self._llm_log_refresh_btn = QPushButton("Refresh")
+        self._llm_log_refresh_btn.clicked.connect(self._refresh_llm_log)
+        controls.addWidget(self._llm_log_refresh_btn)
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        self._llm_log_view = QTextEdit()
+        self._llm_log_view.setReadOnly(True)
+        self._llm_log_view.setFontFamily("Courier")
+        layout.addWidget(self._llm_log_view)
+
+    def _refresh_llm_log(self) -> None:
+        if not self.project_manager or not self.project_manager.current_book_id:
+            self._llm_log_view.setPlainText("No project loaded.")
+            return
+        work_dir = self.project_manager.get_work_dir()
+        if work_dir is None:
+            self._llm_log_view.setPlainText("No project work directory available.")
+            return
+        log_path = work_dir / "llm_communication.jsonl"
+        if not log_path.exists():
+            self._llm_log_view.setPlainText("No LLM communication log found. Run the pipeline first.")
+            return
+        try:
+            content = log_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            self._llm_log_view.setPlainText(f"Error reading log: {exc}")
+            return
+        lines = content.strip().splitlines()
+        formatted_parts: list[str] = []
+        for line in lines:
+            try:
+                record = json.loads(line)
+                formatted_parts.append(json.dumps(record, indent=2, ensure_ascii=False))
+            except Exception:
+                logger.warning("Failed to parse LLM log line as JSON: %s", line[:120])
+                formatted_parts.append(line)
+        self._llm_log_view.setPlainText("\n\n---\n\n".join(formatted_parts) if formatted_parts else "(empty)")
 
     def _set_review_stage_chapter_index(self, index: int) -> None:
         self._syncing_review_combo = True
@@ -720,6 +762,7 @@ class PipelinePage(BasePage):
         self._end_spin.setValue(end)
 
         self._refresh_review_data()
+        self._refresh_llm_log()
 
     def _on_create_project(self) -> None:
         if not self.project_manager:
@@ -818,6 +861,7 @@ class PipelinePage(BasePage):
 
         if mode == _PipelineWorker.RUN_TO_REVIEW:
             self._refresh_review_data()
+            self._refresh_llm_log()
             self._tabs.setCurrentIndex(1)
             QMessageBox.information(
                 self,
@@ -953,7 +997,6 @@ class PipelinePage(BasePage):
                 combo.clear()
             self._review_chapters = []
             self._set_stage_plain_text("scraped", "Load or create a book project to review chapter content.")
-            self._set_stage_plain_text("cleaned", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("semantic", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("cleaned_final", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("final_segments", "Load or create a book project to review chapter content.")
@@ -974,9 +1017,8 @@ class PipelinePage(BasePage):
 
         if not chapters:
             self._set_stage_plain_text("scraped", "No scraped chapters found yet.")
-            self._set_stage_plain_text("cleaned", "No cleaned chapter text found yet.")
-            self._set_stage_plain_text("semantic", "No LLM chat output found yet.")
-            self._set_stage_plain_text("cleaned_final", "No cleaned LLM chat found yet.")
+            self._set_stage_plain_text("semantic", "No LLM output found yet.")
+            self._set_stage_plain_text("cleaned_final", "No normalized LLM output found yet.")
             self._set_stage_plain_text("final_segments", "No final review found yet.")
             self._set_segment_preview_text("No semantic segments available for review yet.")
         else:
@@ -992,7 +1034,7 @@ class PipelinePage(BasePage):
 
     def _on_review_chapter_changed(self, index: int) -> None:
         """
-        Loads scraped/cleaned/LLM/final review sources for a chapter.
+        Loads scraped/LLM/final review sources for a chapter.
         """
         self._current_review_chapter_id = None
         self._current_review_segment_file = None
@@ -1002,7 +1044,6 @@ class PipelinePage(BasePage):
 
         if index < 0 or index >= len(self._review_chapters):
             self._set_stage_plain_text("scraped", "")
-            self._set_stage_plain_text("cleaned", "")
             self._set_stage_plain_text("cleaned_final", "")
             self._set_stage_plain_text("semantic", "")
             self._set_stage_plain_text("final_segments", "")
@@ -1013,7 +1054,6 @@ class PipelinePage(BasePage):
         work_dir = self.project_manager.get_work_dir()
         if work_dir is None:
             self._set_stage_plain_text("scraped", "[No project work directory available.]")
-            self._set_stage_plain_text("cleaned", "[No project work directory available.]")
             self._set_stage_plain_text("cleaned_final", "[No project work directory available.]")
             self._set_stage_plain_text("semantic", "[No project work directory available.]")
             self._set_stage_plain_text("final_segments", "[No project work directory available.]")
@@ -1030,14 +1070,7 @@ class PipelinePage(BasePage):
             scraped_content = str(chapter.get("content", "")).strip()
         self._set_stage_plain_text("scraped", scraped_content or "[No content available for this chapter.]")
 
-        # 2. cleaned.txt (deterministic cleaned text)
-        cleaned_basic = work_dir / f"{chapter_id}_cleaned.txt"
-        if cleaned_basic.exists():
-            self._set_stage_plain_text("cleaned", cleaned_basic.read_text(encoding="utf-8"))
-        else:
-            self._set_stage_plain_text("cleaned", "[No deterministic cleaned text available for this chapter.]")
-
-        # 3. LLM chat (raw LLM output)
+        # 2. LLM output (raw LLM segments)
         segments: list[dict[str, Any]] = []
         chapter_info_file = work_dir / f"{chapter_id}_llm_raw.json"
         if chapter_info_file.exists():
@@ -1051,9 +1084,9 @@ class PipelinePage(BasePage):
             if semantic_view is not None:
                 semantic_view.setHtml(self._segments_to_html(segments))
         else:
-            self._set_stage_plain_text("semantic", "[No LLM chat output available for this chapter.]")
+            self._set_stage_plain_text("semantic", "[No LLM output available for this chapter.]")
 
-        # 4. cleaned LLM chat (normalized LLM output)
+        # 3. Normalized LLM output
         normalized_segments: list[dict[str, Any]] = []
         normalized_file = work_dir / f"{chapter_id}_llm_normalized.json"
         if normalized_file.exists():
@@ -1072,13 +1105,13 @@ class PipelinePage(BasePage):
                 normalized_view.setHtml(self._segments_to_html(normalized_segments))
                 self._load_review_segments(normalized_file, normalized_segments)
             else:
-                normalized_view.setPlainText("[No cleaned LLM chat available for this chapter.]")
+                normalized_view.setPlainText("[No normalized LLM output available for this chapter.]")
                 if segments:
                     self._load_review_segments(chapter_info_file, segments)
                 else:
                     self._set_segment_preview_text("[No semantic segments available for review in this chapter.]")
 
-        # 5. final review before TTS
+        # 4. final review before TTS
         self._refresh_final_review_view(chapter_id)
 
     def _load_review_segments(self, chapter_info_file: Path, segments: list[dict[str, Any]]) -> None:

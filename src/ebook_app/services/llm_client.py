@@ -12,29 +12,22 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_JSON_REPAIR_SYSTEM_PROMPT = (
-    "You are a JSON repair engine.\n"
-    "Fix the JSON so it is valid and parseable.\n"
-    "Do NOT add commentary.\n"
-    "Return ONLY valid JSON."
-)
-
 
 class OllamaChatClient:
-    """Minimal Ollama /api/chat JSON client with structured communication logs."""
+    """Minimal Ollama /api/generate (completion mode) JSON client with structured communication logs."""
 
     def __init__(
         self,
         *,
         model: str = "mistral:instruct",
-        url: str = "http://localhost:11434/api/chat",
+        url: str = "http://localhost:11434/api/generate",
         timeout_s: int = 300,
         retries: int = 1,
         max_context_tokens: int = 250_000,
         log_path: Path | str | None = None,
     ) -> None:
         self.model = (model or "mistral:instruct").strip()
-        self.url = (url or "http://localhost:11434/api/chat").strip()
+        self.url = (url or "http://localhost:11434/api/generate").strip()
         self.timeout_s = int(timeout_s)
         self.retries = max(0, int(retries))
         self.max_context_tokens = max(1, int(max_context_tokens))
@@ -48,13 +41,11 @@ class OllamaChatClient:
             return {}
 
         user_content = user if isinstance(user, str) else json.dumps(user, ensure_ascii=False)
+        prompt = f"{system}\n\n{user_content}"
 
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
+            "prompt": prompt,
             "format": "json",
             "options": {"temperature": 0, "num_ctx": self.max_context_tokens},
             "stream": False,
@@ -67,10 +58,8 @@ class OllamaChatClient:
                 response = requests.post(self.url, json=payload, timeout=self.timeout_s)
                 response.raise_for_status()
                 body = response.json()
-                content = body.get("message", {}).get("content", "")
+                content = body.get("response", "")
                 parsed = self._parse_json_content(content)
-                if not parsed and content:
-                    parsed = self._repair_json_content(content)
                 elapsed = time.perf_counter() - start
                 self._write_log_entry(
                     chapter_id=chapter_id,
@@ -171,25 +160,6 @@ class OllamaChatClient:
                     objects.append(content[start : idx + 1])
                     start = -1
         return objects
-
-    def _repair_json_content(self, content: str) -> dict[str, Any]:
-        repair_payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": _JSON_REPAIR_SYSTEM_PROMPT},
-                {"role": "user", "content": content},
-            ],
-            "options": {"num_ctx": self.max_context_tokens},
-            "stream": False,
-        }
-        try:
-            response = requests.post(self.url, json=repair_payload, timeout=self.timeout_s)
-            response.raise_for_status()
-            repaired = response.json().get("message", {}).get("content", "")
-            return self._parse_json_content(repaired)
-        except Exception:
-            logger.debug("LLM JSON repair failed", exc_info=True)
-            return {}
 
     def _write_log_entry(
         self,

@@ -29,7 +29,7 @@ class _CaptureClient:
 
 
 def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
-    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct")
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
     llm_payload = {
         "characters": ["Alice"],
         "segments": [
@@ -42,7 +42,7 @@ def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
     }
 
     def _fake_post(*_args, **_kwargs):
-        return _DummyResponse({"message": {"content": json.dumps(llm_payload)}})
+        return _DummyResponse({"response": json.dumps(llm_payload)})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
     result = parser.parse("Alice smiled.", chapter_id="ch001")
@@ -54,12 +54,12 @@ def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
 
 
 def test_dialogue_parser_cleans_ui_noise_before_prompt(monkeypatch):
-    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct")
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
     captured_payload: dict = {}
 
     def _fake_post(*_args, **kwargs):
         captured_payload.update(kwargs.get("json", {}))
-        return _DummyResponse({"message": {"content": json.dumps({"segments": [], "characters": []})}})
+        return _DummyResponse({"response": json.dumps({"segments": [], "characters": []})})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
     parser.parse(
@@ -67,7 +67,7 @@ def test_dialogue_parser_cleans_ui_noise_before_prompt(monkeypatch):
         chapter_id="ch-clean",
     )
 
-    user_msg = captured_payload.get("messages", [{}, {"content": ""}])[1].get("content", "")
+    user_msg = captured_payload.get("prompt", "")
     assert "Next Chapter" not in user_msg
     assert "Subscribe now" not in user_msg
     assert "Actual story line." in user_msg
@@ -76,13 +76,13 @@ def test_dialogue_parser_cleans_ui_noise_before_prompt(monkeypatch):
 def test_dialogue_parser_writes_llm_communication_log(monkeypatch, tmp_path):
     log_file = tmp_path / "llm_communication.jsonl"
     parser = DialogueParser(
-        ollama_url="http://example/api/chat",
+        ollama_url="http://example/api/generate",
         model="mistral:instruct",
         llm_log_path=str(log_file),
     )
 
     def _fake_post(*_args, **_kwargs):
-        return _DummyResponse({"message": {"content": json.dumps({"segments": [], "characters": []})}})
+        return _DummyResponse({"response": json.dumps({"segments": [], "characters": []})})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
     parser.parse("Story text only.", chapter_id="ch-log")
@@ -95,10 +95,10 @@ def test_dialogue_parser_writes_llm_communication_log(monkeypatch, tmp_path):
 
 
 def test_dialogue_parser_falls_back_on_invalid_output(monkeypatch):
-    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct")
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
 
     def _fake_post(*_args, **_kwargs):
-        return _DummyResponse({"message": {"content": "not-json"}})
+        return _DummyResponse({"response": "not-json"})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
     result = parser.parse("Fallback content.", chapter_id="ch002")
@@ -109,13 +109,13 @@ def test_dialogue_parser_falls_back_on_invalid_output(monkeypatch):
 
 
 def test_dialogue_parser_accepts_markdown_wrapped_json(monkeypatch):
-    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct")
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
     wrapped = """```json
 {"characters":["Alice"],"segments":[{"text":"\\"Hi\\"","type":"dialogue","speaker":"Alice"}]}
 ```"""
 
     def _fake_post(*_args, **_kwargs):
-        return _DummyResponse({"message": {"content": wrapped}})
+        return _DummyResponse({"response": wrapped})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
     result = parser.parse("Story text.", chapter_id="ch-wrap")
@@ -126,14 +126,14 @@ def test_dialogue_parser_accepts_markdown_wrapped_json(monkeypatch):
 
 
 def test_dialogue_parser_preserves_character_objects(monkeypatch):
-    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct")
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
     llm_payload = {
         "characters": [{"name": "Alice", "gender": "female", "confidence": 0.91}],
         "segments": [{"text": "\"Hello.\"", "type": "dialogue", "speaker": "Alice"}],
     }
 
     def _fake_post(*_args, **_kwargs):
-        return _DummyResponse({"message": {"content": json.dumps(llm_payload)}})
+        return _DummyResponse({"response": json.dumps(llm_payload)})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
     result = parser.parse("Alice said hello.", chapter_id="ch-characters")
@@ -141,14 +141,14 @@ def test_dialogue_parser_preserves_character_objects(monkeypatch):
     assert any(c.name == "Alice" and c.gender == "female" for c in result.detected_characters)
 
 
-def test_dialogue_parser_migrates_generate_endpoint_to_chat():
-    parser = DialogueParser(ollama_url="http://127.0.0.1:11434/api/generate", model="mistral")
-    assert parser.ollama_url == "http://127.0.0.1:11434/api/chat"
-
-
-def test_dialogue_parser_keeps_chat_endpoint_unchanged():
+def test_dialogue_parser_migrates_chat_endpoint_to_generate():
     parser = DialogueParser(ollama_url="http://127.0.0.1:11434/api/chat", model="mistral")
-    assert parser.ollama_url == "http://127.0.0.1:11434/api/chat"
+    assert parser.ollama_url == "http://127.0.0.1:11434/api/generate"
+
+
+def test_dialogue_parser_keeps_generate_endpoint_unchanged():
+    parser = DialogueParser(ollama_url="http://127.0.0.1:11434/api/generate", model="mistral")
+    assert parser.ollama_url == "http://127.0.0.1:11434/api/generate"
 
 
 def test_dialogue_parser_keeps_custom_endpoint_unchanged():
@@ -167,7 +167,7 @@ def test_dialogue_parser_canonicalizes_detected_and_segment_speakers(tmp_path, m
             aliases=["Lady Alice"],
         )
     )
-    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct", character_db=db)
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct", character_db=db)
 
     def _fake_parse(*, text, chapter_id, known_characters=None):
         return DialogueLLMResult(
@@ -216,6 +216,34 @@ def test_dialogue_segmentation_service_injects_structured_known_character_contex
     )
 
     assert client.calls
-    user_text = client.calls[0]["user"]
-    assert "KNOWN CHARACTER CONTEXT (canonical names):" in user_text
-    assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in user_text
+    system_text = client.calls[0]["system"]
+    assert "CHARACTER MEMORY (from previous chapters)" in system_text
+    assert "KNOWN CHARACTER CONTEXT (canonical names):" in system_text
+    assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in system_text
+
+
+def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
+    client = _CaptureClient()
+    service = DialogueSegmentationService(client=client)
+    service.parse(text="Story text.", chapter_id="ch-prompt")
+
+    assert client.calls
+    system_text = client.calls[0]["system"]
+    assert system_text.startswith("You are a deterministic text-analysis engine.")
+    assert 'If a speaker is unknown, set "speaker": "Unknown".' in system_text
+    assert '"characters": [' not in system_text
+
+
+def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
+    parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
+
+    def _fake_parse(*, text, chapter_id, known_characters=None):
+        return DialogueLLMResult(
+            segments=[DialogueLLMSegment(text='"Hello."', type="dialogue", speaker="Unknown")],
+            characters=[],
+        )
+
+    monkeypatch.setattr(parser.service, "parse", _fake_parse)
+    result = parser.parse("Someone spoke.", chapter_id="ch-unknown")
+
+    assert result.segments[0].speaker == "unknown"

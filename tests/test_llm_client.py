@@ -8,7 +8,7 @@ class _Response:
         return None
 
     def json(self):
-        return {"message": {"content": '{"segments": []}'}}
+        return {"response": '{"segments": []}'}
 
 
 def test_ask_json_applies_context_token_cap(monkeypatch):
