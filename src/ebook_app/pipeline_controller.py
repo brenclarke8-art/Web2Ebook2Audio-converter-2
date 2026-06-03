@@ -594,7 +594,7 @@ class PipelineController:
             # Inject prior story context into parsing prompt (experimental)
             context_block: str | None = None
             if story_context_enabled and story_context is not None:
-                context_block = story_context.to_prompt_block() or None
+                context_block = story_context.to_prompt_block()
 
             # Run LLM semantic parsing
             logger.debug("Parsing chapter %s (%d/%d)…", chapter_id, idx + 1, total)
