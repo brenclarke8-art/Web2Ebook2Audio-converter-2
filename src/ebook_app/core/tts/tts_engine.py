@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import requests
 import soundfile as sf
 import numpy as np
@@ -27,11 +28,15 @@ class TTSEngine:
         server_url: str = "http://127.0.0.1:5005",
         output_dir: str | Path,
         timeout: int = 30,
+        retry_attempts: int = 3,
+        retry_backoff_sec: float = 0.75,
     ):
         self.server_url = server_url.rstrip("/")
         self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
+        self.retry_attempts = max(1, int(retry_attempts))
+        self.retry_backoff_sec = max(0.0, float(retry_backoff_sec))
 
         self._last_duration_sec: float = 0.0
 
@@ -65,12 +70,36 @@ class TTSEngine:
         }
 
         url = f"{self.server_url}/synthesize"
-        try:
-            resp = requests.post(url, json=payload, timeout=self.timeout)
-            resp.raise_for_status()
-        except Exception as exc:
-            logger.error("TTS server request failed: %s", exc)
-            raise
+        resp = None
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                resp = requests.post(url, json=payload, timeout=self.timeout)
+                resp.raise_for_status()
+                break
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 503 and attempt < self.retry_attempts:
+                    logger.warning(
+                        "TTS server returned 503; retrying request (%d/%d).",
+                        attempt,
+                        self.retry_attempts,
+                    )
+                    time.sleep(self.retry_backoff_sec * attempt)
+                    continue
+                logger.error("TTS server request failed: %s", exc)
+                raise
+            except requests.RequestException as exc:
+                if attempt < self.retry_attempts:
+                    logger.warning(
+                        "TTS server request failed; retrying (%d/%d): %s",
+                        attempt,
+                        self.retry_attempts,
+                        exc,
+                    )
+                    time.sleep(self.retry_backoff_sec * attempt)
+                    continue
+                logger.error("TTS server request failed: %s", exc)
+                raise
 
         data = resp.json()
         server_path = Path(data["audio_path"])
