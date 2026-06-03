@@ -136,20 +136,21 @@ class DialogueParser:
             seg = self._fallback_segment(clean, chapter_id, 0)
             return DialogueParseResult(segments=[seg], detected_characters=[])
 
-        # Call segmentation service
+        # Call segmentation service — use chunked path for long chapters
         try:
-            parse_kwargs: dict = {
-                "text": text,
-                "chapter_id": chapter_id,
-                "known_characters": self._known_characters_for_llm(),
-            }
-            if manual_segment_hints:
-                parse_kwargs["manual_segment_hints"] = manual_segment_hints
-            if story_context_block:
-                parse_kwargs["story_context_block"] = story_context_block
-            result = self.service.parse(**parse_kwargs)
+            # Clean text first (removes UI noise, collapses whitespace)
+            clean = self.service.clean_text_for_llm(text)
+            if len(clean) > 6000:
+                raw_dict = self.client.parse_chapter_chunked(
+                    clean, chapter_id, memory=self.character_db
+                )
+            else:
+                raw_dict = self.client.parse_chapter(
+                    clean, chapter_id, memory=self.character_db
+                )
+            result = self.service._normalize_payload(raw_dict, source_text=clean)
         except Exception as exc:
-            logger.error("DialogueSegmentationService.parse failed: %s", exc)
+            logger.error("LLM chapter parse failed: %s", exc)
             clean = self.service.clean_text_for_llm(text)
             seg = self._fallback_segment(clean, chapter_id, 0)
             return DialogueParseResult(segments=[seg], detected_characters=[])

@@ -131,6 +131,12 @@ class SettingsManager(QObject):
         # chapter and injected into the next chapter's LLM prompt to improve
         # continuity.  Stored in pipeline_work/story_context.json.
         "story_context_enabled": False,
+
+        # ------------------------------
+        # LLM Chunking
+        # ------------------------------
+        "llm_chunk_size": 6000,
+        "llm_chunk_overlap": 500,
     }
 
     def __init__(self):
