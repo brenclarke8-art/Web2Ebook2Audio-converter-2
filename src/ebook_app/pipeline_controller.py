@@ -558,12 +558,12 @@ class PipelineController:
 
         # ── Experimental: chapter-to-chapter story context ────────────────
         story_context_requested = bool(self.settings.get("story_context_enabled", False))
-        story_context_enabled = story_context_requested and parser.llm_mode != "off"
+        story_context_active = story_context_requested and parser.llm_mode != "off"
         story_context = None
         context_service = None
         story_context_path = self.work_dir / "story_context.json"
 
-        if story_context_enabled:
+        if story_context_active:
             from ebook_app.services.story_context_service import (
                 StoryContext,
                 StoryContextService,
@@ -593,19 +593,15 @@ class PipelineController:
 
             # Inject prior story context into parsing prompt (experimental)
             context_block: str | None = None
-            if story_context_enabled and story_context is not None:
+            if story_context_active and story_context is not None:
                 context_block = story_context.to_prompt_block()
 
             # Run LLM semantic parsing
             logger.debug("Parsing chapter %s (%d/%d)…", chapter_id, idx + 1, total)
+            parse_kwargs = {"text": text, "chapter_id": chapter_id}
             if context_block:
-                result = parser.parse(
-                    text=text,
-                    chapter_id=chapter_id,
-                    story_context_block=context_block,
-                )
-            else:
-                result = parser.parse(text=text, chapter_id=chapter_id)
+                parse_kwargs["story_context_block"] = context_block
+            result = parser.parse(**parse_kwargs)
             self.dialogue_segments[idx] = result.segments
 
             # Build chapter_info structure
@@ -641,7 +637,7 @@ class PipelineController:
             self._save_json(raw_path, chapter_info)
 
             # Update rolling story context after each chapter (experimental)
-            if story_context_enabled and context_service is not None:
+            if story_context_active and context_service is not None:
                 story_context = context_service.update_from_chapter(
                     chapter_text=text,
                     chapter_id=chapter_id,

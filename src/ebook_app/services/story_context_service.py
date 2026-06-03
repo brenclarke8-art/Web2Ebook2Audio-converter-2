@@ -208,8 +208,7 @@ class StoryContextService:
             capped = summary[:_MAX_SUMMARY_CHARS]
             split_parts = capped.rsplit(" ", 1)
             if len(split_parts) == 2 and split_parts[0].strip():
-                summary = split_parts[0].strip()
-                summary = f"{summary}…"
+                summary = f"{split_parts[0].strip()}…"
             else:
                 summary = capped
 
