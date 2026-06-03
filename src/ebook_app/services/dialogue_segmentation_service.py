@@ -186,9 +186,14 @@ class DialogueSegmentationService:
 
         for i, chunk in enumerate(chunks):
             chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
-            payload = {"text": chunk, "characters": known}
+            # Send the chapter text as plain text so it follows "BEGIN INPUT TEXT"
+            # in the system prompt naturally. Prepend known characters when available.
+            if known:
+                user_text = f"[Known characters: {', '.join(known)}]\n\n{chunk}"
+            else:
+                user_text = chunk
             raw = self.client.ask_json(
-                system=_SEGMENTATION_SYSTEM_PROMPT, user=payload, chapter_id=chunk_id
+                system=_SEGMENTATION_SYSTEM_PROMPT, user=user_text, chapter_id=chunk_id
             )
             result = self._normalize_payload(raw, source_text=chunk)
             all_segments.extend(result.segments)
