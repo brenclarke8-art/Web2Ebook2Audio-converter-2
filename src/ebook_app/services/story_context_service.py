@@ -206,10 +206,11 @@ class StoryContextService:
         # Cap summary length
         if len(summary) > _MAX_SUMMARY_CHARS:
             capped = summary[:_MAX_SUMMARY_CHARS]
-            word_boundary = capped.rsplit(" ", 1)[0].strip()
-            summary = word_boundary if word_boundary else capped
-            if len(summary) < _MAX_SUMMARY_CHARS:
-                summary = f"{summary}…"
+            word_boundary = capped.rsplit(" ", 1)[0].strip() if " " in capped else ""
+            if word_boundary:
+                summary = f"{word_boundary}…"
+            else:
+                summary = f"{capped[:-1]}…"
 
         raw_active_characters = raw.get("active_characters", [])
         if not isinstance(raw_active_characters, list):

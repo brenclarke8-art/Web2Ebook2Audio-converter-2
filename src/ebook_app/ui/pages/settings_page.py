@@ -406,7 +406,7 @@ class SettingsPage(BasePage):
         # ── Experimental Features ──────────────────────────────────────
         exp_group = QGroupBox("⚠️ Experimental Features")
         exp_group.setToolTip(
-            "Experimental features may change behaviour or produce inconsistent results."
+            "Experimental features may change behavior or produce inconsistent results."
         )
         exp_vbox = QVBoxLayout(exp_group)
 
