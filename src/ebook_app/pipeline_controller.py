@@ -32,7 +32,6 @@ class PipelineController:
         "scrape_index",
         "scrape_chapters",
         "clean_chapters",
-        "plan_clean_review",
         "llm_semantic_analysis",
         "normalize_llm_output",
         "smart_review_dialogue",

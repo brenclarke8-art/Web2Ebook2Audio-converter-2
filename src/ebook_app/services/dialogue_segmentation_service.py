@@ -72,7 +72,7 @@ class DialogueSegmentationService:
     )
 
     # Maximum characters to send to the LLM in a single request.
-    # Chapters longer than this are split at paragraph boundaries.
+    # Kept for reference; the full cleaned text is sent in one pass.
     _MAX_LLM_CHARS = 4000
 
     def __init__(self, *, client: OllamaChatClient, strict_quotes: bool = False) -> None:
@@ -97,40 +97,26 @@ class DialogueSegmentationService:
 
         known_context = self._format_known_character_context(known_characters or [])
         hint_context = self._format_manual_segment_hints(manual_segment_hints or [])
-        chunks = (
-            [cleaned]
-            if len(cleaned) <= self._MAX_LLM_CHARS
-            else self._split_into_chunks(cleaned, self._MAX_LLM_CHARS)
+
+        system_prompt = self._build_system_prompt(
+            [block for block in (story_context_block, known_context) if block]
         )
+        if hint_context:
+            user_text = "\n\n".join((hint_context, cleaned))
+        else:
+            user_text = cleaned
+        raw = self.client.ask_json(
+            system=system_prompt, user=user_text, chapter_id=chapter_id
+        )
+        result = self._normalize_payload(raw, source_text=cleaned)
 
-        all_segments: list[DialogueLLMSegment] = []
-        all_characters: list[Any] = []
-        seen_chars: set[str] = set()
-
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
-            system_prompt = self._build_system_prompt(
-                [block for block in (story_context_block, known_context) if block]
+        if not result.segments:
+            result = DialogueLLMResult(
+                segments=[DialogueLLMSegment(text=cleaned, type="narration", speaker="narrator")],
+                characters=result.characters,
             )
-            if hint_context:
-                user_text = "\n\n".join((hint_context, chunk))
-            else:
-                user_text = chunk
-            raw = self.client.ask_json(
-                system=system_prompt, user=user_text, chapter_id=chunk_id
-            )
-            result = self._normalize_payload(raw, source_text=chunk)
-            all_segments.extend(result.segments)
-            for c in result.characters:
-                key = (c if isinstance(c, str) else c.get("name", "")).casefold()
-                if key and key not in seen_chars:
-                    seen_chars.add(key)
-                    all_characters.append(c)
 
-        if not all_segments:
-            all_segments = [DialogueLLMSegment(text=cleaned, type="narration", speaker="narrator")]
-
-        return DialogueLLMResult(segments=all_segments, characters=all_characters)
+        return result
 
     @staticmethod
     def _split_into_chunks(text: str, max_chars: int) -> list[str]:

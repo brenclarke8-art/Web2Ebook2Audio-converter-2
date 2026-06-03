@@ -246,9 +246,9 @@ class SettingsPage(BasePage):
         llm_form = QFormLayout(llm_group)
 
         self._dialogue_llm_url_input = QLineEdit(
-            str(self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/chat"))
+            str(self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/generate"))
         )
-        self._dialogue_llm_url_input.setPlaceholderText("http://127.0.0.1:11434/api/chat")
+        self._dialogue_llm_url_input.setPlaceholderText("http://127.0.0.1:11434/api/generate")
         llm_form.addRow("Dialogue LLM URL:", self._dialogue_llm_url_input)
 
         self._dialogue_llm_model_input = QLineEdit(
