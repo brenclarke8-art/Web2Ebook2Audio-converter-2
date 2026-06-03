@@ -339,6 +339,7 @@ def test_on_save_segment_speakers_updates_review_artifacts(tmp_path, monkeypatch
         _segments_to_html=lambda segments: str(segments),
     )
     page._collect_review_segments_from_table = lambda: PipelinePage._collect_review_segments_from_table(page)
+    page._normalize_segment_type = PipelinePage._normalize_segment_type
     page._refresh_final_review_view = lambda chapter_id: PipelinePage._refresh_final_review_view(page, chapter_id)
 
     PipelinePage._on_save_segment_speakers(page)
