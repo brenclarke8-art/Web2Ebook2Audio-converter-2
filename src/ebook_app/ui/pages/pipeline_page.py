@@ -53,6 +53,10 @@ _STEPS = [
     ("tts_generate", "8. Generate audio"),
     ("epub_build", "9. Build EPUB3"),
 ]
+_SEGMENT_TYPE_OPTIONS = ["narration", "dialogue", "thought"]
+_NO_REVIEW_SEGMENTS_MSG = "No semantic segments available for review."
+
+
 class _PipelineWorker(QThread):
     """
     Background worker that runs the new pipeline phases off the main GUI thread.
@@ -206,6 +210,9 @@ class _PipelineWorker(QThread):
     def _run_continue_audio(self, ctrl) -> None:
         ctrl.set_chapter_range(self._start, self._end)
 
+        self.log_message.emit("Finalizing reviewed chapters...", "INFO")
+        ctrl.smart_review_dialogue()
+
         # Phase 7
         self.log_message.emit("Generating TTS audio…", "INFO")
         ctrl.tts_generate()
@@ -234,6 +241,7 @@ class PipelinePage(BasePage):
         self._current_review_segments: list[dict[str, Any]] = []
         self._current_review_row_segment_indexes: list[int] = []
         self._current_review_segment_file: Path | None = None
+        self._segment_preview_view: QTextEdit | None = None
         super().__init__(**kwargs)
         self._reload_projects()
 
@@ -431,7 +439,6 @@ class PipelinePage(BasePage):
             self._review_stage_views[key] = stage_view
             self._review_stage_tabs.addTab(page, label)
         chapter_layout.addWidget(self._review_stage_tabs)
-        self._review_text_view = self._review_stage_views["semantic"]
 
         splitter.addWidget(chapter_group)
 
@@ -488,7 +495,7 @@ class PipelinePage(BasePage):
         splitter.setStretchFactor(1, 2)
         outer.addWidget(splitter)
 
-        segments_group = QGroupBox("Semantic Segments (speaker review)")
+        segments_group = QGroupBox("Semantic Segments (speaker + type review)")
         segments_layout = QVBoxLayout(segments_group)
         self._segment_table = QTableWidget(0, 3)
         self._segment_table.setHorizontalHeaderLabels(["Text", "Speaker", "Type"])
@@ -497,8 +504,13 @@ class PipelinePage(BasePage):
         self._segment_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         segments_layout.addWidget(self._segment_table)
 
+        segments_layout.addWidget(QLabel("Current Review Preview"))
+        self._segment_preview_view = QTextEdit()
+        self._segment_preview_view.setReadOnly(True)
+        segments_layout.addWidget(self._segment_preview_view)
+
         segment_btns = QHBoxLayout()
-        self._segment_save_btn = QPushButton("Save Segment Speaker Changes")
+        self._segment_save_btn = QPushButton("Save Segment Review Changes")
         self._segment_save_btn.clicked.connect(self._on_save_segment_speakers)
         segment_btns.addWidget(self._segment_save_btn)
 
@@ -513,6 +525,7 @@ class PipelinePage(BasePage):
         default_msg = "Run 'Run to Review' to load chapter review content."
         for view in self._review_stage_views.values():
             view.setPlainText(default_msg)
+        self._set_segment_preview_text(default_msg)
 
     def _build_review_stage_page(self) -> tuple[QWidget, QComboBox, QTextEdit]:
         page = QWidget()
@@ -559,6 +572,14 @@ class PipelinePage(BasePage):
         view = self._review_stage_views.get(stage)
         if view is not None:
             view.setPlainText(text)
+
+    def _set_segment_preview_text(self, text: str) -> None:
+        if self._segment_preview_view is not None:
+            self._segment_preview_view.setPlainText(text)
+
+    def _set_segment_preview_html(self, value: str) -> None:
+        if self._segment_preview_view is not None:
+            self._segment_preview_view.setHtml(value)
 
     def _segments_to_html(self, segments: list[dict[str, Any]]) -> str:
         lines: list[str] = []
@@ -853,9 +874,10 @@ class PipelinePage(BasePage):
             self._review_chapters = []
             self._set_stage_plain_text("scraped", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("cleaned", "Load or create a book project to review chapter content.")
-            self._set_stage_plain_text("cleaned_final", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("semantic", "Load or create a book project to review chapter content.")
+            self._set_stage_plain_text("cleaned_final", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("final_segments", "Load or create a book project to review chapter content.")
+            self._set_segment_preview_text("Load or create a book project to review semantic segments.")
             self._detected_char_table.setRowCount(0)
             self._segment_table.setRowCount(0)
             return
@@ -873,9 +895,10 @@ class PipelinePage(BasePage):
         if not chapters:
             self._set_stage_plain_text("scraped", "No scraped chapters found yet.")
             self._set_stage_plain_text("cleaned", "No cleaned chapter text found yet.")
-            self._set_stage_plain_text("cleaned_final", "No final cleaned chapter text found yet.")
-            self._set_stage_plain_text("semantic", "No semantic segments found yet.")
-            self._set_stage_plain_text("final_segments", "No final segments found yet.")
+            self._set_stage_plain_text("semantic", "No LLM chat output found yet.")
+            self._set_stage_plain_text("cleaned_final", "No cleaned LLM chat found yet.")
+            self._set_stage_plain_text("final_segments", "No final review found yet.")
+            self._set_segment_preview_text("No semantic segments available for review yet.")
         else:
             index_to_use = 0
             if isinstance(selected_chapter_idx, int):
@@ -889,7 +912,7 @@ class PipelinePage(BasePage):
 
     def _on_review_chapter_changed(self, index: int) -> None:
         """
-        Loads scraped/cleaned/semantic/final review sources for a chapter.
+        Loads scraped/cleaned/LLM/final review sources for a chapter.
         """
         self._current_review_chapter_id = None
         self._current_review_segment_file = None
@@ -903,15 +926,28 @@ class PipelinePage(BasePage):
             self._set_stage_plain_text("cleaned_final", "")
             self._set_stage_plain_text("semantic", "")
             self._set_stage_plain_text("final_segments", "")
+            self._set_segment_preview_text("")
             return
 
         chapter = self._review_chapters[index]
         work_dir = self.project_manager.get_work_dir()
+        if work_dir is None:
+            self._set_stage_plain_text("scraped", "[No project work directory available.]")
+            self._set_stage_plain_text("cleaned", "[No project work directory available.]")
+            self._set_stage_plain_text("cleaned_final", "[No project work directory available.]")
+            self._set_stage_plain_text("semantic", "[No project work directory available.]")
+            self._set_stage_plain_text("final_segments", "[No project work directory available.]")
+            self._set_segment_preview_text("[No project work directory available.]")
+            return
         chapter_id = self._chapter_id_for_offset(index)
         self._current_review_chapter_id = chapter_id
 
         # 1. Raw scraped content
-        scraped_content = str(chapter.get("content", "")).strip()
+        raw_scrape = work_dir / f"{chapter_id}_raw.txt"
+        if raw_scrape.exists():
+            scraped_content = raw_scrape.read_text(encoding="utf-8").strip()
+        else:
+            scraped_content = str(chapter.get("content", "")).strip()
         self._set_stage_plain_text("scraped", scraped_content or "[No content available for this chapter.]")
 
         # 2. cleaned.txt (deterministic cleaned text)
@@ -921,16 +957,9 @@ class PipelinePage(BasePage):
         else:
             self._set_stage_plain_text("cleaned", "[No deterministic cleaned text available for this chapter.]")
 
-        # 3. cleaned_final.txt (user-approved cleaned text)
-        cleaned_final = work_dir / f"{chapter_id}_cleaned_final.txt"
-        if cleaned_final.exists():
-            self._set_stage_plain_text("cleaned_final", cleaned_final.read_text(encoding="utf-8"))
-        else:
-            self._set_stage_plain_text("cleaned_final", "[No final cleaned text available for this chapter.]")
-
-        # 4. semantic segments (chapter_info.json)
+        # 3. LLM chat (raw LLM output)
         segments: list[dict[str, Any]] = []
-        chapter_info_file = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
+        chapter_info_file = work_dir / f"{chapter_id}_llm_raw.json"
         if chapter_info_file.exists():
             try:
                 ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
@@ -938,38 +967,39 @@ class PipelinePage(BasePage):
             except Exception:
                 segments = []
         if segments:
-            self._load_review_segments(chapter_info_file, segments)
+            semantic_view = self._review_stage_views.get("semantic")
+            if semantic_view is not None:
+                semantic_view.setHtml(self._segments_to_html(segments))
         else:
-            self._set_stage_plain_text("semantic", "[No semantic segments available for this chapter.]")
+            self._set_stage_plain_text("semantic", "[No LLM chat output available for this chapter.]")
 
-        # 5. final segments (segments_final/chapter_info_final)
-        final_segments: list[dict[str, Any]] = []
-        for candidate in [
-            work_dir / f"{chapter_id}_segments_final.json",
-            work_dir / f"{chapter_id}_chapter_info_final.json",
-        ]:
-            if not candidate.exists():
-                continue
+        # 4. cleaned LLM chat (normalized LLM output)
+        normalized_segments: list[dict[str, Any]] = []
+        normalized_file = work_dir / f"{chapter_id}_llm_normalized.json"
+        if normalized_file.exists():
             try:
-                payload = json.loads(candidate.read_text(encoding="utf-8"))
+                normalized_data = json.loads(normalized_file.read_text(encoding="utf-8"))
+                normalized_segments = [
+                    copy.deepcopy(seg)
+                    for seg in normalized_data.get("segments", [])
+                    if isinstance(seg, dict)
+                ]
             except Exception:
-                continue
-            if isinstance(payload, dict):
-                payload_segments = payload.get("segments", [])
-            elif isinstance(payload, list):
-                payload_segments = payload
+                normalized_segments = []
+        normalized_view = self._review_stage_views.get("cleaned_final")
+        if normalized_view is not None:
+            if normalized_segments:
+                normalized_view.setHtml(self._segments_to_html(normalized_segments))
+                self._load_review_segments(normalized_file, normalized_segments)
             else:
-                payload_segments = []
-            final_segments = [copy.deepcopy(seg) for seg in payload_segments if isinstance(seg, dict)]
-            if final_segments:
-                break
+                normalized_view.setPlainText("[No cleaned LLM chat available for this chapter.]")
+                if segments:
+                    self._load_review_segments(chapter_info_file, segments)
+                else:
+                    self._set_segment_preview_text("[No semantic segments available for review in this chapter.]")
 
-        final_view = self._review_stage_views.get("final_segments")
-        if final_view is not None:
-            if final_segments:
-                final_view.setHtml(self._segments_to_html(final_segments))
-            else:
-                final_view.setPlainText("[No final segments available for this chapter.]")
+        # 5. final review before TTS
+        self._refresh_final_review_view(chapter_id)
 
     def _load_review_segments(self, chapter_info_file: Path, segments: list[dict[str, Any]]) -> None:
         self._current_review_segment_file = chapter_info_file
@@ -1001,8 +1031,13 @@ class PipelinePage(BasePage):
             speaker_combo.currentTextChanged.connect(self._render_current_segments_preview)
             self._segment_table.setCellWidget(row, 1, speaker_combo)
 
-            type_item = QTableWidgetItem(seg_type)
-            self._segment_table.setItem(row, 2, type_item)
+            type_combo = QComboBox()
+            type_combo.addItems(_SEGMENT_TYPE_OPTIONS)
+            if seg_type not in _SEGMENT_TYPE_OPTIONS:
+                type_combo.addItem(seg_type)
+            type_combo.setCurrentText(seg_type)
+            type_combo.currentTextChanged.connect(self._render_current_segments_preview)
+            self._segment_table.setCellWidget(row, 2, type_combo)
 
         self._render_current_segments_preview()
 
@@ -1046,47 +1081,38 @@ class PipelinePage(BasePage):
 
     def _render_current_segments_preview(self) -> None:
         if self._segment_table.rowCount() <= 0:
+            self._set_segment_preview_text(_NO_REVIEW_SEGMENTS_MSG)
             return
-        preview_segments: list[dict[str, Any]] = []
-        for row in range(self._segment_table.rowCount()):
-            text_item = self._segment_table.item(row, 0)
-            type_item = self._segment_table.item(row, 2)
-            speaker_widget = self._segment_table.cellWidget(row, 1)
-            text = text_item.text().strip() if text_item else ""
-            if not text:
-                continue
-            seg_type = type_item.text().strip().lower() if type_item else "narration"
-            speaker = (
-                speaker_widget.currentText().strip()
-                if isinstance(speaker_widget, QComboBox)
-                else "narrator"
-            ) or "narrator"
-            preview_segments.append({"text": text, "type": seg_type, "speaker": speaker})
-        self._review_text_view.setHtml(self._segments_to_html(preview_segments))
+        preview_segments = self._collect_review_segments_from_table()
+        if preview_segments:
+            self._set_segment_preview_html(self._segments_to_html(preview_segments))
+        else:
+            self._set_segment_preview_text(_NO_REVIEW_SEGMENTS_MSG)
 
-    def _on_save_segment_speakers(self) -> None:
-        chapter_id = self._current_review_chapter_id
-        if not chapter_id:
-            self.log.log("Select a chapter first.", level="WARNING")
-            return
-        if self._segment_table.rowCount() <= 0:
-            self.log.log("No semantic segments to save for this chapter.", level="WARNING")
-            return
+    @staticmethod
+    def _normalize_segment_type(value: str) -> str:
+        seg_type = (value or "").strip().lower()
+        return seg_type if seg_type in _SEGMENT_TYPE_OPTIONS else "narration"
 
+    def _collect_review_segments_from_table(self) -> list[dict[str, Any]]:
         updated_segments = copy.deepcopy(self._current_review_segments)
         for row in range(self._segment_table.rowCount()):
             text_item = self._segment_table.item(row, 0)
-            type_item = self._segment_table.item(row, 2)
             speaker_widget = self._segment_table.cellWidget(row, 1)
+            type_widget = self._segment_table.cellWidget(row, 2)
             text = text_item.text().strip() if text_item else ""
             if not text:
                 continue
-            seg_type = type_item.text().strip() if type_item else "narration"
             speaker = (
                 speaker_widget.currentText().strip()
                 if isinstance(speaker_widget, QComboBox)
                 else "narrator"
             ) or "narrator"
+            seg_type = (
+                self._normalize_segment_type(type_widget.currentText())
+                if isinstance(type_widget, QComboBox)
+                else "narration"
+            )
             if row >= len(self._current_review_row_segment_indexes):
                 continue
             seg_index = self._current_review_row_segment_indexes[row]
@@ -1098,18 +1124,38 @@ class PipelinePage(BasePage):
             updated["speaker"] = speaker
             if "speaker_confidence" in updated:
                 updated["speaker_confidence"] = 1.0
+        return updated_segments
 
+    def _on_save_segment_speakers(self) -> None:
+        chapter_id = self._current_review_chapter_id
+        if not chapter_id:
+            self.log.log("Select a chapter first.", level="WARNING")
+            return
+        if self._segment_table.rowCount() <= 0:
+            self.log.log("No semantic segments to save for this chapter.", level="WARNING")
+            return
+
+        updated_segments = self._collect_review_segments_from_table()
         work_dir = self.project_manager.get_work_dir()
-        info_path = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
+        if work_dir is None:
+            self.log.log("Project work directory is not available.", level="ERROR")
+            return
+        info_path = work_dir / f"{chapter_id}_llm_raw.json"
         if info_path.exists():
             data = json.loads(info_path.read_text(encoding="utf-8"))
             data["segments"] = updated_segments
             info_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
-        root_final_paths = [
-            work_dir / f"{chapter_id}_segments_final.json",
-            work_dir / f"{chapter_id}_chapter_info_final.json",
-        ]
+        normalized_path = work_dir / f"{chapter_id}_llm_normalized.json"
+        if normalized_path.exists():
+            data = json.loads(normalized_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data["segments"] = updated_segments
+            else:
+                data = {"chapter_id": chapter_id, "segments": updated_segments}
+            normalized_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        root_final_paths = [work_dir / f"{chapter_id}_chapter_info_final.json"]
         for path in root_final_paths:
             if not path.exists():
                 continue
@@ -1121,10 +1167,13 @@ class PipelinePage(BasePage):
             path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
         self._current_review_segments = updated_segments
-        self.log.log("Saved segment speaker edits for chapter review.", level="SUCCESS")
+        self.log.log("Saved segment review edits for chapter review.", level="SUCCESS")
         self._render_current_segments_preview()
+        self._refresh_final_review_view(chapter_id)
 
     def _on_confirm_review_and_continue(self) -> None:
+        if self._detected_char_table.rowCount() > 0:
+            self._on_save_detected_characters()
         if self._segment_table.rowCount() > 0:
             self._on_save_segment_speakers()
         self._on_continue_audio()
@@ -1142,6 +1191,21 @@ class PipelinePage(BasePage):
         """
         aggregated: dict[str, dict[str, Any]] = {}
         work_dir = self.project_manager.get_work_dir()
+
+        for char in self._load_character_database_entries():
+            name = str(char.get("name", "")).strip()
+            if not name:
+                continue
+            key = name.lower()
+            gender = self._normalize_gender(str(char.get("gender", "other")).strip())
+            aggregated[key] = {
+                "name": name,
+                "gender": gender,
+                "voice": str(char.get("voice", "")).strip() or self._default_voice_for_gender(gender),
+                "confidence": 1.0,
+                "sources": set(),
+                "description": str(char.get("description", "")).strip(),
+            }
 
         # --------------------------------------------------------------
         # Load normalized characters from each chapter
@@ -1175,15 +1239,19 @@ class PipelinePage(BasePage):
                             "voice": self._default_voice_for_gender(gender),
                             "confidence": confidence,
                             "sources": {chapter_id},
+                            "description": "",
                         }
                     else:
                         existing["sources"].add(chapter_id)
                         if confidence > existing["confidence"]:
                             existing["confidence"] = confidence
+                        if not existing.get("voice"):
+                            existing["voice"] = self._default_voice_for_gender(gender)
+                        if existing.get("gender") in {"", "other"}:
                             existing["gender"] = gender
 
         # --------------------------------------------------------------
-        # Add pending characters
+        # Add pending characters (legacy fallback)
         # --------------------------------------------------------------
         for item in self.settings.get("pending_character_additions", []) or []:
             name = str(item.get("name", "")).strip()
@@ -1201,6 +1269,7 @@ class PipelinePage(BasePage):
                 "voice": voice,
                 "confidence": confidence,
                 "sources": {source} if source else set(),
+                "description": "",
             }
 
         # --------------------------------------------------------------
@@ -1326,11 +1395,15 @@ class PipelinePage(BasePage):
 
     def _on_save_detected_characters(self) -> None:
         """
-        Saves the detected characters into settings.pending_character_additions.
-        These will be merged into the character DB during Phase 6.
+        Saves detected characters into the canonical project character database.
         """
-        pending = []
+        character_db: list[dict[str, Any]] = []
         clamped_rows = 0
+        existing_descriptions = {
+            str(item.get("name", "")).strip().lower(): str(item.get("description", "")).strip()
+            for item in self._load_character_database_entries()
+            if str(item.get("name", "")).strip()
+        }
 
         for row in range(self._detected_char_table.rowCount()):
             name_item = self._detected_char_table.item(row, 0)
@@ -1366,18 +1439,37 @@ class PipelinePage(BasePage):
 
             source = source_item.text().strip() if source_item else ""
 
-            pending.append(
+            character_db.append(
                 {
                     "name": name,
                     "gender": gender,
                     "voice": voice,
                     "confidence": clamped,
                     "source_chapter": source,
+                    "description": existing_descriptions.get(name.lower(), ""),
                 }
             )
 
-        # Save to settings
-        self.settings.set("pending_character_additions", pending)
+        canonical_character_db = [
+            {
+                "name": item["name"],
+                "gender": item["gender"],
+                "voice": item["voice"],
+                "description": item.get("description", ""),
+            }
+            for item in character_db
+        ]
+
+        character_db_path = self._character_db_path()
+        if character_db_path is not None:
+            character_db_path.parent.mkdir(parents=True, exist_ok=True)
+            character_db_path.write_text(
+                json.dumps(canonical_character_db, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        self.settings.set("character_db", canonical_character_db)
+        self.settings.set("pending_character_additions", [])
         self.settings.save()
 
         if clamped_rows:
@@ -1388,3 +1480,45 @@ class PipelinePage(BasePage):
         else:
             self.log.log("Saved character edits.", level="SUCCESS")
         self._refresh_segment_speaker_options()
+
+    def _character_db_path(self) -> Path | None:
+        if not self.project_manager:
+            return None
+        work_dir = self.project_manager.get_work_dir()
+        if work_dir is None:
+            return None
+        return work_dir / "character_database.json"
+
+    def _load_character_database_entries(self) -> list[dict[str, Any]]:
+        path = self._character_db_path()
+        if path is not None and path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                data = []
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+        data = self.settings.get("character_db", []) or []
+        return [item for item in data if isinstance(item, dict)]
+
+    def _refresh_final_review_view(self, chapter_id: str) -> None:
+        final_view = self._review_stage_views.get("final_segments")
+        if final_view is None or not self.project_manager:
+            return
+        work_dir = self.project_manager.get_work_dir()
+        if work_dir is None:
+            final_view.setPlainText("[No project work directory available.]")
+            return
+        candidate = work_dir / f"{chapter_id}_chapter_info_final.json"
+        final_segments: list[dict[str, Any]] = []
+        if candidate.exists():
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {}
+            payload_segments = payload.get("segments", []) if isinstance(payload, dict) else []
+            final_segments = [copy.deepcopy(seg) for seg in payload_segments if isinstance(seg, dict)]
+        if final_segments:
+            final_view.setHtml(self._segments_to_html(final_segments))
+        else:
+            final_view.setPlainText("[No final segments available for this chapter yet.]")

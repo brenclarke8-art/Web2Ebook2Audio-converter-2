@@ -102,21 +102,14 @@ class EpubChapterPreviewDialog(QDialog):
         wd = self._work_dir
 
         # Load cleaned text
-        cleaned_final = wd / f"{ch_id}_cleaned_final.txt"
         cleaned = wd / f"{ch_id}_cleaned.txt"
 
-        text = ""
-        if cleaned_final.exists():
-            text = cleaned_final.read_text(encoding="utf-8")
-        elif cleaned.exists():
-            text = cleaned.read_text(encoding="utf-8")
-        else:
-            text = "[No cleaned text found]"
+        text = cleaned.read_text(encoding="utf-8") if cleaned.exists() else "[No cleaned text found]"
 
         self._text_view.setPlainText(text)
 
         # Load semantic JSON
-        info_file = wd / ch_id / f"{ch_id}_chapter_info.json"
+        info_file = wd / f"{ch_id}_llm_raw.json"
         if info_file.exists():
             data = json.loads(info_file.read_text(encoding="utf-8"))
             pretty = json.dumps(data, indent=2, ensure_ascii=False)
