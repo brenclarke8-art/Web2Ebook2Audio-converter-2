@@ -76,6 +76,8 @@ class DialogueParser:
         llm_log_path: str | None = None,
         character_db: Any | None = None,
         debug: bool = False,
+        llm_chunk_size: int = 6000,
+        llm_chunk_overlap: int = 500,
     ) -> None:
 
         # Normalize URL to /api/generate
@@ -88,6 +90,8 @@ class DialogueParser:
         self.llm_strict_quotes = bool(llm_strict_quotes)
         self.debug = bool(debug)
         self.character_db = character_db
+        self.llm_chunk_size = max(1000, int(llm_chunk_size))
+        self.llm_chunk_overlap = max(0, int(llm_chunk_overlap))
 
         # LLM client + segmentation service
         self.client = OllamaChatClient(
@@ -140,9 +144,10 @@ class DialogueParser:
         try:
             # Clean text first (removes UI noise, collapses whitespace)
             clean = self.service.clean_text_for_llm(text)
-            if len(clean) > 6000:
+            if len(clean) > self.llm_chunk_size:
                 raw_dict = self.client.parse_chapter_chunked(
-                    clean, chapter_id, memory=self.character_db
+                    clean, chapter_id, memory=self.character_db,
+                    max_chars=self.llm_chunk_size, overlap=self.llm_chunk_overlap,
                 )
             else:
                 raw_dict = self.client.parse_chapter(

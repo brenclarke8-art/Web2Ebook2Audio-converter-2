@@ -272,7 +272,9 @@ class OllamaChatClient:
             stripped = line.strip()
             if not stripped:
                 continue
-            if re.fullmatch(r"[^\w\s]{2,}", stripped):
+            # Strip decorative separators: lines made up solely of repeated
+            # separator characters (e.g. "---", "===", "***", "###").
+            if re.fullmatch(r"[-=*_#~+|]{2,}", stripped):
                 continue
             stripped = re.sub(r"[ \t]+", " ", stripped)
             cleaned.append(stripped)

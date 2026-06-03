@@ -202,6 +202,8 @@ class PipelineController:
             llm_strict_quotes=bool(self.settings.get("dialogue_llm_strict_quotes", False)),
             llm_log_path=str(self.work_dir / "llm_communication.jsonl"),
             character_db=self.character_db,
+            llm_chunk_size=int(self.settings.get("llm_chunk_size", 6000)),
+            llm_chunk_overlap=int(self.settings.get("llm_chunk_overlap", 500)),
         )
 
     def is_running(self) -> bool:
