@@ -83,3 +83,27 @@ def test_generate_audio_raises_after_retry_budget_exhausted(tmp_path, monkeypatc
         )
 
     assert calls == attempts
+
+
+def test_generate_audio_does_not_retry_non_retryable_503(tmp_path, monkeypatch):
+    out_dir = tmp_path / "out"
+    calls = 0
+
+    def _always_missing_model(url, json, timeout):
+        nonlocal calls
+        calls += 1
+        return _FakeResponse(503, {"detail": "Kokoro model file not found: /missing/model.onnx"})
+
+    monkeypatch.setattr("ebook_app.core.tts.tts_engine.requests.post", _always_missing_model)
+    monkeypatch.setattr("ebook_app.core.tts.tts_engine.time.sleep", lambda *_: None)
+
+    engine = TTSEngine(output_dir=out_dir, retry_attempts=3, retry_backoff_sec=0)
+    with pytest.raises(requests.HTTPError):
+        engine.generate_audio(
+            text="hello",
+            output_filename="test.wav",
+            voice="af_heart",
+            speed=1.0,
+        )
+
+    assert calls == 1

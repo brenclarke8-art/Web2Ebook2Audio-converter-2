@@ -67,6 +67,7 @@ class _PipelineWorker(QThread):
     inventory_ready = Signal(dict)     # {raw_count, valid_count, chapter_urls}
     finished_ok = Signal(str, str)     # mode, human-readable result message
     failed = Signal(str)               # error message
+    cancelled = Signal(str)            # cancellation message
 
     # Modes
     CHECK_INDEX = "check_index"
@@ -81,6 +82,25 @@ class _PipelineWorker(QThread):
         self._mode = mode
         self._start = start_ch
         self._end = end_ch
+        self._ctrl = None
+        self._cancel_requested = False
+
+    def request_stop(self) -> None:
+        self._cancel_requested = True
+        ctrl = self._ctrl
+        if ctrl is not None and hasattr(ctrl, "stop"):
+            try:
+                ctrl.stop()
+            except Exception:
+                pass
+
+    def _abort_if_cancelled(self) -> bool:
+        if not self._cancel_requested:
+            return False
+        signal = getattr(self, "cancelled", None)
+        if signal is not None and hasattr(signal, "emit"):
+            signal.emit("Pipeline cancelled by user.")
+        return True
 
     def run(self) -> None:
         try:
@@ -90,6 +110,9 @@ class _PipelineWorker(QThread):
             if ctrl is None:
                 self.failed.emit("No project loaded.")
                 return
+            self._ctrl = ctrl
+            if hasattr(ctrl, "start"):
+                ctrl.start()
 
             if self._mode == self.CHECK_INDEX:
                 self._run_check_index(ctrl)
@@ -101,14 +124,20 @@ class _PipelineWorker(QThread):
                 self.failed.emit(f"Unknown pipeline mode: {self._mode!r}")
         except Exception as exc:
             self.failed.emit(str(exc))
+        finally:
+            self._ctrl = None
 
     # --------------------------------------------------------------
     # Mode implementations
     # --------------------------------------------------------------
 
     def _run_check_index(self, ctrl) -> None:
+        if self._abort_if_cancelled():
+            return
         self.log_message.emit("Checking index…", "INFO")
         ctrl.scrape_index()
+        if self._abort_if_cancelled():
+            return
         inventory = ctrl.get_chapter_inventory()
         self.inventory_ready.emit({
             "raw_count": inventory["raw_count"],
@@ -150,6 +179,8 @@ class _PipelineWorker(QThread):
         return {"raw_count": raw_count, "valid_count": valid_count}
 
     def _run_to_review(self, ctrl) -> None:
+        if self._abort_if_cancelled():
+            return
         ctrl.set_chapter_range(self._start, self._end)
 
         # Phase 1–2
@@ -157,6 +188,8 @@ class _PipelineWorker(QThread):
         if inventory is None:
             self.log_message.emit("Scraping index…", "INFO")
             ctrl.scrape_index()
+            if self._abort_if_cancelled():
+                return
             inventory = ctrl.get_chapter_inventory()
             self.inventory_ready.emit({
                 "raw_count": inventory["raw_count"],
@@ -170,23 +203,35 @@ class _PipelineWorker(QThread):
 
         self.log_message.emit("Scraping chapters…", "INFO")
         ctrl.scrape_chapters()
+        if self._abort_if_cancelled():
+            return
 
         # Phase 3–4
         self.log_message.emit("Cleaning chapters…", "INFO")
         ctrl.clean_chapters()
+        if self._abort_if_cancelled():
+            return
 
         self.log_message.emit("Planning cleaned-text review…", "INFO")
         ctrl.plan_clean_review()
+        if self._abort_if_cancelled():
+            return
 
         # Phase 5–6
         self.log_message.emit("Running LLM semantic analysis…", "INFO")
         ctrl.llm_semantic_analysis()
+        if self._abort_if_cancelled():
+            return
 
         self.log_message.emit("Normalizing LLM output…", "INFO")
         ctrl.normalize_llm_output()
+        if self._abort_if_cancelled():
+            return
 
         self.log_message.emit("Smart reviewing dialogue…", "INFO")
         ctrl.smart_review_dialogue()
+        if self._abort_if_cancelled():
+            return
 
         # Check if any chapters require manual review
         review_plan_path = ctrl.work_dir / "semantic_review_plan.json"
@@ -208,18 +253,26 @@ class _PipelineWorker(QThread):
         )
 
     def _run_continue_audio(self, ctrl) -> None:
+        if self._abort_if_cancelled():
+            return
         ctrl.set_chapter_range(self._start, self._end)
 
         self.log_message.emit("Finalizing reviewed chapters...", "INFO")
         ctrl.smart_review_dialogue()
+        if self._abort_if_cancelled():
+            return
 
         # Phase 7
         self.log_message.emit("Generating TTS audio…", "INFO")
         ctrl.tts_generate()
+        if self._abort_if_cancelled():
+            return
 
         # Phase 8
         self.log_message.emit("Building EPUB3…", "INFO")
         ctrl.epub_build()
+        if self._abort_if_cancelled():
+            return
 
         self.finished_ok.emit(
             self.CONTINUE_AUDIO,
@@ -354,8 +407,13 @@ class PipelinePage(BasePage):
         self._run_selected_btn = QPushButton("Run to Review (Scrape → Clean → Semantic)")
         self._run_selected_btn.clicked.connect(self._on_run_to_review)
 
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.clicked.connect(self._on_stop_pipeline)
+        self._stop_btn.setEnabled(False)
+
         action_row.addWidget(self._check_index_btn)
         action_row.addWidget(self._run_selected_btn)
+        action_row.addWidget(self._stop_btn)
         action_row.addStretch()
 
         inventory_layout.addRow("", action_row)
@@ -513,6 +571,10 @@ class PipelinePage(BasePage):
         self._segment_save_btn = QPushButton("Save Segment Review Changes")
         self._segment_save_btn.clicked.connect(self._on_save_segment_speakers)
         segment_btns.addWidget(self._segment_save_btn)
+
+        self._segment_recheck_btn = QPushButton("Dialogue Recheck (LLM + Manual Context)")
+        self._segment_recheck_btn.clicked.connect(self._on_recheck_dialogue)
+        segment_btns.addWidget(self._segment_recheck_btn)
 
         self._continue_audio_btn = QPushButton("Confirm Chapter Review + Continue Audio + Export")
         self._continue_audio_btn.clicked.connect(self._on_confirm_review_and_continue)
@@ -703,6 +765,7 @@ class PipelinePage(BasePage):
         self._check_index_btn.setEnabled(enabled)
         self._run_selected_btn.setEnabled(enabled)
         self._continue_audio_btn.setEnabled(enabled)
+        self._stop_btn.setEnabled(not enabled)
 
     def _start_worker(self, worker: _PipelineWorker) -> None:
         if self._is_busy():
@@ -714,6 +777,7 @@ class PipelinePage(BasePage):
         worker.inventory_ready.connect(self._on_inventory_ready)
         worker.finished_ok.connect(self._on_worker_finished)
         worker.failed.connect(self._on_worker_failed)
+        worker.cancelled.connect(self._on_worker_cancelled)
         worker.finished.connect(worker.deleteLater)
         self._set_buttons_enabled(False)
         worker.start()
@@ -767,6 +831,22 @@ class PipelinePage(BasePage):
         self._set_buttons_enabled(True)
         self._load_active_project_state()
         self.log.log(f"Pipeline failed: {message}", level="ERROR")
+
+    def _on_worker_cancelled(self, message: str) -> None:
+        self._worker = None
+        self._set_buttons_enabled(True)
+        self._load_active_project_state()
+        self.log.log(message, level="WARNING")
+
+    def _on_stop_pipeline(self) -> None:
+        worker = self._worker
+        if worker is None or not self._is_busy():
+            self.log.log("No active pipeline operation to stop.", level="WARNING")
+            self._stop_btn.setEnabled(False)
+            return
+        worker.request_stop()
+        self.log.log("Stop requested. Current phase will halt shortly.", level="WARNING")
+        self._stop_btn.setEnabled(False)
     # ------------------------------------------------------------------
     # Button handlers
     # ------------------------------------------------------------------
@@ -1177,6 +1257,47 @@ class PipelinePage(BasePage):
         if self._segment_table.rowCount() > 0:
             self._on_save_segment_speakers()
         self._on_continue_audio()
+
+    def _on_recheck_dialogue(self) -> None:
+        if not self._require_project():
+            return
+        chapter_id = self._current_review_chapter_id
+        if not chapter_id:
+            self.log.log("Select a chapter first.", level="WARNING")
+            return
+        if self._segment_table.rowCount() <= 0:
+            self.log.log("No segment edits available to recheck.", level="WARNING")
+            return
+
+        # Persist the latest manual edits first.
+        self._on_save_segment_speakers()
+        manual_hints = []
+        for seg in self._current_review_segments:
+            text = str(seg.get("text", "")).strip()
+            speaker = str(seg.get("speaker", "")).strip()
+            seg_type = str(seg.get("type", "dialogue")).strip().lower()
+            if not text or not speaker:
+                continue
+            manual_hints.append({"text": text, "speaker": speaker, "type": seg_type})
+
+        ctrl = self.project_manager.create_pipeline_controller()
+        if ctrl is None:
+            self.log.log("Unable to initialize pipeline controller.", level="ERROR")
+            return
+        selected = self.project_manager.get_selected_range()
+        ctrl.set_chapter_range(
+            int(selected.get("start", 1) or 1),
+            int(selected.get("end", 0) or 0),
+        )
+        self.log.log("Running dialogue recheck with your manual corrections…", level="INFO")
+        result = ctrl.recheck_dialogue_with_manual_context(chapter_id, manual_hints)
+        self.log.log(
+            f"Dialogue recheck complete for {result['chapter_id']}: "
+            f"{result['segment_count']} segments, {result['character_count']} characters.",
+            level="SUCCESS",
+        )
+        current_index = self._review_chapter_combo.currentIndex()
+        self._on_review_chapter_changed(current_index)
 
     # ------------------------------------------------------------------
     # Character Loading (Phase 6)

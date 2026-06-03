@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from ebook_app.pipeline_controller import PipelineController
 
@@ -162,3 +163,100 @@ def test_clean_chapters_removes_ui_noise_and_zero_width_chars(tmp_path):
     assert "\u200B" not in cleaned
     assert "Line one." in cleaned
     assert "Line two." in cleaned
+
+
+def test_tts_generate_stops_when_controller_is_cancelled(tmp_path, monkeypatch):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+    controller.start()
+    controller.chapters = [{"title": "Chapter 1"}]
+    (tmp_path / "pipeline_work" / "chapters.json").write_text(
+        json.dumps(controller.chapters),
+        encoding="utf-8",
+    )
+    (tmp_path / "pipeline_work" / "ch1_chapter_info_final.json").write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "text": "line",
+                        "type": "dialogue",
+                        "speaker": "Alice",
+                        "gender": "female",
+                        "paragraph_id": "ch1_p0",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeEngine:
+        def generate_audio(self, **_kwargs):
+            controller.stop()
+            return None
+
+        def get_last_audio_duration(self):
+            return 0.0
+
+        def concatenate_audio_files(self, files, output_path):
+            output_path.write_bytes(b"")
+
+    monkeypatch.setattr(controller, "_make_tts_backend", lambda output_dir=None: _FakeEngine())
+
+    controller.tts_generate()
+
+    assert not (tmp_path / "pipeline_work" / "audio_timing.json").exists()
+
+
+def test_recheck_dialogue_with_manual_context_overwrites_llm_files(tmp_path, monkeypatch):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+    controller.set_chapter_range(1, 1)
+    (tmp_path / "pipeline_work" / "chapters.json").write_text(
+        json.dumps([{"title": "Chapter A"}]),
+        encoding="utf-8",
+    )
+    (tmp_path / "pipeline_work" / "ch1_cleaned.txt").write_text("Hello there.", encoding="utf-8")
+
+    fake_result = SimpleNamespace(
+        segments=[
+            SimpleNamespace(
+                text="Hello there.",
+                type="dialogue",
+                speaker="Alice",
+                gender="female",
+                speaker_confidence=1.0,
+                gender_confidence=1.0,
+                character_confidence=1.0,
+                paragraph_id="ch1_p0",
+            )
+        ],
+        detected_characters=[SimpleNamespace(name="Alice", gender="female", confidence=1.0)],
+    )
+
+    class _FakeParser:
+        def parse(self, text, chapter_id, manual_segment_hints=None):
+            assert chapter_id == "ch1"
+            assert text == "Hello there."
+            assert manual_segment_hints == [
+                {"text": "Hello there.", "speaker": "Alice", "type": "dialogue"}
+            ]
+            return fake_result
+
+    monkeypatch.setattr(controller, "_build_dialogue_parser", lambda: _FakeParser())
+
+    result = controller.recheck_dialogue_with_manual_context(
+        "ch1",
+        [{"text": "Hello there.", "speaker": "Alice", "type": "dialogue"}],
+    )
+
+    assert result == {"chapter_id": "ch1", "segment_count": 1, "character_count": 1}
+    raw = json.loads((tmp_path / "pipeline_work" / "ch1_llm_raw.json").read_text(encoding="utf-8"))
+    normalized = json.loads(
+        (tmp_path / "pipeline_work" / "ch1_llm_normalized.json").read_text(encoding="utf-8")
+    )
+    assert raw["segments"][0]["speaker"] == "Alice"
+    assert normalized["segments"][0]["type"] == "dialogue"

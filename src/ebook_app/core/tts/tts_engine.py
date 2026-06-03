@@ -78,15 +78,23 @@ class TTSEngine:
                 break
             except requests.HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else None
+                detail = self._error_detail_from_response(exc.response)
                 if status == 503 and attempt < self.retry_attempts:
+                    if self._is_non_retryable_503(detail):
+                        logger.error(
+                            "TTS server returned non-retryable 503: %s",
+                            detail or "service unavailable",
+                        )
+                        raise
                     logger.warning(
-                        "TTS server returned 503; retrying request (%d/%d).",
+                        "TTS server returned 503%s; retrying request (%d/%d).",
+                        f" ({detail})" if detail else "",
                         attempt,
                         self.retry_attempts,
                     )
                     time.sleep(self.retry_backoff_sec * attempt)
                     continue
-                logger.error("TTS server request failed: %s", exc)
+                logger.error("TTS server request failed: %s%s", exc, f" | detail={detail}" if detail else "")
                 raise
             except requests.RequestException as exc:
                 if attempt < self.retry_attempts:
@@ -117,6 +125,36 @@ class TTSEngine:
             raise
 
         return local_path
+
+    @staticmethod
+    def _error_detail_from_response(response: requests.Response | None) -> str:
+        if response is None:
+            return ""
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            detail = payload.get("detail")
+            if detail:
+                return str(detail).strip()
+        body = (response.text or "").strip()
+        return body[:240]
+
+    @staticmethod
+    def _is_non_retryable_503(detail: str) -> bool:
+        lowered = (detail or "").lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "not installed",
+                "not found",
+                "no such file",
+                "missing",
+                "set kokoro_model_path",
+                "set kokoro_voices_path",
+            )
+        )
 
     # ------------------------------------------------------------------
     # Contract: get_last_audio_duration
