@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ebook_app.core.epub.epub_builder import EPUBBuilder
 from ebook_app.core.tts.voice_router import VoiceRouter
@@ -51,6 +51,7 @@ class PipelineController:
         self.settings = settings
         self._on_progress = on_progress or (lambda key, val: None)
         self._running = False
+        self._cancel_enabled = False
 
         # Work directory
         if work_dir:
@@ -122,6 +123,14 @@ class PipelineController:
     def _chapter_id_for_offset(self, idx: int) -> str:
         return make_chapter_id(idx, start_index=self.selected_start_chapter)
 
+    def _chapter_offset_from_id(self, chapter_id: str) -> int:
+        prefix = chapter_id[2:] if chapter_id.lower().startswith("ch") else chapter_id
+        try:
+            chapter_number = int(prefix)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, chapter_number - self.selected_start_chapter)
+
     def _chapter_raw_text_path(self, chapter_id: str) -> Path:
         return self.work_dir / f"{chapter_id}_raw.txt"
 
@@ -182,6 +191,31 @@ class PipelineController:
             output_dir=effective_output_dir,
             server_url=str(self.settings.get("tts_backend_url", "http://127.0.0.1:5005")),
         )
+
+    def _build_dialogue_parser(self) -> DialogueParser:
+        return DialogueParser(
+            ollama_url=self.settings.get("dialogue_llm_url", ""),
+            model=self.settings.get("dialogue_llm_model", ""),
+            timeout_s=int(self.settings.get("dialogue_llm_timeout", 120)),
+            retries=int(self.settings.get("dialogue_llm_retries", 1)),
+            llm_mode=str(self.settings.get("dialogue_llm_mode", "full")),
+            llm_strict_quotes=bool(self.settings.get("dialogue_llm_strict_quotes", False)),
+            llm_log_path=str(self.work_dir / "llm_communication.jsonl"),
+            character_db=self.character_db,
+        )
+
+    def is_running(self) -> bool:
+        return bool(self._running)
+
+    def start(self) -> None:
+        self._cancel_enabled = True
+        self._running = True
+
+    def _cancelled(self, step: str) -> bool:
+        if not self._cancel_enabled or self._running:
+            return False
+        logger.info("Pipeline stop requested; exiting %s early.", step)
+        return True
 
     # ------------------------------------------------------------------
     # LLM preflight
@@ -281,7 +315,7 @@ class PipelineController:
 
     def run_all(self) -> None:
         """Execute the full new pipeline."""
-        self._running = True
+        self.start()
         steps = [(name, getattr(self, name)) for name in self.STEPS]
 
         for key, method in steps:
@@ -298,10 +332,12 @@ class PipelineController:
                 break
 
         self._running = False
+        self._cancel_enabled = False
 
     def stop(self) -> None:
-        """Signal the pipeline to stop after the current step."""
-        self._running = False
+        """Signal the pipeline to stop as soon as possible."""
+        if self._cancel_enabled:
+            self._running = False
 
     def set_chapter_range(self, start_chapter: int, end_chapter: int) -> None:
         """Set the 1-based chapter range to process."""
@@ -431,6 +467,8 @@ class PipelineController:
             return
 
         for idx, chapter in enumerate(self.chapters):
+            if self._cancelled("clean_chapters"):
+                return
             chapter_id = self._chapter_id_for_offset(idx)
             raw_content = str(chapter.get("content", "") or "")
 
@@ -538,25 +576,15 @@ class PipelineController:
             return
 
         # Prepare LLM parser
-        llm_url = self.settings.get("dialogue_llm_url", "")
-        llm_model = self.settings.get("dialogue_llm_model", "")
-        llm_log_path = self.work_dir / "llm_communication.jsonl"
-
-        parser = DialogueParser(
-            ollama_url=llm_url,
-            model=llm_model,
-            timeout_s=int(self.settings.get("dialogue_llm_timeout", 120)),
-            retries=int(self.settings.get("dialogue_llm_retries", 1)),
-            llm_mode=str(self.settings.get("dialogue_llm_mode", "full")),
-            llm_strict_quotes=bool(self.settings.get("dialogue_llm_strict_quotes", False)),
-            llm_log_path=str(llm_log_path),
-        )
+        parser = self._build_dialogue_parser()
 
         # Optional preflight check
         if bool(self.settings.get("llm_preflight_check", True)):
             self._preflight_llm_check(parser)
 
         for idx, chapter in enumerate(chapters):
+            if self._cancelled("llm_semantic_analysis"):
+                return
             chapter_id = self._chapter_id_for_offset(idx)
             chapter_number = self.selected_start_chapter + idx
             title = chapter.get("title", f"Chapter {chapter_number}")
@@ -630,6 +658,8 @@ class PipelineController:
             return
 
         for idx in range(total):
+            if self._cancelled("normalize_llm_output"):
+                return
             chapter_id = self._chapter_id_for_offset(idx)
             raw_path = self._chapter_llm_raw_path(chapter_id)
 
@@ -732,6 +762,8 @@ class PipelineController:
         needs_review = []
 
         for idx in range(total):
+            if self._cancelled("smart_review_dialogue"):
+                return
             chapter_id = self._chapter_id_for_offset(idx)
             norm_path = self._chapter_llm_normalized_path(chapter_id)
 
@@ -928,6 +960,8 @@ class PipelineController:
         tts_speed = float(self.settings.get("tts_speed", 1.0))
 
         for idx in range(total):
+            if self._cancelled("tts_generate"):
+                return
             chapter_id = self._chapter_id_for_offset(idx)
             final_info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
@@ -955,6 +989,8 @@ class PipelineController:
             current_time = 0.0  # seconds
 
             for seg_idx, seg in enumerate(segments):
+                if self._cancelled("tts_generate"):
+                    return
                 text = str(seg.get("text", "") or "").strip()
                 if not text:
                     continue
@@ -980,6 +1016,8 @@ class PipelineController:
                         voice=voice,
                         speed=tts_speed,
                     )
+                    if self._cancelled("tts_generate"):
+                        return
                     duration = float(engine.get_last_audio_duration() or 0.0)
                 except Exception:
                     logger.error(
@@ -1088,6 +1126,8 @@ class PipelineController:
         audio_root = self.work_dir / "audio"
 
         for idx, ch in enumerate(chapters):
+            if self._cancelled("epub_build"):
+                return
             chapter_id = self._chapter_id_for_offset(idx)
             final_info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
 
@@ -1176,6 +1216,65 @@ class PipelineController:
         epub_path = builder.build()
         logger.info("Phase 8 — EPUB build complete: %s", epub_path)
         self._on_progress("epub_build", 100)
+
+    def recheck_dialogue_with_manual_context(
+        self,
+        chapter_id: str,
+        manual_segment_hints: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        cleaned_path = self._chapter_cleaned_text_path(chapter_id)
+        if not cleaned_path.exists():
+            raise FileNotFoundError(f"Missing cleaned chapter text for {chapter_id}: {cleaned_path}")
+
+        chapter_text = cleaned_path.read_text(encoding="utf-8")
+        parser = self._build_dialogue_parser()
+        result = parser.parse(
+            text=chapter_text,
+            chapter_id=chapter_id,
+            manual_segment_hints=manual_segment_hints,
+        )
+
+        final_segments = [self._segment_to_dict(seg) for seg in result.segments]
+        chapter_offset = max(0, self._chapter_offset_from_id(chapter_id))
+        chapter_number = self.selected_start_chapter + chapter_offset
+
+        chapters = self._load_json(self.work_dir / "chapters.json", default=[])
+        title = ""
+        if 0 <= chapter_offset < len(chapters):
+            chapter_entry = chapters[chapter_offset]
+            if isinstance(chapter_entry, dict):
+                title = str(chapter_entry.get("title", "")).strip()
+
+        llm_raw_payload = {
+            "chapter_index": chapter_number,
+            "chapter_id": chapter_id,
+            "title": title or f"Chapter {chapter_number}",
+            "segments": final_segments,
+            "detected_characters": [
+                {
+                    "name": c.name,
+                    "gender": c.gender,
+                    "confidence": c.confidence,
+                }
+                for c in result.detected_characters
+            ],
+        }
+
+        self._save_json(self._chapter_llm_raw_path(chapter_id), llm_raw_payload)
+        self._save_json(
+            self._chapter_llm_normalized_path(chapter_id),
+            {
+                "chapter_id": chapter_id,
+                "segments": final_segments,
+                "characters": llm_raw_payload["detected_characters"],
+            },
+        )
+
+        return {
+            "chapter_id": chapter_id,
+            "segment_count": len(final_segments),
+            "character_count": len(llm_raw_payload["detected_characters"]),
+        }
 
     # ------------------------------------------------------------------
     # TTS Preview — upgraded to multi-speaker logic

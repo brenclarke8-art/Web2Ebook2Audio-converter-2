@@ -168,6 +168,7 @@ class DialogueSegmentationService:
         text: str,
         chapter_id: str,
         known_characters: list[str | dict[str, Any]] | None = None,
+        manual_segment_hints: list[dict[str, str]] | None = None,
     ) -> DialogueLLMResult:
         cleaned = self.clean_text_for_llm(text)
         if not cleaned:
@@ -177,6 +178,7 @@ class DialogueSegmentationService:
             )
 
         known_context = self._format_known_character_context(known_characters or [])
+        hint_context = self._format_manual_segment_hints(manual_segment_hints or [])
         chunks = (
             [cleaned]
             if len(cleaned) <= self._MAX_LLM_CHARS
@@ -191,8 +193,9 @@ class DialogueSegmentationService:
             chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
             # Send the chapter text as plain text so it follows "BEGIN INPUT TEXT"
             # in the system prompt naturally. Prepend known characters when available.
-            if known_context:
-                user_text = f"{known_context}\n\n{chunk}"
+            context_blocks = [block for block in (known_context, hint_context) if block]
+            if context_blocks:
+                user_text = "\n\n".join(context_blocks + [chunk])
             else:
                 user_text = chunk
             raw = self.client.ask_json(
@@ -386,4 +389,34 @@ class DialogueSegmentationService:
             + "\n".join(lines)
             + "\nUse canonical names from this list when alias/title forms clearly match.\n"
             + "If attribution is ambiguous, use unknown."
+        )
+
+    @staticmethod
+    def _format_manual_segment_hints(manual_segment_hints: list[dict[str, str]]) -> str:
+        if not manual_segment_hints:
+            return ""
+
+        lines: list[str] = []
+        for item in manual_segment_hints[:40]:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            speaker = str(item.get("speaker", "")).strip()
+            seg_type = str(item.get("type", "")).strip().lower()
+            if not text or not speaker:
+                continue
+            if seg_type not in {"dialogue", "thought", "narration"}:
+                seg_type = "dialogue"
+            snippet = " ".join(text.split())
+            if len(snippet) > 180:
+                snippet = f"{snippet[:177]}..."
+            lines.append(f'- "{snippet}" => speaker={speaker}, type={seg_type}')
+
+        if not lines:
+            return ""
+
+        return (
+            "MANUAL REVIEW CORRECTIONS (authoritative, user-approved):\n"
+            + "\n".join(lines)
+            + "\nTreat these corrections as ground truth when assigning speakers and segment types."
         )

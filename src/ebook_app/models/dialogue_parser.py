@@ -107,7 +107,12 @@ class DialogueParser:
     # Public API (required by pipeline)
     # -----------------------------------------------------------------------
 
-    def parse(self, text: str, chapter_id: str) -> DialogueParseResult:
+    def parse(
+        self,
+        text: str,
+        chapter_id: str,
+        manual_segment_hints: list[dict[str, str]] | None = None,
+    ) -> DialogueParseResult:
         """
         MUST return:
           DialogueParseResult(
@@ -124,10 +129,15 @@ class DialogueParser:
 
         # Call segmentation service
         try:
+            parse_kwargs = {
+                "text": text,
+                "chapter_id": chapter_id,
+                "known_characters": self._known_characters_for_llm(),
+            }
+            if manual_segment_hints:
+                parse_kwargs["manual_segment_hints"] = manual_segment_hints
             result = self.service.parse(
-                text=text,
-                chapter_id=chapter_id,
-                known_characters=self._known_characters_for_llm(),
+                **parse_kwargs,
             )
         except Exception as exc:
             logger.error("DialogueSegmentationService.parse failed: %s", exc)

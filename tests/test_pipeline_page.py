@@ -434,3 +434,65 @@ def test_run_continue_audio_finalizes_review_before_audio(tmp_path) -> None:
     worker._run_continue_audio(ctrl)
 
     assert calls == ["range:2-3", "smart_review_dialogue", "tts_generate", "epub_build"]
+
+
+def test_stop_pipeline_requests_worker_stop() -> None:
+    stop_calls: list[str] = []
+    page = SimpleNamespace(
+        _worker=SimpleNamespace(request_stop=lambda: stop_calls.append("stop")),
+        _is_busy=lambda: True,
+        _stop_btn=SimpleNamespace(setEnabled=lambda _enabled: None),
+        log=_LogCapture(),
+    )
+
+    PipelinePage._on_stop_pipeline(page)
+
+    assert stop_calls == ["stop"]
+    assert page.log.messages == [("Stop requested. Current phase will halt shortly.", "WARNING")]
+
+
+def test_worker_abort_if_cancelled_emits_cancelled_signal() -> None:
+    worker = _PipelineWorker(
+        project_manager=SimpleNamespace(),
+        settings=SimpleNamespace(),
+        mode=_PipelineWorker.CHECK_INDEX,
+    )
+    worker.cancelled = _SignalCapture()
+    worker._cancel_requested = True
+
+    assert worker._abort_if_cancelled() is True
+    assert worker.cancelled.calls == [("Pipeline cancelled by user.",)]
+
+
+def test_on_recheck_dialogue_reparses_with_manual_hints() -> None:
+    page = SimpleNamespace(
+        _current_review_chapter_id="ch1",
+        _segment_table=SimpleNamespace(rowCount=lambda: 1),
+        _current_review_segments=[{"text": "Hello", "speaker": "Alice", "type": "dialogue"}],
+        _review_chapter_combo=SimpleNamespace(currentIndex=lambda: 0),
+        _on_save_segment_speakers=lambda: None,
+        _on_review_chapter_changed=lambda _index: None,
+        _require_project=lambda: True,
+        log=_LogCapture(),
+    )
+
+    calls: list[tuple[str, list[dict]]] = []
+    controller = SimpleNamespace(
+        set_chapter_range=lambda _start, _end: None,
+        recheck_dialogue_with_manual_context=lambda chapter_id, hints: (
+            calls.append((chapter_id, hints)) or {"chapter_id": chapter_id, "segment_count": 1, "character_count": 1}
+        ),
+    )
+    page.project_manager = SimpleNamespace(
+        create_pipeline_controller=lambda: controller,
+        get_selected_range=lambda: {"start": 1, "end": 1},
+    )
+
+    PipelinePage._on_recheck_dialogue(page)
+
+    assert calls == [("ch1", [{"text": "Hello", "speaker": "Alice", "type": "dialogue"}])]
+    assert page.log.messages[0] == ("Running dialogue recheck with your manual corrections…", "INFO")
+    assert page.log.messages[1] == (
+        "Dialogue recheck complete for ch1: 1 segments, 1 characters.",
+        "SUCCESS",
+    )
