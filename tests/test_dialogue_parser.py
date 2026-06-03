@@ -216,6 +216,34 @@ def test_dialogue_segmentation_service_injects_structured_known_character_contex
     )
 
     assert client.calls
-    user_text = client.calls[0]["user"]
-    assert "KNOWN CHARACTER CONTEXT (canonical names):" in user_text
-    assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in user_text
+    system_text = client.calls[0]["system"]
+    assert "CHARACTER MEMORY (from previous chapters)" in system_text
+    assert "KNOWN CHARACTER CONTEXT (canonical names):" in system_text
+    assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in system_text
+
+
+def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
+    client = _CaptureClient()
+    service = DialogueSegmentationService(client=client)
+    service.parse(text="Story text.", chapter_id="ch-prompt")
+
+    assert client.calls
+    system_text = client.calls[0]["system"]
+    assert system_text.startswith("You are a deterministic text‑analysis engine.")
+    assert 'If a speaker is unknown, set "speaker": "Unknown".' in system_text
+    assert '"characters": [' not in system_text
+
+
+def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
+    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct")
+
+    def _fake_parse(*, text, chapter_id, known_characters=None):
+        return DialogueLLMResult(
+            segments=[DialogueLLMSegment(text='"Hello."', type="dialogue", speaker="Unknown")],
+            characters=[],
+        )
+
+    monkeypatch.setattr(parser.service, "parse", _fake_parse)
+    result = parser.parse("Someone spoke.", chapter_id="ch-unknown")
+
+    assert result.segments[0].speaker == "unknown"

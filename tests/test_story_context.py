@@ -250,7 +250,7 @@ def test_service_truncates_long_chapter_text():
 
 
 def test_segmentation_service_receives_story_context(monkeypatch):
-    """Story context block should be prepended to the user message."""
+    """Story context block should be inserted into the system prompt memory section."""
     from ebook_app.services.dialogue_segmentation_service import (
         DialogueSegmentationService,
     )
@@ -259,6 +259,7 @@ def test_segmentation_service_receives_story_context(monkeypatch):
 
     class _CapClient:
         def ask_json(self, *, system, user, chapter_id):
+            captured["system"] = system
             captured["user"] = user
             return {"segments": [], "characters": []}
 
@@ -269,7 +270,7 @@ def test_segmentation_service_receives_story_context(monkeypatch):
         chapter_id="ch002",
         story_context_block=ctx_block,
     )
-    assert ctx_block in captured["user"]
+    assert ctx_block in captured["system"]
     assert "Alice arrived at the castle." in captured["user"]
 
 
