@@ -30,12 +30,14 @@ class OllamaChatClient:
         url: str = "http://localhost:11434/api/chat",
         timeout_s: int = 300,
         retries: int = 1,
+        max_context_tokens: int = 250_000,
         log_path: Path | str | None = None,
     ) -> None:
         self.model = (model or "mistral:instruct").strip()
         self.url = (url or "http://localhost:11434/api/chat").strip()
         self.timeout_s = int(timeout_s)
         self.retries = max(0, int(retries))
+        self.max_context_tokens = max(1, int(max_context_tokens))
         self.disabled = False
         self.log_path = Path(log_path) if log_path else None
         if self.log_path:
@@ -54,7 +56,7 @@ class OllamaChatClient:
                 {"role": "user", "content": user_content},
             ],
             "format": "json",
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_ctx": self.max_context_tokens},
             "stream": False,
         }
 
@@ -177,6 +179,7 @@ class OllamaChatClient:
                 {"role": "system", "content": _JSON_REPAIR_SYSTEM_PROMPT},
                 {"role": "user", "content": content},
             ],
+            "options": {"num_ctx": self.max_context_tokens},
             "stream": False,
         }
         try:
