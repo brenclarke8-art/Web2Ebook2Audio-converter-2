@@ -270,7 +270,7 @@ class DialogueSegmentationService:
         blocks = [str(block).strip() for block in memory_blocks if str(block).strip()]
         if not blocks:
             return _SEGMENTATION_SYSTEM_PROMPT_PREFIX
-        return _SEGMENTATION_SYSTEM_PROMPT_PREFIX + "\n\n".join(blocks)
+        return _SEGMENTATION_SYSTEM_PROMPT_PREFIX + "\n\n" + "\n\n".join(blocks)
 
     @staticmethod
     def _format_known_character_context(known_characters: list[str | dict[str, Any]]) -> str:
