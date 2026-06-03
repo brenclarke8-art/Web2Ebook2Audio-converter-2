@@ -179,10 +179,10 @@ def test_service_update_returns_empty_fallback_on_llm_error_no_prior():
 
 
 def test_service_update_caps_summary_length():
-    long_summary = "word " * 200  # far longer than _MAX_SUMMARY_CHARS
+    very_long_summary_input = "word " * 200  # far longer than _MAX_SUMMARY_CHARS
     client = _FakeClient(
         {
-            "summary": long_summary,
+            "summary": very_long_summary_input,
             "active_characters": [],
         }
     )

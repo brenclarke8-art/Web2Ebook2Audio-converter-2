@@ -204,7 +204,8 @@ class StoryContextService:
 
         # Cap summary length
         if len(summary) > _MAX_SUMMARY_CHARS:
-            summary = summary[:_MAX_SUMMARY_CHARS].rsplit(" ", 1)[0] + "…"
+            truncated = summary[:_MAX_SUMMARY_CHARS].rsplit(" ", 1)[0].strip()
+            summary = (truncated if truncated else summary[:_MAX_SUMMARY_CHARS]) + "…"
 
         active_characters = [
             str(c).strip()
