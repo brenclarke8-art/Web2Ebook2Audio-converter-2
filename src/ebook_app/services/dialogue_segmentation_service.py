@@ -71,10 +71,6 @@ class DialogueSegmentationService:
         r"^later\s*$",                 # lone "Later" dismiss button
     )
 
-    # Maximum characters to send to the LLM in a single request.
-    # Kept for reference; the full cleaned text is sent in one pass.
-    _MAX_LLM_CHARS = 4000
-
     def __init__(self, *, client: OllamaChatClient, strict_quotes: bool = False) -> None:
         self.client = client
         self.strict_quotes = bool(strict_quotes)
@@ -117,43 +113,6 @@ class DialogueSegmentationService:
             )
 
         return result
-
-    @staticmethod
-    def _split_into_chunks(text: str, max_chars: int) -> list[str]:
-        """Split *text* into chunks of at most *max_chars*, breaking at line boundaries.
-
-        Prefers double-newline paragraph breaks; falls back to single-newline splits
-        when the text contains no blank-line separators.
-        """
-        # Prefer paragraph-level splits (double newlines)
-        double_units = re.split(r"\n\n+", text)
-        if len(double_units) > 1:
-            sep = "\n\n"
-            units = double_units
-        else:
-            # No blank lines — split on individual lines instead
-            sep = "\n"
-            units = text.splitlines()
-
-        chunks: list[str] = []
-        current: list[str] = []
-        current_len = 0
-
-        for unit in units:
-            unit_len = len(unit)
-            sep_len = len(sep) if current else 0
-            if current and current_len + sep_len + unit_len > max_chars:
-                chunks.append(sep.join(current))
-                current = [unit]
-                current_len = unit_len
-            else:
-                current.append(unit)
-                current_len += sep_len + unit_len
-
-        if current:
-            chunks.append(sep.join(current))
-
-        return chunks
 
     @classmethod
     def _is_noise_line(cls, line: str) -> bool:

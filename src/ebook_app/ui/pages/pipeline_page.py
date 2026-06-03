@@ -7,6 +7,7 @@ import copy
 import hashlib
 import html
 import json
+import logging
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -272,6 +273,8 @@ class _PipelineWorker(QThread):
             self.CONTINUE_AUDIO,
             "Audio generation and EPUB export complete."
         )
+
+logger = logging.getLogger(__name__)
 
 class PipelinePage(BasePage):
     """Page for running the end-to-end processing pipeline by project."""
@@ -639,6 +642,7 @@ class PipelinePage(BasePage):
                 record = json.loads(line)
                 formatted_parts.append(json.dumps(record, indent=2, ensure_ascii=False))
             except Exception:
+                logger.warning("Failed to parse LLM log line as JSON: %s", line[:120])
                 formatted_parts.append(line)
         self._llm_log_view.setPlainText("\n\n---\n\n".join(formatted_parts) if formatted_parts else "(empty)")
 
