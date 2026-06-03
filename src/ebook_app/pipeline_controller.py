@@ -583,6 +583,29 @@ class PipelineController:
         if bool(self.settings.get("llm_preflight_check", True)):
             self._preflight_llm_check(parser)
 
+        # ── Experimental: chapter-to-chapter story context ────────────────
+        story_context_requested = bool(self.settings.get("story_context_enabled", False))
+        story_context_enabled = story_context_requested and parser.llm_mode != "off"
+        story_context = None
+        context_service = None
+        story_context_path = self.work_dir / "story_context.json"
+
+        if story_context_enabled:
+            from ebook_app.services.story_context_service import (
+                StoryContext,
+                StoryContextService,
+            )
+            story_context = StoryContext.load(story_context_path)
+            context_service = StoryContextService(client=parser.client)
+            logger.info(
+                "[Phase 5] Story context enabled (experimental). Prior context chapter: %s",
+                story_context.last_chapter_id or "none",
+            )
+        elif story_context_requested and parser.llm_mode == "off":
+            logger.info(
+                "[Phase 5] Story context disabled because dialogue_llm_mode=off."
+            )
+
         for idx, chapter in enumerate(chapters):
             if self._cancelled("llm_semantic_analysis"):
                 return
@@ -597,9 +620,21 @@ class PipelineController:
                 logger.warning("Missing cleaned text for %s — skipping.", chapter_id)
                 continue
 
+            # Inject prior story context into parsing prompt (experimental)
+            context_block: str | None = None
+            if story_context_enabled and story_context is not None:
+                context_block = story_context.to_prompt_block() or None
+
             # Run LLM semantic parsing
             logger.debug("Parsing chapter %s (%d/%d)…", chapter_id, idx + 1, total)
-            result = parser.parse(text=text, chapter_id=chapter_id)
+            if context_block:
+                result = parser.parse(
+                    text=text,
+                    chapter_id=chapter_id,
+                    story_context_block=context_block,
+                )
+            else:
+                result = parser.parse(text=text, chapter_id=chapter_id)
             self.dialogue_segments[idx] = result.segments
 
             # Build chapter_info structure
@@ -633,6 +668,20 @@ class PipelineController:
             # Save raw LLM output
             raw_path = self._chapter_llm_raw_path(chapter_id)
             self._save_json(raw_path, chapter_info)
+
+            # Update rolling story context after each chapter (experimental)
+            if story_context_enabled and context_service is not None:
+                story_context = context_service.update_from_chapter(
+                    chapter_text=text,
+                    chapter_id=chapter_id,
+                    prior_context=story_context,
+                )
+                story_context.save(story_context_path)
+                logger.debug(
+                    "Story context updated for %s (active: %s)",
+                    chapter_id,
+                    ", ".join(story_context.active_characters) or "none",
+                )
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("llm_semantic_analysis", percent)
