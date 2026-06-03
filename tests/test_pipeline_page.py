@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+import json
 from types import ModuleType, SimpleNamespace
 
 
@@ -56,6 +57,7 @@ base_page = ModuleType("ebook_app.ui.pages._base_page")
 base_page.BasePage = type("BasePage", (), {})
 sys.modules["ebook_app.ui.pages._base_page"] = base_page
 
+import ebook_app.ui.pages.pipeline_page as pipeline_page_module
 from ebook_app.ui.pages.pipeline_page import PipelinePage, QMessageBox, _PipelineWorker
 
 
@@ -255,3 +257,179 @@ def test_run_to_review_scrapes_index_when_cache_missing(tmp_path) -> None:
     assert calls[0] == "scrape_index"
     assert worker.inventory_ready.calls == [({"raw_count": 1, "valid_count": 1, "chapter_urls": ["fresh"]},)]
     assert worker.failed.calls == []
+
+
+class _FakeItem:
+    def __init__(self, text: str = "") -> None:
+        self._text = text
+
+    def text(self) -> str:
+        return self._text
+
+
+class _FakeSignal:
+    def connect(self, _callback) -> None:
+        pass
+
+
+class _FakeCombo:
+    def __init__(self, value: str = "") -> None:
+        self._value = value
+        self.currentTextChanged = _FakeSignal()
+
+    def currentText(self) -> str:
+        return self._value
+
+    def setCurrentText(self, value: str) -> None:
+        self._value = value
+
+
+class _FakeTable:
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    def rowCount(self) -> int:
+        return len(self._rows)
+
+    def item(self, row: int, column: int):
+        return self._rows[row]["items"].get(column)
+
+    def cellWidget(self, row: int, column: int):
+        return self._rows[row]["widgets"].get(column)
+
+
+def test_on_save_segment_speakers_updates_review_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_page_module, "QComboBox", _FakeCombo)
+
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir()
+
+    raw_path = work_dir / "ch1_llm_raw.json"
+    raw_path.write_text(
+        json.dumps({"segments": [{"text": "Hello", "speaker": "narrator", "type": "narration"}]}),
+        encoding="utf-8",
+    )
+    normalized_path = work_dir / "ch1_llm_normalized.json"
+    normalized_path.write_text(
+        json.dumps({"segments": [{"text": "Hello", "speaker": "narrator", "type": "narration"}]}),
+        encoding="utf-8",
+    )
+    final_path = work_dir / "ch1_chapter_info_final.json"
+    final_path.write_text(
+        json.dumps({"segments": [{"text": "Hello", "speaker": "narrator", "type": "narration"}]}),
+        encoding="utf-8",
+    )
+
+    page = SimpleNamespace(
+        _current_review_chapter_id="ch1",
+        _segment_table=_FakeTable(
+            [
+                {
+                    "items": {0: _FakeItem("Hello")},
+                    "widgets": {1: _FakeCombo("Alice"), 2: _FakeCombo("dialogue")},
+                }
+            ]
+        ),
+        _current_review_segments=[{"text": "Hello", "speaker": "narrator", "type": "narration"}],
+        _current_review_row_segment_indexes=[0],
+        project_manager=SimpleNamespace(get_work_dir=lambda: work_dir),
+        log=_LogCapture(),
+        _render_current_segments_preview=lambda: None,
+        _review_stage_views={},
+        _segments_to_html=lambda segments: str(segments),
+    )
+    page._collect_review_segments_from_table = lambda: PipelinePage._collect_review_segments_from_table(page)
+    page._refresh_final_review_view = lambda chapter_id: PipelinePage._refresh_final_review_view(page, chapter_id)
+
+    PipelinePage._on_save_segment_speakers(page)
+
+    assert json.loads(raw_path.read_text(encoding="utf-8"))["segments"][0]["speaker"] == "Alice"
+    assert json.loads(raw_path.read_text(encoding="utf-8"))["segments"][0]["type"] == "dialogue"
+    assert json.loads(normalized_path.read_text(encoding="utf-8"))["segments"][0]["speaker"] == "Alice"
+    assert json.loads(final_path.read_text(encoding="utf-8"))["segments"][0]["type"] == "dialogue"
+    assert page.log.messages == [("Saved segment review edits for chapter review.", "SUCCESS")]
+
+
+def test_on_save_detected_characters_persists_character_database(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_page_module, "QComboBox", _FakeCombo)
+
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir()
+    db_path = work_dir / "character_database.json"
+    db_path.write_text(
+        json.dumps([{"name": "Alice", "gender": "female", "voice": "af_bella", "description": "Lead"}]),
+        encoding="utf-8",
+    )
+
+    settings_data = {"character_db": [], "pending_character_additions": [{"name": "Old"}]}
+    settings = SimpleNamespace(
+        get=lambda key, default=None: settings_data.get(key, default),
+        set=lambda key, value: settings_data.__setitem__(key, value),
+        save=lambda: settings_data.__setitem__("saved", True),
+    )
+    page = SimpleNamespace(
+        _detected_char_table=_FakeTable(
+            [
+                {
+                    "items": {
+                        0: _FakeItem("Alice"),
+                        3: _FakeItem("1.2"),
+                        4: _FakeItem("ch1"),
+                    },
+                    "widgets": {1: _FakeCombo("female"), 2: _FakeCombo("af_bella")},
+                },
+                {
+                    "items": {
+                        0: _FakeItem("Bob"),
+                        3: _FakeItem("0.5"),
+                        4: _FakeItem("ch2"),
+                    },
+                    "widgets": {1: _FakeCombo("male"), 2: _FakeCombo("am_adam")},
+                },
+            ]
+        ),
+        project_manager=SimpleNamespace(get_work_dir=lambda: work_dir),
+        settings=settings,
+        log=_LogCapture(),
+        _refresh_segment_speaker_options=lambda: None,
+    )
+    page._normalize_gender = PipelinePage._normalize_gender
+    page._default_voice_for_gender = lambda gender: "af_heart"
+    page._character_db_path = lambda: PipelinePage._character_db_path(page)
+    page._load_character_database_entries = lambda: PipelinePage._load_character_database_entries(page)
+
+    PipelinePage._on_save_detected_characters(page)
+
+    saved = json.loads(db_path.read_text(encoding="utf-8"))
+    assert saved == [
+        {"name": "Alice", "gender": "female", "voice": "af_bella", "description": "Lead"},
+        {"name": "Bob", "gender": "male", "voice": "am_adam", "description": ""},
+    ]
+    assert settings_data["character_db"] == saved
+    assert settings_data["pending_character_additions"] == []
+    assert settings_data["saved"] is True
+    assert page.log.messages == [("Saved character edits (1 confidence values clamped to 0..1).", "WARNING")]
+
+
+def test_run_continue_audio_finalizes_review_before_audio(tmp_path) -> None:
+    worker = _PipelineWorker(
+        project_manager=SimpleNamespace(),
+        settings=SimpleNamespace(),
+        mode=_PipelineWorker.CONTINUE_AUDIO,
+        start_ch=2,
+        end_ch=3,
+    )
+    worker.log_message = _SignalCapture()
+    worker.finished_ok = _SignalCapture()
+
+    calls: list[str] = []
+    ctrl = SimpleNamespace(
+        set_chapter_range=lambda start, end: calls.append(f"range:{start}-{end}"),
+        smart_review_dialogue=lambda: calls.append("smart_review_dialogue"),
+        tts_generate=lambda: calls.append("tts_generate"),
+        epub_build=lambda: calls.append("epub_build"),
+    )
+
+    worker._run_continue_audio(ctrl)
+
+    assert calls == ["range:2-3", "smart_review_dialogue", "tts_generate", "epub_build"]
