@@ -39,6 +39,7 @@ from ebook_app.ui.pages._base_page import BasePage
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.pipeline_contracts import chapter_id as make_chapter_id
 
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
 # NEW PIPELINE STEPS (UI progress bars)
@@ -273,8 +274,6 @@ class _PipelineWorker(QThread):
             self.CONTINUE_AUDIO,
             "Audio generation and EPUB export complete."
         )
-
-logger = logging.getLogger(__name__)
 
 class PipelinePage(BasePage):
     """Page for running the end-to-end processing pipeline by project."""
