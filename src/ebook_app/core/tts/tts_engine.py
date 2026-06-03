@@ -92,7 +92,7 @@ class TTSEngine:
                         attempt,
                         self.retry_attempts,
                     )
-                    time.sleep(max(1.0, self.retry_backoff_sec * attempt))
+                    time.sleep(self.retry_backoff_sec * attempt)
                     continue
                 logger.error("TTS server request failed: %s%s", exc, f" | detail={detail}" if detail else "")
                 raise

@@ -128,6 +128,7 @@ class PipelineController:
         try:
             chapter_number = int(prefix)
         except (TypeError, ValueError):
+            logger.warning("Unexpected chapter_id format %r; defaulting offset to 0.", chapter_id)
             return 0
         return max(0, chapter_number - self.selected_start_chapter)
 
