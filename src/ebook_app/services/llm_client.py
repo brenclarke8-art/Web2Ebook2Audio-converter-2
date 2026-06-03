@@ -28,7 +28,7 @@ class OllamaChatClient:
         *,
         model: str = "mistral:instruct",
         url: str = "http://localhost:11434/api/chat",
-        timeout_s: int = 120,
+        timeout_s: int = 300,
         retries: int = 1,
         log_path: Path | str | None = None,
     ) -> None:
