@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from ebook_app.services.llm_client import OllamaChatClient
 
@@ -110,7 +110,7 @@ class DialogueSegmentationService:
         for i, chunk in enumerate(chunks):
             chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
             system_prompt = self._build_system_prompt(
-                block for block in (story_context_block, known_context) if block
+                [block for block in (story_context_block, known_context) if block]
             )
             if hint_context:
                 user_text = "\n\n".join((hint_context, chunk))
@@ -266,7 +266,7 @@ class DialogueSegmentationService:
         )
 
     @staticmethod
-    def _build_system_prompt(memory_blocks: list[str] | tuple[str, ...] | Any) -> str:
+    def _build_system_prompt(memory_blocks: Iterable[str]) -> str:
         blocks = [str(block).strip() for block in memory_blocks if str(block).strip()]
         if not blocks:
             return _SEGMENTATION_SYSTEM_PROMPT_PREFIX
