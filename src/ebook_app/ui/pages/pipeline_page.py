@@ -54,6 +54,7 @@ _STEPS = [
     ("epub_build", "9. Build EPUB3"),
 ]
 _SEGMENT_TYPE_OPTIONS = ["narration", "dialogue", "thought"]
+_NO_REVIEW_SEGMENTS_MSG = "No semantic segments available for review."
 
 
 class _PipelineWorker(QThread):
@@ -209,7 +210,7 @@ class _PipelineWorker(QThread):
     def _run_continue_audio(self, ctrl) -> None:
         ctrl.set_chapter_range(self._start, self._end)
 
-        self.log_message.emit("Finalizing reviewed chapters…", "INFO")
+        self.log_message.emit("Finalizing reviewed chapters...", "INFO")
         ctrl.smart_review_dialogue()
 
         # Phase 7
@@ -1080,13 +1081,13 @@ class PipelinePage(BasePage):
 
     def _render_current_segments_preview(self) -> None:
         if self._segment_table.rowCount() <= 0:
-            self._set_segment_preview_text("No semantic segments available for review.")
+            self._set_segment_preview_text(_NO_REVIEW_SEGMENTS_MSG)
             return
         preview_segments = self._collect_review_segments_from_table()
         if preview_segments:
             self._set_segment_preview_html(self._segments_to_html(preview_segments))
         else:
-            self._set_segment_preview_text("No semantic segments available for review.")
+            self._set_segment_preview_text(_NO_REVIEW_SEGMENTS_MSG)
 
     @staticmethod
     def _normalize_segment_type(value: str) -> str:
