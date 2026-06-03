@@ -168,6 +168,7 @@ class DialogueSegmentationService:
         text: str,
         chapter_id: str,
         known_characters: list[str | dict[str, Any]] | None = None,
+        story_context_block: str | None = None,
     ) -> DialogueLLMResult:
         cleaned = self.clean_text_for_llm(text)
         if not cleaned:
@@ -189,12 +190,14 @@ class DialogueSegmentationService:
 
         for i, chunk in enumerate(chunks):
             chunk_id = f"{chapter_id}_c{i}" if len(chunks) > 1 else chapter_id
-            # Send the chapter text as plain text so it follows "BEGIN INPUT TEXT"
-            # in the system prompt naturally. Prepend known characters when available.
+            # Build user text: prepend story context, then known characters, then chunk.
+            prefix_parts: list[str] = []
+            if story_context_block:
+                prefix_parts.append(story_context_block)
             if known_context:
-                user_text = f"{known_context}\n\n{chunk}"
-            else:
-                user_text = chunk
+                prefix_parts.append(known_context)
+            prefix_parts.append(chunk)
+            user_text = "\n\n".join(prefix_parts)
             raw = self.client.ask_json(
                 system=_SEGMENTATION_SYSTEM_PROMPT, user=user_text, chapter_id=chunk_id
             )

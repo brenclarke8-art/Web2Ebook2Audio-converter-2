@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -402,6 +403,39 @@ class SettingsPage(BasePage):
         self._load_pending_additions()
         inner.addWidget(pending_group)
 
+        # ── Experimental Features ──────────────────────────────────────
+        exp_group = QGroupBox("⚠️ Experimental Features")
+        exp_group.setToolTip(
+            "Experimental features may change behaviour or produce inconsistent results."
+        )
+        exp_vbox = QVBoxLayout(exp_group)
+
+        exp_note = QLabel(
+            "<i>These options are experimental and may produce inconsistent results. "
+            "Enable only if you understand the limitations.</i>"
+        )
+        exp_note.setWordWrap(True)
+        exp_vbox.addWidget(exp_note)
+
+        self._story_context_checkbox = QCheckBox(
+            "Enable chapter-to-chapter story context (experimental)"
+        )
+        self._story_context_checkbox.setToolTip(
+            "After each chapter, ask the LLM to produce a short rolling story-state summary "
+            "(max one paragraph). That summary is injected into the next chapter's prompt so "
+            "the model can maintain continuity across chapters.\n\n"
+            "The context is stored in pipeline_work/story_context.json alongside the book "
+            "project so generation can resume with continuity even after closing and "
+            "reopening the project.\n\n"
+            "Active characters are auto-extracted from each chapter."
+        )
+        self._story_context_checkbox.setChecked(
+            bool(self.settings.get("story_context_enabled", False))
+        )
+        exp_vbox.addWidget(self._story_context_checkbox)
+
+        inner.addWidget(exp_group)
+
         # ── Save ───────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         save_btn = QPushButton("Save Settings")
@@ -566,6 +600,7 @@ class SettingsPage(BasePage):
         self.settings.set("character_confidence_threshold", self._char_confidence_spin.value())
         self.settings.set("character_db", self._collect_character_db())
         self.settings.set("pending_character_additions", self._collect_pending_additions())
+        self.settings.set("story_context_enabled", self._story_context_checkbox.isChecked())
         self.settings.save()
         self.log.log("Settings saved.", level="SUCCESS")
 

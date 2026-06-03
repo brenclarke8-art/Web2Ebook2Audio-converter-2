@@ -121,6 +121,16 @@ class SettingsManager(QObject):
         "dialogue_review_mode": "smart",          # smart | always
         "speaker_conf_threshold": 0.8,
         "character_conf_threshold": 0.8,
+
+        # ------------------------------
+        # Experimental Features
+        # ------------------------------
+
+        # Experimental: chapter-to-chapter rolling story context
+        # When enabled, a short story-state summary is generated after each
+        # chapter and injected into the next chapter's LLM prompt to improve
+        # continuity.  Stored in pipeline_work/story_context.json.
+        "story_context_enabled": False,
     }
 
     def __init__(self):
