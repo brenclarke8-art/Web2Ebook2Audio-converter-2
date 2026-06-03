@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 from ebook_app.services.story_context_service import (
     StoryContext,
     StoryContextService,
@@ -59,6 +55,19 @@ def test_story_context_round_trip_dict():
     assert restored.summary == ctx.summary
     assert restored.active_characters == ctx.active_characters
     assert restored.last_chapter_id == ctx.last_chapter_id
+
+
+def test_story_context_from_dict_non_list_active_characters():
+    restored = StoryContext.from_dict(
+        {
+            "summary": "A summary.",
+            "active_characters": "Alice",
+            "last_chapter_id": "ch001",
+        }
+    )
+    assert restored.summary == "A summary."
+    assert restored.active_characters == []
+    assert restored.last_chapter_id == "ch001"
 
 
 def test_story_context_load_missing_file(tmp_path):
@@ -180,6 +189,19 @@ def test_service_update_returns_empty_fallback_on_llm_error_no_prior():
 
 def test_service_update_caps_summary_length():
     very_long_summary_input = "word " * 200  # far longer than _MAX_SUMMARY_CHARS
+    client = _FakeClient(
+        {
+            "summary": very_long_summary_input,
+            "active_characters": [],
+        }
+    )
+    svc = StoryContextService(client=client)
+    ctx = svc.update_from_chapter(chapter_text="Chapter text.", chapter_id="ch001")
+    assert len(ctx.summary) <= _MAX_SUMMARY_CHARS
+
+
+def test_service_update_caps_summary_length_without_spaces():
+    very_long_summary_input = "x" * (_MAX_SUMMARY_CHARS + 50)
     client = _FakeClient(
         {
             "summary": very_long_summary_input,

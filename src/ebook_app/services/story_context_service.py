@@ -68,7 +68,7 @@ class StoryContext:
 
         Returns an empty string when there is no context yet (first chapter).
         """
-        if not self.summary:
+        if not self.summary.strip():
             return ""
         lines = [
             "STORY CONTEXT (from prior chapters — use for continuity only):",
@@ -94,11 +94,12 @@ class StoryContext:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StoryContext:
+        raw_active = data.get("active_characters", [])
+        if not isinstance(raw_active, list):
+            raw_active = []
         return cls(
             summary=str(data.get("summary", "")),
-            active_characters=[
-                str(c) for c in data.get("active_characters", []) if str(c).strip()
-            ],
+            active_characters=[str(c) for c in raw_active if str(c).strip()],
             last_chapter_id=str(data.get("last_chapter_id", "")),
         )
 
@@ -204,14 +205,16 @@ class StoryContextService:
 
         # Cap summary length
         if len(summary) > _MAX_SUMMARY_CHARS:
-            truncated = summary[:_MAX_SUMMARY_CHARS].rsplit(" ", 1)[0].strip()
-            summary = (truncated if truncated else summary[:_MAX_SUMMARY_CHARS]) + "…"
+            capped = summary[:_MAX_SUMMARY_CHARS]
+            word_boundary = capped.rsplit(" ", 1)[0].strip()
+            summary = word_boundary if word_boundary else capped
+            if len(summary) < _MAX_SUMMARY_CHARS:
+                summary = f"{summary}…"
 
-        active_characters = [
-            str(c).strip()
-            for c in raw.get("active_characters", [])
-            if str(c).strip()
-        ]
+        raw_active_characters = raw.get("active_characters", [])
+        if not isinstance(raw_active_characters, list):
+            raw_active_characters = []
+        active_characters = [str(c).strip() for c in raw_active_characters if str(c).strip()]
 
         return StoryContext(
             summary=summary,

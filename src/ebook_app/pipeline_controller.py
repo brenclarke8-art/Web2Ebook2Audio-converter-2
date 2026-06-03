@@ -584,7 +584,8 @@ class PipelineController:
             self._preflight_llm_check(parser)
 
         # ── Experimental: chapter-to-chapter story context ────────────────
-        story_context_enabled = bool(self.settings.get("story_context_enabled", False))
+        story_context_requested = bool(self.settings.get("story_context_enabled", False))
+        story_context_enabled = story_context_requested and parser.llm_mode != "off"
         story_context = None
         context_service = None
         story_context_path = self.work_dir / "story_context.json"
@@ -599,6 +600,10 @@ class PipelineController:
             logger.info(
                 "[Phase 5] Story context enabled (experimental). Prior context chapter: %s",
                 story_context.last_chapter_id or "none",
+            )
+        elif story_context_requested and parser.llm_mode == "off":
+            logger.info(
+                "[Phase 5] Story context disabled because dialogue_llm_mode=off."
             )
 
         for idx, chapter in enumerate(chapters):
