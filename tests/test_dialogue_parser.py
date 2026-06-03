@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
+from ebook_app.models.character_db import Character, CharacterDatabase
 from ebook_app.models.dialogue_parser import DialogueParser
+from ebook_app.services.dialogue_segmentation_service import DialogueLLMResult, DialogueLLMSegment, DialogueSegmentationService
 
 
 class _DummyResponse:
@@ -15,6 +17,15 @@ class _DummyResponse:
 
     def json(self) -> dict:
         return self._body
+
+
+class _CaptureClient:
+    def __init__(self):
+        self.calls = []
+
+    def ask_json(self, *, system, user, chapter_id):
+        self.calls.append({"system": system, "user": user, "chapter_id": chapter_id})
+        return {"segments": [], "characters": []}
 
 
 def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
@@ -143,3 +154,68 @@ def test_dialogue_parser_keeps_chat_endpoint_unchanged():
 def test_dialogue_parser_keeps_custom_endpoint_unchanged():
     parser = DialogueParser(ollama_url="http://example.local/custom-endpoint", model="mistral")
     assert parser.ollama_url == "http://example.local/custom-endpoint"
+
+
+def test_dialogue_parser_canonicalizes_detected_and_segment_speakers(tmp_path, monkeypatch):
+    db = CharacterDatabase(path=tmp_path / "character_db.json")
+    db.add(
+        Character(
+            name="Alice",
+            voice="af_heart",
+            gender="female",
+            description="Noblewoman",
+            aliases=["Lady Alice"],
+        )
+    )
+    parser = DialogueParser(ollama_url="http://example/api/chat", model="mistral:instruct", character_db=db)
+
+    def _fake_parse(*, text, chapter_id, known_characters=None):
+        return DialogueLLMResult(
+            segments=[DialogueLLMSegment(text='"Hello."', type="dialogue", speaker="Lady Alice.")],
+            characters=[{"name": " lady alice ", "gender": "unknown", "confidence": 0.7}],
+        )
+
+    monkeypatch.setattr(parser.service, "parse", _fake_parse)
+    result = parser.parse("Lady Alice spoke.", chapter_id="ch-canonical")
+
+    assert result.segments[0].speaker == "Alice"
+    assert result.segments[0].gender == "female"
+    assert len(result.detected_characters) == 1
+    assert result.detected_characters[0].name == "Alice"
+
+
+def test_known_character_context_formatting_includes_alias_gender_and_description():
+    context = DialogueSegmentationService._format_known_character_context(
+        [
+            {
+                "name": "Alice",
+                "aliases": ["Lady Alice"],
+                "gender": "female",
+                "description": "Noblewoman",
+            }
+        ]
+    )
+    assert "KNOWN CHARACTER CONTEXT" in context
+    assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in context
+
+
+def test_dialogue_segmentation_service_injects_structured_known_character_context():
+    client = _CaptureClient()
+    service = DialogueSegmentationService(client=client)
+    service.parse(
+        text="Story text.",
+        chapter_id="ch-context",
+        known_characters=[
+            {
+                "name": "Alice",
+                "aliases": ["Lady Alice"],
+                "gender": "female",
+                "description": "Noblewoman",
+            }
+        ],
+    )
+
+    assert client.calls
+    user_text = client.calls[0]["user"]
+    assert "KNOWN CHARACTER CONTEXT (canonical names):" in user_text
+    assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in user_text
