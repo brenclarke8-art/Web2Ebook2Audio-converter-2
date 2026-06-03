@@ -112,6 +112,7 @@ class DialogueParser:
         text: str,
         chapter_id: str,
         manual_segment_hints: list[dict[str, str]] | None = None,
+        story_context_block: str | None = None,
     ) -> DialogueParseResult:
         """
         MUST return:
@@ -119,6 +120,14 @@ class DialogueParser:
               segments=[Segment...],
               detected_characters=[DetectedCharacter...]
           )
+
+        Args:
+            text: Chapter text to parse.
+            chapter_id: Stable identifier for this chapter (e.g. ``"ch001"``).
+            story_context_block: Optional pre-formatted story-context string
+                produced by ``StoryContext.to_prompt_block()``.  When provided,
+                it is prepended to the user message sent to the LLM so the
+                model can maintain continuity across chapters.
         """
 
         # LLM disabled → fallback
@@ -129,16 +138,16 @@ class DialogueParser:
 
         # Call segmentation service
         try:
-            parse_kwargs = {
+            parse_kwargs: dict = {
                 "text": text,
                 "chapter_id": chapter_id,
                 "known_characters": self._known_characters_for_llm(),
             }
             if manual_segment_hints:
                 parse_kwargs["manual_segment_hints"] = manual_segment_hints
-            result = self.service.parse(
-                **parse_kwargs,
-            )
+            if story_context_block:
+                parse_kwargs["story_context_block"] = story_context_block
+            result = self.service.parse(**parse_kwargs)
         except Exception as exc:
             logger.error("DialogueSegmentationService.parse failed: %s", exc)
             clean = self.service.clean_text_for_llm(text)
