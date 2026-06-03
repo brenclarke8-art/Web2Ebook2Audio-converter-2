@@ -229,7 +229,7 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
 
     assert client.calls
     system_text = client.calls[0]["system"]
-    assert system_text.startswith("You are a deterministic text‑analysis engine.")
+    assert system_text.startswith("You are a deterministic text-analysis engine.")
     assert 'If a speaker is unknown, set "speaker": "Unknown".' in system_text
     assert '"characters": [' not in system_text
 

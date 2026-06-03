@@ -360,10 +360,9 @@ class DialogueParser:
         while name and name[-1] in ".!?,":  # strip trailing punctuation
             name = name[:-1].rstrip()
         normalized = " ".join(name.split()) or "narrator"
-        if normalized.casefold() == "unknown":
-            return "unknown"
-        if normalized.casefold() == "narrator":
-            return "narrator"
+        canonical_form = normalized.casefold()
+        if canonical_form in {"unknown", "narrator"}:
+            return canonical_form
         return normalized
 
     def _build_character_gender_map(self, raw_characters: list[Any]) -> dict[str, str]:

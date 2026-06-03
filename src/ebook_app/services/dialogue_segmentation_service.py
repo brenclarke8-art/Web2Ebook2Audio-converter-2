@@ -8,8 +8,8 @@ from ebook_app.services.llm_client import OllamaChatClient
 
 SegmentType = Literal["dialogue", "thought", "narration", "general"]
 
-_SEGMENTATION_SYSTEM_PROMPT_PREFIX = """You are a deterministic text‑analysis engine.
-Your job is to parse a light‑novel chapter into structured JSON with perfect consistency.
+_SEGMENTATION_SYSTEM_PROMPT_PREFIX = """You are a deterministic text-analysis engine.
+Your job is to parse a light-novel chapter into structured JSON with perfect consistency.
 Follow the rules exactly. Do not explain anything. Do not add commentary.
 Output ONLY valid JSON. If unsure, output an empty array or empty string instead of guessing.
 
@@ -267,7 +267,7 @@ class DialogueSegmentationService:
 
     @staticmethod
     def _build_system_prompt(memory_blocks: Iterable[str]) -> str:
-        blocks = [str(block).strip() for block in memory_blocks if str(block).strip()]
+        blocks = [stripped for block in memory_blocks if (stripped := str(block).strip())]
         if not blocks:
             return _SEGMENTATION_SYSTEM_PROMPT_PREFIX
         return _SEGMENTATION_SYSTEM_PROMPT_PREFIX + "\n\n" + "\n\n".join(blocks)
