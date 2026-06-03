@@ -122,6 +122,21 @@ class PipelineController:
     def _chapter_id_for_offset(self, idx: int) -> str:
         return make_chapter_id(idx, start_index=self.selected_start_chapter)
 
+    def _chapter_raw_text_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_raw.txt"
+
+    def _chapter_cleaned_text_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_cleaned.txt"
+
+    def _chapter_llm_raw_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_llm_raw.json"
+
+    def _chapter_llm_normalized_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_llm_normalized.json"
+
+    def _chapter_final_review_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_chapter_info_final.json"
+
     def _merge_pending_characters(
         self,
         character_db: list[dict],
@@ -389,6 +404,10 @@ class PipelineController:
         self.chapters = scraper.scrape_chapters(selected_urls)
 
         self._save_json(self.work_dir / "chapters.json", self.chapters)
+        for idx, chapter in enumerate(self.chapters):
+            chapter_id = self._chapter_id_for_offset(idx)
+            raw_path = self._chapter_raw_text_path(chapter_id)
+            raw_path.write_text(str(chapter.get("content", "") or ""), encoding="utf-8")
 
         logger.info("Scraped %d chapters successfully.", len(self.chapters))
         self._on_progress("scrape_chapters", 100)
@@ -421,7 +440,7 @@ class PipelineController:
             if not cleaned.strip():
                 cleaned = normalized
 
-            out_path = self.work_dir / f"{chapter_id}_cleaned.txt"
+            out_path = self._chapter_cleaned_text_path(chapter_id)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(cleaned, encoding="utf-8")
 
@@ -498,11 +517,9 @@ class PipelineController:
     def llm_semantic_analysis(self) -> None:
         """
         Phase 5:
-        - Load cleaned_final text (or cleaned if skip mode)
+        - Load cleaned text
         - Run DialogueParser.parse() for each chapter
         - Save raw LLM output to chXXX_llm_raw.json
-        - Save per-chapter chXXX_chapter_info.json
-        - Save aggregated chapter_info_all.json
         """
         logger.info("[Phase 5] Running LLM Semantic Analysis…")
 
@@ -539,21 +556,14 @@ class PipelineController:
         if bool(self.settings.get("llm_preflight_check", True)):
             self._preflight_llm_check(parser)
 
-        aggregated_info = {}
-
         for idx, chapter in enumerate(chapters):
             chapter_id = self._chapter_id_for_offset(idx)
             chapter_number = self.selected_start_chapter + idx
             title = chapter.get("title", f"Chapter {chapter_number}")
 
-            # Determine which cleaned file to use
-            cleaned_final = self.work_dir / f"{chapter_id}_cleaned_final.txt"
-            cleaned_basic = self.work_dir / f"{chapter_id}_cleaned.txt"
-
-            if cleaned_final.exists():
-                text = cleaned_final.read_text(encoding="utf-8")
-            elif cleaned_basic.exists():
-                text = cleaned_basic.read_text(encoding="utf-8")
+            cleaned_path = self._chapter_cleaned_text_path(chapter_id)
+            if cleaned_path.exists():
+                text = cleaned_path.read_text(encoding="utf-8")
             else:
                 logger.warning("Missing cleaned text for %s — skipping.", chapter_id)
                 continue
@@ -592,21 +602,11 @@ class PipelineController:
             }
 
             # Save raw LLM output
-            raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
+            raw_path = self._chapter_llm_raw_path(chapter_id)
             self._save_json(raw_path, chapter_info)
-
-            # Save per-chapter chapter_info
-            chapter_dir = self.work_dir / chapter_id
-            chapter_dir.mkdir(parents=True, exist_ok=True)
-            self._save_json(chapter_dir / f"{chapter_id}_chapter_info.json", chapter_info)
-
-            aggregated_info[chapter_id] = chapter_info
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("llm_semantic_analysis", percent)
-
-        # Save aggregated chapter_info_all.json
-        self._save_json(self.work_dir / "chapter_info_all.json", aggregated_info)
 
         logger.info("Phase 5 — LLM Semantic Analysis complete.")
 
@@ -631,7 +631,7 @@ class PipelineController:
 
         for idx in range(total):
             chapter_id = self._chapter_id_for_offset(idx)
-            raw_path = self.work_dir / f"{chapter_id}_llm_raw.json"
+            raw_path = self._chapter_llm_raw_path(chapter_id)
 
             if not raw_path.exists():
                 logger.warning("Missing raw LLM output for %s — skipping.", chapter_id)
@@ -668,7 +668,7 @@ class PipelineController:
                 "characters": normalized_chars,
             }
 
-            out_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
+            out_path = self._chapter_llm_normalized_path(chapter_id)
             self._save_json(out_path, normalized)
 
             percent = int((idx + 1) * 100 / total)
@@ -733,7 +733,7 @@ class PipelineController:
 
         for idx in range(total):
             chapter_id = self._chapter_id_for_offset(idx)
-            norm_path = self.work_dir / f"{chapter_id}_llm_normalized.json"
+            norm_path = self._chapter_llm_normalized_path(chapter_id)
 
             if not norm_path.exists():
                 logger.warning("Missing normalized LLM output for %s — skipping.", chapter_id)
@@ -839,8 +839,6 @@ class PipelineController:
         """
         Helper for Phase 6:
         Writes:
-          - chXXX_segments_final.json
-          - chXXX_characters_final.json
           - chXXX_chapter_info_final.json
         Applies hybrid voice assignment:
           - VoiceRouter for known characters
@@ -886,21 +884,12 @@ class PipelineController:
                 "voice": voice,
             })
 
-        # Write segments_final
-        seg_path = self.work_dir / f"{chapter_id}_segments_final.json"
-        self._save_json(seg_path, segments)
-
-        # Write characters_final
-        char_path = self.work_dir / f"{chapter_id}_characters_final.json"
-        self._save_json(char_path, final_chars)
-
-        # Write chapter_info_final
         info_final = {
             "chapter_id": chapter_id,
             "segments": segments,
             "characters": final_chars,
         }
-        info_path = self.work_dir / f"{chapter_id}_chapter_info_final.json"
+        info_path = self._chapter_final_review_path(chapter_id)
         self._save_json(info_path, info_final)
 
         logger.debug("Final chapter files written for %s", chapter_id)

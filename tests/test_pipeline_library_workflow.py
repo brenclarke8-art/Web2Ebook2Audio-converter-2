@@ -110,7 +110,10 @@ def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
     class _FakeScraper:
         def scrape_chapters(self, selected_urls):
             captured["urls"] = selected_urls
-            return [{"url": url, "title": "title", "content": "content"} for url in selected_urls]
+            return [
+                {"url": url, "title": "title", "content": f"content for {idx + 2}"}
+                for idx, url in enumerate(selected_urls)
+            ]
 
     monkeypatch.setattr("ebook_app.pipeline_controller.WebScraper", _FakeScraper)
 
@@ -122,6 +125,8 @@ def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
         "https://example.com/book/chapter-4",
     ]
     assert len(controller.chapters) == 3
+    assert (tmp_path / "pipeline_work" / "ch2_raw.txt").read_text(encoding="utf-8") == "content for 2"
+    assert (tmp_path / "pipeline_work" / "ch4_raw.txt").read_text(encoding="utf-8") == "content for 4"
 
 
 def test_run_all_executes_new_pipeline_steps_in_order(tmp_path):

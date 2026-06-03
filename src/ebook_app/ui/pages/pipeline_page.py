@@ -421,9 +421,9 @@ class PipelinePage(BasePage):
         for key, label in [
             ("scraped", "Scraped"),
             ("cleaned", "Cleaned"),
-            ("cleaned_final", "Cleaned Final"),
-            ("semantic", "Semantic Segments"),
-            ("final_segments", "Final Segments"),
+            ("semantic", "LLM Chat"),
+            ("cleaned_final", "Cleaned LLM Chat"),
+            ("final_segments", "Final Review"),
         ]:
             page, chapter_combo, stage_view = self._build_review_stage_page()
             chapter_combo.currentIndexChanged.connect(self._on_review_stage_chapter_changed)
@@ -431,7 +431,7 @@ class PipelinePage(BasePage):
             self._review_stage_views[key] = stage_view
             self._review_stage_tabs.addTab(page, label)
         chapter_layout.addWidget(self._review_stage_tabs)
-        self._review_text_view = self._review_stage_views["semantic"]
+        self._review_text_view = self._review_stage_views["final_segments"]
 
         splitter.addWidget(chapter_group)
 
@@ -853,8 +853,8 @@ class PipelinePage(BasePage):
             self._review_chapters = []
             self._set_stage_plain_text("scraped", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("cleaned", "Load or create a book project to review chapter content.")
-            self._set_stage_plain_text("cleaned_final", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("semantic", "Load or create a book project to review chapter content.")
+            self._set_stage_plain_text("cleaned_final", "Load or create a book project to review chapter content.")
             self._set_stage_plain_text("final_segments", "Load or create a book project to review chapter content.")
             self._detected_char_table.setRowCount(0)
             self._segment_table.setRowCount(0)
@@ -873,9 +873,9 @@ class PipelinePage(BasePage):
         if not chapters:
             self._set_stage_plain_text("scraped", "No scraped chapters found yet.")
             self._set_stage_plain_text("cleaned", "No cleaned chapter text found yet.")
-            self._set_stage_plain_text("cleaned_final", "No final cleaned chapter text found yet.")
-            self._set_stage_plain_text("semantic", "No semantic segments found yet.")
-            self._set_stage_plain_text("final_segments", "No final segments found yet.")
+            self._set_stage_plain_text("semantic", "No LLM chat output found yet.")
+            self._set_stage_plain_text("cleaned_final", "No cleaned LLM chat found yet.")
+            self._set_stage_plain_text("final_segments", "No final review found yet.")
         else:
             index_to_use = 0
             if isinstance(selected_chapter_idx, int):
@@ -889,7 +889,7 @@ class PipelinePage(BasePage):
 
     def _on_review_chapter_changed(self, index: int) -> None:
         """
-        Loads scraped/cleaned/semantic/final review sources for a chapter.
+        Loads scraped/cleaned/LLM/final review sources for a chapter.
         """
         self._current_review_chapter_id = None
         self._current_review_segment_file = None
@@ -911,7 +911,11 @@ class PipelinePage(BasePage):
         self._current_review_chapter_id = chapter_id
 
         # 1. Raw scraped content
-        scraped_content = str(chapter.get("content", "")).strip()
+        raw_scrape = work_dir / f"{chapter_id}_raw.txt"
+        if raw_scrape.exists():
+            scraped_content = raw_scrape.read_text(encoding="utf-8").strip()
+        else:
+            scraped_content = str(chapter.get("content", "")).strip()
         self._set_stage_plain_text("scraped", scraped_content or "[No content available for this chapter.]")
 
         # 2. cleaned.txt (deterministic cleaned text)
@@ -921,16 +925,9 @@ class PipelinePage(BasePage):
         else:
             self._set_stage_plain_text("cleaned", "[No deterministic cleaned text available for this chapter.]")
 
-        # 3. cleaned_final.txt (user-approved cleaned text)
-        cleaned_final = work_dir / f"{chapter_id}_cleaned_final.txt"
-        if cleaned_final.exists():
-            self._set_stage_plain_text("cleaned_final", cleaned_final.read_text(encoding="utf-8"))
-        else:
-            self._set_stage_plain_text("cleaned_final", "[No final cleaned text available for this chapter.]")
-
-        # 4. semantic segments (chapter_info.json)
+        # 3. LLM chat (raw LLM output)
         segments: list[dict[str, Any]] = []
-        chapter_info_file = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
+        chapter_info_file = work_dir / f"{chapter_id}_llm_raw.json"
         if chapter_info_file.exists():
             try:
                 ch_data = json.loads(chapter_info_file.read_text(encoding="utf-8"))
@@ -940,29 +937,41 @@ class PipelinePage(BasePage):
         if segments:
             self._load_review_segments(chapter_info_file, segments)
         else:
-            self._set_stage_plain_text("semantic", "[No semantic segments available for this chapter.]")
+            self._set_stage_plain_text("semantic", "[No LLM chat output available for this chapter.]")
 
-        # 5. final segments (segments_final/chapter_info_final)
+        # 4. cleaned LLM chat (normalized LLM output)
+        normalized_segments: list[dict[str, Any]] = []
+        normalized_file = work_dir / f"{chapter_id}_llm_normalized.json"
+        if normalized_file.exists():
+            try:
+                normalized_data = json.loads(normalized_file.read_text(encoding="utf-8"))
+                normalized_segments = [
+                    copy.deepcopy(seg)
+                    for seg in normalized_data.get("segments", [])
+                    if isinstance(seg, dict)
+                ]
+            except Exception:
+                normalized_segments = []
+        normalized_view = self._review_stage_views.get("cleaned_final")
+        if normalized_view is not None:
+            if normalized_segments:
+                normalized_view.setHtml(self._segments_to_html(normalized_segments))
+            else:
+                normalized_view.setPlainText("[No cleaned LLM chat available for this chapter.]")
+
+        # 5. final review before TTS
         final_segments: list[dict[str, Any]] = []
-        for candidate in [
-            work_dir / f"{chapter_id}_segments_final.json",
-            work_dir / f"{chapter_id}_chapter_info_final.json",
-        ]:
-            if not candidate.exists():
-                continue
+        candidate = work_dir / f"{chapter_id}_chapter_info_final.json"
+        if candidate.exists():
             try:
                 payload = json.loads(candidate.read_text(encoding="utf-8"))
             except Exception:
-                continue
+                payload = {}
             if isinstance(payload, dict):
                 payload_segments = payload.get("segments", [])
-            elif isinstance(payload, list):
-                payload_segments = payload
             else:
                 payload_segments = []
             final_segments = [copy.deepcopy(seg) for seg in payload_segments if isinstance(seg, dict)]
-            if final_segments:
-                break
 
         final_view = self._review_stage_views.get("final_segments")
         if final_view is not None:
@@ -976,6 +985,9 @@ class PipelinePage(BasePage):
         self._current_review_segments = [dict(seg) for seg in segments]
         self._current_review_row_segment_indexes = []
         self._segment_table.setRowCount(0)
+        semantic_view = self._review_stage_views.get("semantic")
+        if semantic_view is not None:
+            semantic_view.setHtml(self._segments_to_html(self._current_review_segments))
 
         speakers = ["narrator", *self._detected_character_names()]
 
@@ -1100,16 +1112,13 @@ class PipelinePage(BasePage):
                 updated["speaker_confidence"] = 1.0
 
         work_dir = self.project_manager.get_work_dir()
-        info_path = work_dir / chapter_id / f"{chapter_id}_chapter_info.json"
+        info_path = work_dir / f"{chapter_id}_llm_raw.json"
         if info_path.exists():
             data = json.loads(info_path.read_text(encoding="utf-8"))
             data["segments"] = updated_segments
             info_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
-        root_final_paths = [
-            work_dir / f"{chapter_id}_segments_final.json",
-            work_dir / f"{chapter_id}_chapter_info_final.json",
-        ]
+        root_final_paths = [work_dir / f"{chapter_id}_chapter_info_final.json"]
         for path in root_final_paths:
             if not path.exists():
                 continue

@@ -365,6 +365,7 @@ Phase 1:
 
 Phase 2:
   - chapters.json  # list[ChapterDict]
+  - chXXX_raw.txt
 
 Phase 3:
   - chXXX_cleaned.txt
@@ -374,8 +375,6 @@ Phase 4:
 
 Phase 5:
   - chXXX_llm_raw.json      # ChapterInfoRaw
-  - chXXX/chXXX_chapter_info.json
-  - chapter_info_all.json   # dict[str(idx) -> ChapterInfoRaw]
 
 Phase 6A:
   - chXXX_llm_normalized.json  # ChapterInfoNormalized
@@ -383,8 +382,6 @@ Phase 6A:
 Phase 6B:
   - character_database.json        # list[CharacterDBEntry]
   - semantic_review_plan.json      # ReviewPlanSemantic
-  - chXXX_segments_final.json      # list[SegmentDict]
-  - chXXX_characters_final.json    # list[FinalCharacterDict]
   - chXXX_chapter_info_final.json  # ChapterInfoFinal
 
 Phase 7:

@@ -59,7 +59,7 @@ class DummySettings:
         return self.data["tts_speed"]
 
 
-def test_llm_semantic_analysis_persists_raw_and_chapter_info(tmp_path, monkeypatch):
+def test_llm_semantic_analysis_persists_single_raw_llm_file(tmp_path, monkeypatch):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))
     controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
@@ -84,12 +84,11 @@ def test_llm_semantic_analysis_persists_raw_and_chapter_info(tmp_path, monkeypat
     controller.llm_semantic_analysis()
 
     raw_path = work_dir / "ch1_llm_raw.json"
-    chapter_info = work_dir / "ch1" / "ch1_chapter_info.json"
 
     assert raw_path.exists()
-    assert chapter_info.exists()
+    assert not (work_dir / "ch1" / "ch1_chapter_info.json").exists()
 
-    with chapter_info.open(encoding="utf-8") as handle:
+    with raw_path.open(encoding="utf-8") as handle:
         data = json.load(handle)
 
     assert data["segments"][0]["type"] == "narration"
@@ -119,9 +118,13 @@ def test_write_final_chapter_files_assigns_known_and_default_voices(tmp_path):
         character_db=character_db,
     )
 
-    with (tmp_path / "pipeline_work" / "ch1_characters_final.json").open(encoding="utf-8") as handle:
-        final_chars = json.load(handle)
+    final_info_path = tmp_path / "pipeline_work" / "ch1_chapter_info_final.json"
+    with final_info_path.open(encoding="utf-8") as handle:
+        final_info = json.load(handle)
 
+    final_chars = final_info["characters"]
     assert final_chars[0]["voice"] == "bf_emma"
     assert final_chars[1]["voice"] == "am_adam"
     assert any(char["name"] == "Guard" and char["voice"] == "am_adam" for char in character_db)
+    assert not (tmp_path / "pipeline_work" / "ch1_segments_final.json").exists()
+    assert not (tmp_path / "pipeline_work" / "ch1_characters_final.json").exists()
