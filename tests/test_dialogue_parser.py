@@ -250,3 +250,43 @@ def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
     result = parser.parse("Someone spoke.", chapter_id="ch-unknown")
 
     assert result.segments[0].speaker == "unknown"
+
+
+def test_dialogue_segmentation_accepts_single_object_payloads():
+    class _SingleObjectClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p1"):
+                return {"line": '"Hello there."', "type": "dialogue"}
+            if chapter_id.endswith("_p2"):
+                return {"line": '"Hello there."', "speaker": "Alice", "Confidence": "0.92"}
+            return []
+
+    service = DialogueSegmentationService(client=_SingleObjectClient())
+    result = service.parse(text='"Hello there."', chapter_id="ch-single-object")
+
+    assert result.segments[0].type == "dialogue"
+    assert result.segments[0].speaker == "Alice"
+    assert result.characters[0]["name"] == "Alice"
+
+
+def test_dialogue_segmentation_accepts_line_mapping_payloads():
+    class _MappingClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p1"):
+                return {
+                    '"Hello there."': "dialogue",
+                    "A narration line.": "narration",
+                }
+            if chapter_id.endswith("_p2"):
+                return {
+                    '"Hello there."': {"speaker": "Alice", "confidence": 0.88},
+                }
+            return []
+
+    service = DialogueSegmentationService(client=_MappingClient())
+    result = service.parse(text='"Hello there."\nA narration line.', chapter_id="ch-line-mapping")
+
+    assert result.segments[0].type == "dialogue"
+    assert result.segments[0].speaker == "Alice"
+    assert result.segments[1].type == "narration"
+    assert result.characters[0]["name"] == "Alice"
