@@ -37,22 +37,27 @@ from PySide6.QtWidgets import (
 
 from ebook_app.ui.pages._base_page import BasePage
 from ebook_app.models.voice_catalog import KOKORO_VOICE_LIST
-from ebook_app.pipeline_contracts import chapter_id as make_chapter_id
+from ebook_app.pipeline_contracts import PIPELINE_STEPS, chapter_id as make_chapter_id
 
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
 # NEW PIPELINE STEPS (UI progress bars)
 # ----------------------------------------------------------------------
+_STEP_LABELS = {
+    "scrape_index": "Scrape index",
+    "scrape_chapters": "Scrape chapters",
+    "clean_chapters": "Clean chapters",
+    "plan_clean_review": "Plan cleaned-text review",
+    "llm_semantic_analysis": "LLM semantic analysis",
+    "normalize_llm_output": "Normalize LLM output",
+    "smart_review_dialogue": "Smart review (dialogue + characters)",
+    "tts_generate": "Generate audio",
+    "epub_build": "Build EPUB3",
+}
 _STEPS = [
-    ("scrape_index", "1. Scrape index"),
-    ("scrape_chapters", "2. Scrape chapters"),
-    ("clean_chapters", "3. Clean chapters"),
-    ("llm_semantic_analysis", "4. LLM semantic analysis"),
-    ("normalize_llm_output", "5. Normalize LLM output"),
-    ("smart_review_dialogue", "6. Smart review (dialogue + characters)"),
-    ("tts_generate", "7. Generate audio"),
-    ("epub_build", "8. Build EPUB3"),
+    (step, f"{index}. {_STEP_LABELS.get(step, step.replace('_', ' ').title())}")
+    for index, step in enumerate(PIPELINE_STEPS, start=1)
 ]
 _SEGMENT_TYPE_OPTIONS = ["narration", "dialogue", "thought"]
 _NO_REVIEW_SEGMENTS_MSG = "No semantic segments available for review."
@@ -210,6 +215,11 @@ class _PipelineWorker(QThread):
         # Phase 3
         self.log_message.emit("Cleaning chapters…", "INFO")
         ctrl.clean_chapters()
+        if self._abort_if_cancelled():
+            return
+
+        self.log_message.emit("Planning cleaned-text review…", "INFO")
+        ctrl.plan_clean_review()
         if self._abort_if_cancelled():
             return
 
@@ -1000,7 +1010,9 @@ class PipelinePage(BasePage):
 
         if mode == _PipelineWorker.RUN_TO_REVIEW:
             self._refresh_review_data()
-            self._refresh_llm_log()
+            refresh_llm_log = getattr(self, "_refresh_llm_log", None)
+            if callable(refresh_llm_log):
+                refresh_llm_log()
             self._tabs.setCurrentIndex(1)
             QMessageBox.information(
                 self,

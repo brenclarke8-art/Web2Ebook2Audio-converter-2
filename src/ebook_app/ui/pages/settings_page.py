@@ -249,10 +249,16 @@ class SettingsPage(BasePage):
         llm_form.addRow("Dialogue LLM URL:", self._dialogue_llm_url_input)
 
         self._dialogue_llm_model_input = QLineEdit(
-            str(self.settings.get("dialogue_llm_model", "mistral:instruct"))
+            str(self.settings.get("dialogue_llm_semantic_model", "qwen2.5:7b-instruct"))
         )
-        self._dialogue_llm_model_input.setPlaceholderText("mistral:instruct")
-        llm_form.addRow("Dialogue LLM model:", self._dialogue_llm_model_input)
+        self._dialogue_llm_model_input.setPlaceholderText("qwen2.5:7b-instruct")
+        llm_form.addRow("Semantic model:", self._dialogue_llm_model_input)
+
+        self._dialogue_llm_formatter_model_input = QLineEdit(
+            str(self.settings.get("dialogue_llm_formatter_model", "qwen2.5-coder:7b"))
+        )
+        self._dialogue_llm_formatter_model_input.setPlaceholderText("qwen2.5-coder:7b")
+        llm_form.addRow("Formatter/repair model:", self._dialogue_llm_formatter_model_input)
 
         llm_status_row = QHBoxLayout()
         self._llm_status_label = QLabel()
@@ -393,8 +399,11 @@ class SettingsPage(BasePage):
         self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
         dialogue_llm_url = self._dialogue_llm_url_input.text().strip()
         dialogue_llm_model = self._dialogue_llm_model_input.text().strip()
+        dialogue_llm_formatter_model = self._dialogue_llm_formatter_model_input.text().strip()
         self.settings.set("dialogue_llm_url", dialogue_llm_url)
-        self.settings.set("dialogue_llm_model", dialogue_llm_model)
+        self.settings.set("dialogue_llm_model", dialogue_llm_model)  # backward compat
+        self.settings.set("dialogue_llm_semantic_model", dialogue_llm_model)
+        self.settings.set("dialogue_llm_formatter_model", dialogue_llm_formatter_model)
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())

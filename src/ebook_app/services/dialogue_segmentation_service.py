@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import json
+import logging
 import re
 import textwrap
 from typing import Any, Iterable, Literal
 
 from ebook_app.services.llm_client import OllamaChatClient
+
+logger = logging.getLogger(__name__)
 
 SegmentType = Literal["dialogue", "thought", "narration", "general"]
 
@@ -47,19 +51,35 @@ Rules:
 """ + _PASS_SHARED_RULES
 
 _SEGMENT_ATTR_SYSTEM_PROMPT_PREFIX = """You are a deterministic dialogue-analysis engine.
-Classify every non-empty line and attribute the speaker or thinker.
+For each provided line entry, classify the type and attribute the speaker or thinker.
 
 SEGMENT AND ATTRIBUTE
-Output ONLY:
-[{ "line": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator" }]
+Input: JSON array of {"id": "...", "text": "..."}
+Output ONLY: [{"id": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator"}]
 
 Rules:
-- Return one item per non-empty line in order.
-- type must be: dialogue, thought, or narration.
+- Return exactly one item per provided id, in the same order.
+- Each item's "id" must match exactly one of the provided input ids.
+- Do not omit or invent ids.
+- type must be exactly one of: dialogue, thought, or narration.
 - For narration lines, set speaker to "narrator".
 - For dialogue and thought lines, use a name from KNOWN CHARACTERS, or "Unknown" if uncertain.
-- Preserve the original line text exactly.
 """ + _PASS_SHARED_RULES
+
+_JSON_REPAIR_SYSTEM_PROMPT = """You are a JSON schema repair engine for a dialogue analysis pipeline.
+You receive a SOURCE LIST of line IDs and a MALFORMED OR INVALID response from a prior model call.
+Produce a valid JSON array with this exact schema:
+[{"id": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator"}]
+
+Rules:
+- Include exactly one item per id from the SOURCE LIST. Do not omit or add ids.
+- Each "id" must exactly match an id from the source list.
+- "type" must be exactly: dialogue, thought, or narration.
+- "speaker" must be a character name or "narrator" for narration lines.
+- Preserve semantic meaning from the malformed response where discernible.
+- Only repair JSON structure and schema — do not reinterpret story semantics.
+- Output ONLY the JSON array. No commentary, no prose, no markdown fences.
+"""
 
 _DEFAULT_CHUNK_SIZE = 6000
 _DEFAULT_CHUNK_OVERLAP = 500
@@ -90,9 +110,26 @@ class DialogueLLMSegment:
 
 
 @dataclass
+class ParseDiagnostics:
+    """Parse-quality metadata for a single two-pass LLM result.
+
+    Captured per-chunk and merged into the final chapter result so that
+    the pipeline and UI can make informed review decisions.
+    """
+    malformed_json: bool = False
+    validation_passed: bool = True
+    id_match_ratio: float = 1.0
+    fallback_count: int = 0
+    repair_attempted: bool = False
+    repair_succeeded: bool = False
+    needs_review: bool = False
+
+
+@dataclass
 class DialogueLLMResult:
     segments: list[DialogueLLMSegment]
     characters: list[Any]
+    diagnostics: ParseDiagnostics = field(default_factory=ParseDiagnostics)
 
 
 class DialogueSegmentationService:
@@ -122,8 +159,17 @@ class DialogueSegmentationService:
         r"^later\s*$",                 # lone "Later" dismiss button
     )
 
-    def __init__(self, *, client: OllamaChatClient, strict_quotes: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        client: OllamaChatClient,
+        formatter_client: OllamaChatClient | None = None,
+        strict_quotes: bool = False,
+    ) -> None:
         self.client = client
+        # Optional second model used exclusively for JSON repair/reformatting.
+        # When None, repair is skipped and heuristic fallback is used instead.
+        self.formatter_client = formatter_client
         self.strict_quotes = bool(strict_quotes)
 
     def parse(
@@ -217,23 +263,36 @@ class DialogueSegmentationService:
         """Run the two-pass LLM pipeline for a single text block.
 
         Pass 1 — Character Detection:
-          System: char-detect prompt + story context + known characters
+          Semantic model: char-detect prompt + story context + known characters
           User:   original text
           Result: update known characters for pass 2
 
-        Pass 2 — Segment and Attribute:
-          System: segment+attribute prompt + updated known characters only
-          User:   original text (+ manual hints)
-          Result: per-line type (dialogue/thought/narration) and speaker
+        Pass 2 — Segment and Attribute (ID-based):
+          Semantic model: segment+attribute prompt + updated known characters
+          User:   JSON array of {"id": "...", "text": "..."} line entries
+          Result: per-line type (dialogue/thought/narration) and speaker keyed by id
+
+        Repair Pass (optional):
+          Formatter model: JSON repair prompt + source IDs + malformed response
+          Only invoked when semantic pass-2 output fails ID validation.
+
+        Fallback:
+          When both semantic and repair attempts fail validation, heuristic
+          classification is used and the result is flagged for review.
         """
         source_lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not source_lines:
             return DialogueLLMResult(
                 segments=[DialogueLLMSegment(text=text, type="narration", speaker="narrator")],
                 characters=[],
+                diagnostics=ParseDiagnostics(),
             )
 
-        # Pass 1: character detection
+        # Assign stable IDs to each source line before calling the semantic model.
+        id_lines = [{"id": f"{chapter_id}_L{i}", "text": line} for i, line in enumerate(source_lines)]
+        valid_ids = {entry["id"] for entry in id_lines}
+
+        # Pass 1: character detection (semantic model, raw text)
         pass1_system = self._build_pass_prompt(_CHAR_DETECT_SYSTEM_PROMPT, pass1_memory_blocks)
         pass1_raw = self._ask_json_any(
             system=pass1_system,
@@ -246,19 +305,80 @@ class DialogueSegmentationService:
         updated_known = self._merge_detected_into_known(known_characters, detected_chars)
         updated_known_context = self._format_known_character_context(updated_known)
 
-        # Pass 2: combined segment classification + speaker attribution
-        # Receives only: task/format + updated known characters (no story context)
+        # Pass 2: ID-based segment classification + speaker attribution (semantic model)
         pass2_memory_blocks = [updated_known_context] if updated_known_context else []
         pass2_system = self._build_pass_prompt(_SEGMENT_ATTR_SYSTEM_PROMPT_PREFIX, pass2_memory_blocks)
-        pass2_user = "\n\n".join(part for part in (hint_prefix, text) if part)
+        lines_payload = json.dumps(id_lines, ensure_ascii=False)
+        pass2_user = "\n\n".join(part for part in (hint_prefix, lines_payload) if part)
         pass2_raw = self._ask_json_any(
             system=pass2_system,
             user=pass2_user,
             chapter_id=f"{chapter_id}_p2",
         )
-        classified = self._normalize_pass_combined(pass2_raw, source_lines)
 
-        return self._build_result_from_combined(classified, detected_chars)
+        # Strict ID-based validation of semantic output
+        diagnostics = ParseDiagnostics()
+        items = self._coerce_list_payload(pass2_raw)
+        is_valid, match_ratio = self._validate_id_items(items, valid_ids)
+        diagnostics.id_match_ratio = match_ratio
+
+        if not is_valid:
+            diagnostics.malformed_json = True
+            logger.warning(
+                "Chapter %s: pass-2 semantic output failed ID validation "
+                "(id_match_ratio=%.2f). %s",
+                chapter_id,
+                match_ratio,
+                "Attempting formatter repair." if self.formatter_client else "No formatter client — using heuristic fallback.",
+            )
+
+            if self.formatter_client:
+                # Repair pass: formatter model fixes structure only
+                diagnostics.repair_attempted = True
+                repaired = self._repair_with_formatter(
+                    id_lines=id_lines,
+                    malformed_response=pass2_raw,
+                    chapter_id=f"{chapter_id}_p2r",
+                )
+                repaired_items = self._coerce_list_payload(repaired)
+                is_valid2, match_ratio2 = self._validate_id_items(repaired_items, valid_ids)
+                diagnostics.id_match_ratio = match_ratio2
+                if is_valid2:
+                    items = repaired_items
+                    diagnostics.repair_succeeded = True
+                    diagnostics.validation_passed = True
+                    logger.info(
+                        "Chapter %s: formatter repair succeeded (id_match_ratio=%.2f).",
+                        chapter_id, match_ratio2,
+                    )
+                else:
+                    logger.warning(
+                        "Chapter %s: formatter repair also failed (id_match_ratio=%.2f). "
+                        "Using heuristic fallback and flagging for review.",
+                        chapter_id, match_ratio2,
+                    )
+                    diagnostics.validation_passed = False
+                    diagnostics.needs_review = True
+                    classified = self._heuristic_fallback_classify(source_lines)
+                    diagnostics.fallback_count = len(source_lines)
+                    return self._build_result_from_combined(classified, detected_chars, diagnostics)
+            else:
+                # No formatter available — safe heuristic fallback + flag for review
+                diagnostics.validation_passed = False
+                diagnostics.needs_review = True
+                classified = self._heuristic_fallback_classify(source_lines)
+                diagnostics.fallback_count = len(source_lines)
+                return self._build_result_from_combined(classified, detected_chars, diagnostics)
+        else:
+            diagnostics.validation_passed = True
+
+        # Convert validated ID-based items to line-based result list
+        classified, fallback_count = self._normalize_id_items(items, id_lines)
+        diagnostics.fallback_count = fallback_count
+        if fallback_count > 0:
+            diagnostics.needs_review = True
+
+        return self._build_result_from_combined(classified, detected_chars, diagnostics)
 
     @staticmethod
     def _chunk_text(text: str, max_chars: int, overlap: int) -> list[str]:
@@ -298,6 +418,9 @@ class DialogueSegmentationService:
         merged_segs: list[DialogueLLMSegment] = []
         recent_texts: deque[str] = deque(maxlen=_CHUNK_DEDUP_WINDOW)
 
+        # Merged diagnostics across all chunks
+        merged_diag = ParseDiagnostics()
+
         for r in results:
             for c in r.characters:
                 name = c["name"] if isinstance(c, dict) else str(getattr(c, "name", ""))
@@ -311,7 +434,40 @@ class DialogueSegmentationService:
                     merged_segs.append(s)
                     recent_texts.append(norm)
 
-        return DialogueLLMResult(segments=merged_segs, characters=merged_chars)
+            # Merge diagnostics
+            d = r.diagnostics
+            if d:
+                if d.malformed_json:
+                    merged_diag.malformed_json = True
+                if not d.validation_passed:
+                    merged_diag.validation_passed = False
+                if d.repair_attempted:
+                    merged_diag.repair_attempted = True
+                    # repair_succeeded is True when at least one repair attempt
+                    # succeeded; False when any attempt failed.  Track both so
+                    # the caller can see partial-success scenarios.
+                    if d.repair_succeeded:
+                        merged_diag.repair_succeeded = True
+                    else:
+                        # Only downgrade to False if no earlier chunk succeeded.
+                        if not merged_diag.repair_succeeded:
+                            merged_diag.repair_succeeded = False
+                if d.needs_review:
+                    merged_diag.needs_review = True
+                merged_diag.fallback_count += d.fallback_count
+
+        # Average id_match_ratio across chunks
+        valid_diags = [r.diagnostics for r in results if r.diagnostics is not None]
+        if valid_diags:
+            merged_diag.id_match_ratio = sum(d.id_match_ratio for d in valid_diags) / len(valid_diags)
+        else:
+            merged_diag.id_match_ratio = 1.0
+
+        return DialogueLLMResult(
+            segments=merged_segs,
+            characters=merged_chars,
+            diagnostics=merged_diag,
+        )
 
     @classmethod
     def _is_noise_line(cls, line: str) -> bool:
@@ -343,6 +499,7 @@ class DialogueSegmentationService:
         self,
         classified: list[dict],
         detected_chars: list[dict],
+        diagnostics: ParseDiagnostics | None = None,
     ) -> DialogueLLMResult:
         """Build a DialogueLLMResult from the combined pass-2 output and pass-1 detected chars."""
         segments: list[DialogueLLMSegment] = []
@@ -374,6 +531,7 @@ class DialogueSegmentationService:
             return DialogueLLMResult(
                 segments=[DialogueLLMSegment(text="", type="narration", speaker="narrator")],
                 characters=[],
+                diagnostics=diagnostics or ParseDiagnostics(),
             )
 
         # Combine characters: pass-1 detections take priority; add any speakers from pass-2
@@ -385,7 +543,11 @@ class DialogueSegmentationService:
             if key not in all_chars:
                 all_chars[key] = {"name": name, "gender": "unknown", "confidence": conf}
 
-        return DialogueLLMResult(segments=segments, characters=list(all_chars.values()))
+        return DialogueLLMResult(
+            segments=segments,
+            characters=list(all_chars.values()),
+            diagnostics=diagnostics or ParseDiagnostics(),
+        )
 
     @staticmethod
     def _normalize_segment_type(raw_type: Any) -> SegmentType:
@@ -428,15 +590,114 @@ class DialogueSegmentationService:
             chars.append({"name": name, "gender": gender, "confidence": confidence})
         return chars
 
+    @staticmethod
+    def _validate_id_items(items: list[Any], valid_ids: set[str]) -> tuple[bool, float]:
+        """Validate that returned items have valid IDs.
+
+        Returns (is_valid, id_match_ratio) where is_valid is True when at
+        least 90 % of the expected IDs are present in *items*.
+        """
+        if not valid_ids:
+            return True, 1.0
+        if not items:
+            return False, 0.0
+        matched = sum(
+            1 for item in items
+            if isinstance(item, dict) and item.get("id") in valid_ids
+        )
+        ratio = matched / len(valid_ids)
+        return ratio >= 0.9, ratio
+
+    def _normalize_id_items(
+        self,
+        items: list[Any],
+        id_lines: list[dict],
+    ) -> tuple[list[dict], int]:
+        """Convert validated ID-based pass-2 items into a line-keyed result list.
+
+        For any line ID not present in the response, a per-line heuristic
+        fallback is used instead of positional remapping.
+
+        Returns (classified_list, fallback_count) where *fallback_count* is
+        the number of lines that needed heuristic classification.
+        """
+        id_to_item: dict[str, dict] = {}
+        for item in items:
+            if isinstance(item, dict):
+                id_val = str(item.get("id", "")).strip()
+                if id_val:
+                    # Keep first occurrence; reject duplicate IDs silently
+                    id_to_item.setdefault(id_val, item)
+
+        result: list[dict] = []
+        fallback_count = 0
+        for entry in id_lines:
+            line_id = entry["id"]
+            line_text = entry["text"]
+            item = id_to_item.get(line_id)
+            if item:
+                seg_type = self._normalize_segment_type(item.get("type"))
+                speaker = str(item.get("speaker", "narrator")).strip() or "narrator"
+                result.append({"line": line_text, "type": seg_type, "speaker": speaker})
+            else:
+                # Heuristic-only fallback for this specific line; no positional remapping
+                fallback_count += 1
+                seg_type = self._fallback_line_type(line_text)
+                result.append({"line": line_text, "type": seg_type, "speaker": "narrator"})
+
+        return result, fallback_count
+
+    def _heuristic_fallback_classify(self, source_lines: list[str]) -> list[dict]:
+        """Classify all source lines using heuristics only (no LLM output)."""
+        return [
+            {
+                "line": line,
+                "type": self._fallback_line_type(line),
+                "speaker": "narrator",
+            }
+            for line in source_lines
+        ]
+
+    def _repair_with_formatter(
+        self,
+        *,
+        id_lines: list[dict],
+        malformed_response: Any,
+        chapter_id: str,
+    ) -> Any:
+        """Use the formatter model to repair a malformed/invalid pass-2 response.
+
+        The formatter model is given the original ID'd source list and the
+        malformed output and is instructed to produce schema-valid JSON without
+        altering semantic content.
+        """
+        source_json = json.dumps(id_lines, ensure_ascii=False)
+        malformed_str = (
+            json.dumps(malformed_response, ensure_ascii=False)
+            if not isinstance(malformed_response, str)
+            else malformed_response
+        )
+        user = (
+            f"SOURCE LIST:\n{source_json}\n\n"
+            f"MALFORMED RESPONSE:\n{malformed_str}"
+        )
+        return self._ask_formatter_json_any(
+            system=_JSON_REPAIR_SYSTEM_PROMPT,
+            user=user,
+            chapter_id=chapter_id,
+        )
+
     def _normalize_pass_combined(
         self,
         payload: Any,
         source_lines: list[str],
     ) -> list[dict]:
-        """Normalize Pass 2 (combined segment + attribute) LLM output.
+        """Legacy normalizer for old-style pass-2 (line-keyed) LLM output.
 
-        Expected: [{ "line": "...", "type": "dialogue|thought|narration", "speaker": "..." }]
-        Also handles single-object and line-keyed dict forms.
+        This method is kept for backward compatibility with direct callers that
+        still use the old ``{"line": "...", "type": ..., "speaker": ...}`` format.
+        Positional remapping has been removed; lines not found by exact text
+        match receive a heuristic fallback instead.
         """
         items = self._coerce_list_payload(payload)
         if not items and isinstance(payload, dict):
@@ -466,8 +727,8 @@ class DialogueSegmentationService:
                         )
                         items.append({"line": line_text, "type": seg_type, "speaker": speaker})
 
+        # Build exact-text lookup; no positional remapping
         by_line: dict[str, deque[dict]] = {}
-        positional: deque[dict] = deque()
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -477,7 +738,6 @@ class DialogueSegmentationService:
             seg_type = self._normalize_segment_type(item.get("type"))
             speaker = str(item.get("speaker", "narrator")).strip() or "narrator"
             entry = {"line": line, "type": seg_type, "speaker": speaker}
-            positional.append(entry)
             by_line.setdefault(line, deque()).append(entry)
 
         result: list[dict] = []
@@ -485,10 +745,8 @@ class DialogueSegmentationService:
             queue = by_line.get(line)
             if queue:
                 entry = dict(queue.popleft())
-            elif positional:
-                entry = dict(positional.popleft())
-                entry["line"] = line
             else:
+                # Heuristic fallback — no positional remapping
                 seg_type = self._fallback_line_type(line)
                 entry = {"line": line, "type": seg_type, "speaker": "narrator"}
             result.append(entry)
@@ -541,7 +799,8 @@ class DialogueSegmentationService:
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
-            if "line" in payload:
+            # Single item with known schema keys (legacy "line" or new ID-based "id")
+            if "line" in payload or "id" in payload:
                 return [payload]
             for key in ("items", "lines", "results", "data"):
                 value = payload.get(key)
@@ -582,6 +841,16 @@ class DialogueSegmentationService:
         if callable(ask_json_any):
             return ask_json_any(system=system, user=user, chapter_id=chapter_id)
         ask_json = getattr(self.client, "ask_json")
+        return ask_json(system=system, user=user, chapter_id=chapter_id)
+
+    def _ask_formatter_json_any(self, *, system: str, user: str, chapter_id: str) -> Any:
+        """Call the formatter model (if available) for JSON repair/reformatting tasks."""
+        if not self.formatter_client:
+            return {}
+        ask_json_any = getattr(self.formatter_client, "ask_json_any", None)
+        if callable(ask_json_any):
+            return ask_json_any(system=system, user=user, chapter_id=chapter_id)
+        ask_json = getattr(self.formatter_client, "ask_json")
         return ask_json(system=system, user=user, chapter_id=chapter_id)
 
     @staticmethod
