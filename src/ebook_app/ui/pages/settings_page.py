@@ -12,13 +12,10 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -335,74 +332,6 @@ class SettingsPage(BasePage):
 
         inner.addWidget(ms_group)
 
-        # ── Character Database ─────────────────────────────────────────
-        char_group = QGroupBox("Character Database")
-        char_vbox = QVBoxLayout(char_group)
-
-        char_note = QLabel(
-            "Assign a Kokoro voice to each named character for multi-speaker TTS."
-        )
-        char_note.setWordWrap(True)
-        char_vbox.addWidget(char_note)
-
-        self._char_table = QTableWidget(0, 4)
-        self._char_table.setHorizontalHeaderLabels(
-            ["Character Name", "Voice", "Gender", "Description"]
-        )
-        self._char_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._char_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._char_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._char_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self._char_table.setMinimumHeight(160)
-        char_vbox.addWidget(self._char_table)
-
-        char_btn_row = QHBoxLayout()
-        self._add_char_btn = QPushButton("Add Character")
-        self._add_char_btn.clicked.connect(self._on_add_character)
-        self._remove_char_btn = QPushButton("Remove Selected")
-        self._remove_char_btn.clicked.connect(self._on_remove_character)
-        char_btn_row.addWidget(self._add_char_btn)
-        char_btn_row.addWidget(self._remove_char_btn)
-        char_btn_row.addStretch()
-        char_vbox.addLayout(char_btn_row)
-
-        inner.addWidget(char_group)
-
-        # Populate character table from saved settings
-        self._load_character_db()
-
-        pending_group = QGroupBox("Pending Character Detections")
-        pending_vbox = QVBoxLayout(pending_group)
-        pending_note = QLabel(
-            "High-confidence LLM character suggestions. Accept to add to Character Database."
-        )
-        pending_note.setWordWrap(True)
-        pending_vbox.addWidget(pending_note)
-
-        self._pending_table = QTableWidget(0, 5)
-        self._pending_table.setHorizontalHeaderLabels(
-            ["Name", "Gender", "Voice", "Confidence", "Source Chapter"]
-        )
-        self._pending_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._pending_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._pending_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._pending_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self._pending_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self._pending_table.setMinimumHeight(140)
-        pending_vbox.addWidget(self._pending_table)
-
-        pending_btn_row = QHBoxLayout()
-        self._accept_pending_btn = QPushButton("Accept Selected")
-        self._accept_pending_btn.clicked.connect(self._on_accept_pending_character)
-        self._reject_pending_btn = QPushButton("Reject Selected")
-        self._reject_pending_btn.clicked.connect(self._on_reject_pending_character)
-        pending_btn_row.addWidget(self._accept_pending_btn)
-        pending_btn_row.addWidget(self._reject_pending_btn)
-        pending_btn_row.addStretch()
-        pending_vbox.addLayout(pending_btn_row)
-        self._load_pending_additions()
-        inner.addWidget(pending_group)
-
         # ── Experimental Features ──────────────────────────────────────
         exp_group = QGroupBox("⚠️ Experimental Features")
         exp_group.setToolTip(
@@ -455,133 +384,6 @@ class SettingsPage(BasePage):
         if path:
             self._output_dir_input.setText(path)
 
-    def _load_character_db(self) -> None:
-        """Populate the character table from saved settings."""
-        chars = self.settings.get("character_db", [])
-        self._char_table.setRowCount(0)
-        for char in chars:
-            self._insert_character_row(
-                char.get("name", ""),
-                char.get("voice", KOKORO_VOICE_LIST[0] if KOKORO_VOICE_LIST else ""),
-                char.get("gender", "other"),
-                char.get("description", ""),
-            )
-
-    def _insert_character_row(
-        self,
-        name: str = "",
-        voice: str = "",
-        gender: str = "other",
-        description: str = "",
-    ) -> None:
-        row = self._char_table.rowCount()
-        self._char_table.insertRow(row)
-        self._char_table.setItem(row, 0, QTableWidgetItem(name))
-
-        voice_combo = QComboBox()
-        voice_combo.addItems(KOKORO_VOICE_LIST)
-        if voice in KOKORO_VOICE_LIST:
-            voice_combo.setCurrentText(voice)
-        self._char_table.setCellWidget(row, 1, voice_combo)
-
-        gender_combo = QComboBox()
-        gender_combo.addItems(["male", "other", "female"])
-        normalized_gender = self._normalize_gender(gender)
-        gender_combo.setCurrentText(normalized_gender)
-        self._char_table.setCellWidget(row, 2, gender_combo)
-
-        self._char_table.setItem(row, 3, QTableWidgetItem(description))
-
-    def _collect_character_db(self) -> list:
-        """Read all rows from the character table and return as a list of dicts."""
-        chars = []
-        for row in range(self._char_table.rowCount()):
-            name_item = self._char_table.item(row, 0)
-            voice_widget = self._char_table.cellWidget(row, 1)
-            gender_widget = self._char_table.cellWidget(row, 2)
-            desc_item = self._char_table.item(row, 3)
-            name = name_item.text().strip() if name_item else ""
-            voice = voice_widget.currentText() if voice_widget else ""
-            gender = self._normalize_gender(gender_widget.currentText()) if gender_widget else "other"
-            description = desc_item.text().strip() if desc_item else ""
-            if name:
-                chars.append(
-                    {
-                        "name": name,
-                        "voice": voice,
-                        "gender": gender,
-                        "description": description,
-                    }
-                )
-        return chars
-
-    def _load_pending_additions(self) -> None:
-        self._pending_table.setRowCount(0)
-        for item in self.settings.get("pending_character_additions", []) or []:
-            self._insert_pending_row(
-                name=item.get("name", ""),
-                gender=item.get("gender", "other"),
-                voice=item.get("voice", self._default_voice_for_gender(item.get("gender", "other"))),
-                confidence=float(item.get("confidence", 0.0)),
-                source=item.get("source_chapter", ""),
-            )
-
-    def _insert_pending_row(
-        self, *, name: str, gender: str, voice: str, confidence: float, source: str
-    ) -> None:
-        row = self._pending_table.rowCount()
-        self._pending_table.insertRow(row)
-        self._pending_table.setItem(row, 0, QTableWidgetItem(name))
-        self._pending_table.setItem(row, 1, QTableWidgetItem(gender))
-        self._pending_table.setItem(row, 2, QTableWidgetItem(voice))
-        self._pending_table.setItem(row, 3, QTableWidgetItem(f"{confidence:.2f}"))
-        self._pending_table.setItem(row, 4, QTableWidgetItem(source))
-
-    def _collect_pending_additions(self) -> list:
-        pending = []
-        for row in range(self._pending_table.rowCount()):
-            name_item = self._pending_table.item(row, 0)
-            gender_item = self._pending_table.item(row, 1)
-            voice_item = self._pending_table.item(row, 2)
-            conf_item = self._pending_table.item(row, 3)
-            source_item = self._pending_table.item(row, 4)
-            name = name_item.text().strip() if name_item else ""
-            if not name:
-                continue
-            try:
-                confidence = float(conf_item.text()) if conf_item else 0.0
-            except (TypeError, ValueError):
-                confidence = 0.0
-            pending.append(
-                {
-                    "name": name,
-                    "gender": self._normalize_gender((gender_item.text().strip() if gender_item else "other") or "other"),
-                    "voice": (voice_item.text().strip() if voice_item else "") or self._default_voice_for_gender(
-                        gender_item.text().strip() if gender_item else "other"
-                    ),
-                    "confidence": confidence,
-                    "source_chapter": source_item.text().strip() if source_item else "",
-                }
-            )
-        return pending
-
-    def _default_voice_for_gender(self, gender: str) -> str:
-        gender_lc = self._normalize_gender(gender)
-        if gender_lc == "male":
-            return self._default_male_voice_combo.currentText() or "am_adam"
-        if gender_lc == "female":
-            return self._default_female_voice_combo.currentText() or "af_bella"
-        return self._narrator_voice_combo.currentText() or "af_heart"
-
-    @staticmethod
-    def _normalize_gender(gender: str) -> str:
-        gender_lc = (gender or "").strip().lower()
-        if gender_lc == "male":
-            return "male"
-        if gender_lc == "female":
-            return "female"
-        return "other"
-
     # ------------------------------------------------------------------
     # Handlers
     # ------------------------------------------------------------------
@@ -598,61 +400,9 @@ class SettingsPage(BasePage):
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
         self.settings.set("tts_speed", self._tts_speed_spin.value())
         self.settings.set("character_confidence_threshold", self._char_confidence_spin.value())
-        self.settings.set("character_db", self._collect_character_db())
-        self.settings.set("pending_character_additions", self._collect_pending_additions())
         self.settings.set("story_context_enabled", self._story_context_checkbox.isChecked())
         self.settings.save()
         self.log.log("Settings saved.", level="SUCCESS")
-
-    def _on_add_character(self) -> None:
-        self._insert_character_row()
-
-    def _on_remove_character(self) -> None:
-        selected = self._char_table.selectedItems()
-        if selected:
-            rows = sorted({item.row() for item in selected}, reverse=True)
-            for row in rows:
-                self._char_table.removeRow(row)
-
-    def _on_accept_pending_character(self) -> None:
-        selected = self._pending_table.selectedItems()
-        if not selected:
-            return
-        rows = sorted({item.row() for item in selected}, reverse=True)
-        existing = {
-            (self._char_table.item(row, 0).text().strip().lower())
-            for row in range(self._char_table.rowCount())
-            if self._char_table.item(row, 0) is not None
-        }
-        for row in rows:
-            name_item = self._pending_table.item(row, 0)
-            gender_item = self._pending_table.item(row, 1)
-            voice_item = self._pending_table.item(row, 2)
-            if not name_item:
-                continue
-            name = name_item.text().strip()
-            if not name:
-                continue
-            key = name.lower()
-            if key not in existing:
-                gender = gender_item.text().strip() if gender_item else "unknown"
-                voice = (voice_item.text().strip() if voice_item else "") or self._default_voice_for_gender(gender)
-                self._insert_character_row(
-                    name=name,
-                    voice=voice,
-                    gender=gender,
-                    description="Added from LLM suggestion",
-                )
-                existing.add(key)
-            self._pending_table.removeRow(row)
-
-    def _on_reject_pending_character(self) -> None:
-        selected = self._pending_table.selectedItems()
-        if not selected:
-            return
-        rows = sorted({item.row() for item in selected}, reverse=True)
-        for row in rows:
-            self._pending_table.removeRow(row)
 
     def _on_test_tts_server(self) -> None:
         if self._svc_health_thread and self._svc_health_thread.isRunning():

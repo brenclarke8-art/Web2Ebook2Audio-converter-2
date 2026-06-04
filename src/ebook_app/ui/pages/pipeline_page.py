@@ -446,9 +446,147 @@ class PipelinePage(BasePage):
         llm_log_tab = QWidget()
         self._build_llm_log_tab(llm_log_tab)
 
+        characters_tab = QWidget()
+        self._build_character_db_tab(characters_tab)
+
         self._tabs.addTab(pipeline_tab, "Pipeline")
         self._tabs.addTab(review_tab, "Review")
+        self._tabs.addTab(characters_tab, "Characters")
         self._tabs.addTab(llm_log_tab, "LLM Communication")
+
+    # ------------------------------------------------------------------
+    # Character Database Tab
+    # ------------------------------------------------------------------
+
+    def _build_character_db_tab(self, tab: QWidget) -> None:
+        outer = QVBoxLayout(tab)
+
+        self._char_db_project_label = QLabel("No project loaded.")
+        self._char_db_project_label.setWordWrap(True)
+        outer.addWidget(self._char_db_project_label)
+
+        note = QLabel(
+            "Assign a Kokoro voice to each named character for multi-speaker TTS. "
+            "Changes are saved to this book's character_database.json."
+        )
+        note.setWordWrap(True)
+        outer.addWidget(note)
+
+        self._char_db_table = QTableWidget(0, 4)
+        self._char_db_table.setHorizontalHeaderLabels(
+            ["Character Name", "Voice", "Gender", "Description"]
+        )
+        self._char_db_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._char_db_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._char_db_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._char_db_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._char_db_table.setMinimumHeight(200)
+        outer.addWidget(self._char_db_table)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add Character")
+        add_btn.clicked.connect(self._on_char_db_add)
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.clicked.connect(self._on_char_db_remove)
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self._on_char_db_save)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_character_db_tab)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(refresh_btn)
+        btn_row.addStretch()
+        outer.addLayout(btn_row)
+        outer.addStretch()
+
+    def _refresh_character_db_tab(self) -> None:
+        """Reload character_database.json for the active project into the Characters tab."""
+        if not self.project_manager or not self.project_manager.current_book_id:
+            self._char_db_project_label.setText("No project loaded.")
+            self._char_db_table.setRowCount(0)
+            return
+
+        info = self.project_manager.get_project_info() or {}
+        title = info.get("title") or self.project_manager.current_book_id
+        self._char_db_project_label.setText(f"Project: {title}")
+
+        entries = self._load_character_database_entries()
+        self._char_db_table.setRowCount(0)
+        for char in entries:
+            self._insert_char_db_row(
+                name=str(char.get("name", "")).strip(),
+                voice=str(char.get("voice", "")).strip(),
+                gender=str(char.get("gender", "other")).strip(),
+                description=str(char.get("description", "")).strip(),
+            )
+
+    def _insert_char_db_row(
+        self,
+        name: str = "",
+        voice: str = "",
+        gender: str = "other",
+        description: str = "",
+    ) -> None:
+        row = self._char_db_table.rowCount()
+        self._char_db_table.insertRow(row)
+        self._char_db_table.setItem(row, 0, QTableWidgetItem(name))
+
+        voice_combo = QComboBox()
+        voice_combo.addItems(KOKORO_VOICE_LIST)
+        selected_voice = voice or self._default_voice_for_gender(gender)
+        if selected_voice in KOKORO_VOICE_LIST:
+            voice_combo.setCurrentText(selected_voice)
+        self._char_db_table.setCellWidget(row, 1, voice_combo)
+
+        gender_combo = QComboBox()
+        gender_combo.addItems(["male", "other", "female"])
+        gender_combo.setCurrentText(self._normalize_gender(gender))
+        self._char_db_table.setCellWidget(row, 2, gender_combo)
+
+        self._char_db_table.setItem(row, 3, QTableWidgetItem(description))
+
+    def _collect_char_db_rows(self) -> list[dict]:
+        rows = []
+        for row in range(self._char_db_table.rowCount()):
+            name_item = self._char_db_table.item(row, 0)
+            voice_widget = self._char_db_table.cellWidget(row, 1)
+            gender_widget = self._char_db_table.cellWidget(row, 2)
+            desc_item = self._char_db_table.item(row, 3)
+            name = name_item.text().strip() if name_item else ""
+            if not name:
+                continue
+            voice = voice_widget.currentText() if isinstance(voice_widget, QComboBox) else ""
+            gender = self._normalize_gender(gender_widget.currentText()) if isinstance(gender_widget, QComboBox) else "other"
+            description = desc_item.text().strip() if desc_item else ""
+            rows.append({"name": name, "voice": voice, "gender": gender, "description": description})
+        return rows
+
+    def _on_char_db_add(self) -> None:
+        self._insert_char_db_row()
+
+    def _on_char_db_remove(self) -> None:
+        selected = self._char_db_table.selectedItems()
+        if not selected:
+            return
+        for row in sorted({item.row() for item in selected}, reverse=True):
+            self._char_db_table.removeRow(row)
+
+    def _on_char_db_save(self) -> None:
+        if not self.project_manager or not self.project_manager.current_book_id:
+            self.log.log("Load a book project before saving the character database.", level="WARNING")
+            return
+        db_path = self._character_db_path()
+        if db_path is None:
+            self.log.log("Could not determine character database path.", level="ERROR")
+            return
+        entries = self._collect_char_db_rows()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_text(
+            json.dumps(entries, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.log.log(f"Saved {len(entries)} character(s) to project database.", level="SUCCESS")
 
 
     def _build_review_tab(self, tab: QWidget) -> None:
@@ -763,6 +901,7 @@ class PipelinePage(BasePage):
 
         self._refresh_review_data()
         self._refresh_llm_log()
+        self._refresh_character_db_tab()
 
     def _on_create_project(self) -> None:
         if not self.project_manager:
