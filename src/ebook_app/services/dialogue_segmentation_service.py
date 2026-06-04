@@ -9,6 +9,12 @@ from ebook_app.services.llm_client import OllamaChatClient
 
 SegmentType = Literal["dialogue", "thought", "narration", "general"]
 
+# Fraction of chunk size used as a backward-search window when snapping chunk
+# boundaries to the nearest preceding newline.  A value of 10 means "search the
+# last 10 % of the chunk" — large enough to find a paragraph break without
+# walking too far back into already-processed text.
+_CHUNK_BOUNDARY_SEARCH_FRACTION = 10
+
 _SEGMENTATION_SYSTEM_PROMPT_PREFIX = """You are a deterministic text-analysis engine.
 Your job is to parse a light-novel chapter into structured JSON with perfect consistency.
 Follow the rules exactly. Do not explain anything. Do not add commentary.
@@ -168,7 +174,7 @@ class DialogueSegmentationService:
         while start < text_len:
             end = min(start + max_chars, text_len)
             if end < text_len:
-                search_from = max(start, end - max(1, max_chars // 10))
+                search_from = max(start, end - max(1, max_chars // _CHUNK_BOUNDARY_SEARCH_FRACTION))
                 nl_pos = text.rfind("\n", search_from, end)
                 if nl_pos > start:
                     end = nl_pos + 1
@@ -201,8 +207,7 @@ class DialogueSegmentationService:
                     seen_chars.add(key)
                     merged_chars.append(c)
             for s in r.segments:
-                raw_text = s.text if isinstance(s, DialogueLLMSegment) else str(getattr(s, "text", ""))
-                norm = " ".join(raw_text.split())
+                norm = " ".join(s.text.split())
                 if norm and norm not in recent_texts:
                     merged_segs.append(s)
                     recent_texts.append(norm)
