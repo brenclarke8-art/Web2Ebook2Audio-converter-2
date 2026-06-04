@@ -424,7 +424,7 @@ class DialogueSegmentationService:
                         continue
                     item = {"line": line_text, "speaker": speaker}
                     if "Confidence" in value:
-                        item["Confidence"] = value["Confidence"]
+                        item["confidence"] = value["Confidence"]
                     elif "confidence" in value:
                         item["confidence"] = value["confidence"]
                     items.append(item)
