@@ -70,8 +70,9 @@ class DialogueParser:
     """
 
     _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-    _DEFAULT_MODEL = "qwen2.5:7b-instruct"
-    _DEFAULT_SEMANTIC_MODEL = "qwen2.5:7b-instruct"
+    _DEFAULT_MODEL = "qwen2.5-coder:7b"
+    _DEFAULT_SEMANTIC_MODEL = "qwen2.5-coder:7b"
+    _DEFAULT_FALLBACK_MODEL = "qwen2.5:7b-instruct"
     _DEFAULT_FORMATTER_MODEL = "qwen2.5-coder:7b"
 
     def __init__(
@@ -80,6 +81,7 @@ class DialogueParser:
         ollama_url: str | None = None,
         model: str | None = None,
         semantic_model: str | None = None,
+        fallback_model: str | None = None,
         formatter_model: str | None = None,
         timeout_s: int = 300,
         retries: int = 1,
@@ -104,10 +106,12 @@ class DialogueParser:
         # not yet migrated to the two-model API; prefer `semantic_model` in
         # new code.
         resolved_semantic = (semantic_model or model or self._DEFAULT_SEMANTIC_MODEL).strip()
+        resolved_fallback = (fallback_model or self._DEFAULT_FALLBACK_MODEL).strip()
         resolved_formatter = (formatter_model or self._DEFAULT_FORMATTER_MODEL).strip()
 
         self.model = resolved_semantic  # backward-compat alias
         self.semantic_model = resolved_semantic
+        self.fallback_model = resolved_fallback
         self.formatter_model = resolved_formatter
         self.timeout_s = int(timeout_s)
         self.retries = max(0, int(retries))
@@ -136,8 +140,18 @@ class DialogueParser:
             log_path=llm_log_path,
         )
 
+        # Semantic fallback client — used on low-confidence/invalid structured passes
+        self.fallback_client = OllamaChatClient(
+            model=self.fallback_model,
+            url=self.ollama_url,
+            timeout_s=self.timeout_s,
+            retries=self.retries,
+            log_path=llm_log_path,
+        )
+
         self.service = DialogueSegmentationService(
             client=self.client,
+            fallback_client=self.fallback_client,
             formatter_client=self.formatter_client,
             strict_quotes=self.llm_strict_quotes,
         )

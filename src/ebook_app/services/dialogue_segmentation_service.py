@@ -122,6 +122,10 @@ class ParseDiagnostics:
     fallback_count: int = 0
     repair_attempted: bool = False
     repair_succeeded: bool = False
+    pass1_fallback_attempted: bool = False
+    pass1_fallback_used: bool = False
+    pass2_fallback_attempted: bool = False
+    pass2_fallback_used: bool = False
     needs_review: bool = False
 
 
@@ -163,10 +167,13 @@ class DialogueSegmentationService:
         self,
         *,
         client: OllamaChatClient,
+        fallback_client: OllamaChatClient | None = None,
         formatter_client: OllamaChatClient | None = None,
         strict_quotes: bool = False,
     ) -> None:
         self.client = client
+        # Optional semantic fallback model used for low-confidence retries.
+        self.fallback_client = fallback_client
         # Optional second model used exclusively for JSON repair/reformatting.
         # When None, repair is skipped and heuristic fallback is used instead.
         self.formatter_client = formatter_client
@@ -274,7 +281,8 @@ class DialogueSegmentationService:
 
         Repair Pass (optional):
           Formatter model: JSON repair prompt + source IDs + malformed response
-          Only invoked when semantic pass-2 output fails ID validation.
+          Invoked after semantic fallback retry when pass-2 output still fails
+          ID validation.
 
         Fallback:
           When both semantic and repair attempts fail validation, heuristic
@@ -291,6 +299,7 @@ class DialogueSegmentationService:
         # Assign stable IDs to each source line before calling the semantic model.
         id_lines = [{"id": f"{chapter_id}_L{i}", "text": line} for i, line in enumerate(source_lines)]
         valid_ids = {entry["id"] for entry in id_lines}
+        diagnostics = ParseDiagnostics()
 
         # Pass 1: character detection (semantic model, raw text)
         pass1_system = self._build_pass_prompt(_CHAR_DETECT_SYSTEM_PROMPT, pass1_memory_blocks)
@@ -300,6 +309,22 @@ class DialogueSegmentationService:
             chapter_id=f"{chapter_id}_p1",
         )
         detected_chars = self._normalize_char_detect(pass1_raw)
+        if self._should_retry_pass1_with_fallback(
+            detected_chars=detected_chars,
+            known_characters=known_characters,
+            pass1_memory_blocks=pass1_memory_blocks,
+        ):
+            fallback_pass1_raw = self._ask_fallback_json_any(
+                system=pass1_system,
+                user=text,
+                chapter_id=f"{chapter_id}_p1f",
+            )
+            if fallback_pass1_raw is not None:
+                diagnostics.pass1_fallback_attempted = True
+                fallback_detected = self._normalize_char_detect(fallback_pass1_raw)
+                if self._is_better_pass1_result(primary=detected_chars, candidate=fallback_detected):
+                    detected_chars = fallback_detected
+                    diagnostics.pass1_fallback_used = True
 
         # Merge pass-1 discoveries into known_characters for pass 2
         updated_known = self._merge_detected_into_known(known_characters, detected_chars)
@@ -315,10 +340,27 @@ class DialogueSegmentationService:
             user=pass2_user,
             chapter_id=f"{chapter_id}_p2",
         )
+        items = self._coerce_list_payload(pass2_raw)
+
+        if self._should_retry_pass2_with_fallback(items=items, valid_ids=valid_ids):
+            fallback_pass2_raw = self._ask_fallback_json_any(
+                system=pass2_system,
+                user=pass2_user,
+                chapter_id=f"{chapter_id}_p2f",
+            )
+            if fallback_pass2_raw is not None:
+                diagnostics.pass2_fallback_attempted = True
+                fallback_items = self._coerce_list_payload(fallback_pass2_raw)
+                if self._is_better_pass2_result(
+                    primary_items=items,
+                    fallback_items=fallback_items,
+                    valid_ids=valid_ids,
+                ):
+                    pass2_raw = fallback_pass2_raw
+                    items = fallback_items
+                    diagnostics.pass2_fallback_used = True
 
         # Strict ID-based validation of semantic output
-        diagnostics = ParseDiagnostics()
-        items = self._coerce_list_payload(pass2_raw)
         is_valid, match_ratio = self._validate_id_items(items, valid_ids)
         diagnostics.id_match_ratio = match_ratio
 
@@ -591,6 +633,108 @@ class DialogueSegmentationService:
         return chars
 
     @staticmethod
+    def _extract_known_names(known_characters: list[str | dict[str, Any]]) -> set[str]:
+        names: set[str] = set()
+        for item in known_characters:
+            if isinstance(item, str):
+                name = item.strip()
+            elif isinstance(item, dict):
+                name = str(item.get("name", "")).strip()
+            else:
+                name = ""
+            if name:
+                names.add(name.casefold())
+        return names
+
+    @staticmethod
+    def _estimate_name_hints(pass1_memory_blocks: list[str]) -> int:
+        text = "\n".join(block for block in pass1_memory_blocks if block)
+        if not text:
+            return 0
+        stop_words = {
+            "chapter", "summary", "context", "from", "previous", "rules", "output", "json",
+            "named", "characters", "setting", "mood", "key", "events", "known", "story",
+        }
+        candidates = re.findall(r"\b[A-Z][a-z]{2,}\b", text)
+        unique = {token.casefold() for token in candidates if token.casefold() not in stop_words}
+        return len(unique)
+
+    def _should_retry_pass1_with_fallback(
+        self,
+        *,
+        detected_chars: list[dict],
+        known_characters: list[str | dict[str, Any]],
+        pass1_memory_blocks: list[str],
+    ) -> bool:
+        if not self.fallback_client:
+            return False
+        if not detected_chars:
+            return True
+        if len(detected_chars) > 1:
+            return False
+        known_count = len(self._extract_known_names(known_characters))
+        hinted_count = self._estimate_name_hints(pass1_memory_blocks)
+        return known_count >= 2 or hinted_count >= 3
+
+    @staticmethod
+    def _is_better_pass1_result(primary: list[dict], candidate: list[dict]) -> bool:
+        if not candidate:
+            return False
+        if len(primary) <= 1 and len(candidate) > len(primary):
+            return True
+        return not primary
+
+    @staticmethod
+    def _pass2_quality_metrics(items: list[Any], valid_ids: set[str]) -> tuple[float, float]:
+        if not valid_ids:
+            return 1.0, 0.0
+        valid_len = len(valid_ids)
+        matched_ids: set[str] = set()
+        unknown_count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            if item_id not in valid_ids:
+                continue
+            if item_id in matched_ids:
+                continue
+            matched_ids.add(item_id)
+            speaker = str(item.get("speaker", "")).strip().casefold()
+            if not speaker or speaker == "unknown":
+                unknown_count += 1
+        coverage = len(matched_ids) / valid_len
+        unknown_ratio = (unknown_count / len(matched_ids)) if matched_ids else 1.0
+        return coverage, unknown_ratio
+
+    def _should_retry_pass2_with_fallback(self, *, items: list[Any], valid_ids: set[str]) -> bool:
+        if not self.fallback_client:
+            return False
+        if not items:
+            return True
+        if len(valid_ids) > 1 and len(items) <= 1:
+            return True
+        coverage, unknown_ratio = self._pass2_quality_metrics(items, valid_ids)
+        return coverage < 1.0 or unknown_ratio > 0.35
+
+    def _is_better_pass2_result(
+        self,
+        *,
+        primary_items: list[Any],
+        fallback_items: list[Any],
+        valid_ids: set[str],
+    ) -> bool:
+        if not fallback_items:
+            return False
+        primary_coverage, primary_unknown = self._pass2_quality_metrics(primary_items, valid_ids)
+        fallback_coverage, fallback_unknown = self._pass2_quality_metrics(fallback_items, valid_ids)
+        return (fallback_coverage, -fallback_unknown, len(fallback_items)) > (
+            primary_coverage,
+            -primary_unknown,
+            len(primary_items),
+        )
+
+    @staticmethod
     def _validate_id_items(items: list[Any], valid_ids: set[str]) -> tuple[bool, float]:
         """Validate that returned items have valid IDs.
 
@@ -841,6 +985,15 @@ class DialogueSegmentationService:
         if callable(ask_json_any):
             return ask_json_any(system=system, user=user, chapter_id=chapter_id)
         ask_json = getattr(self.client, "ask_json")
+        return ask_json(system=system, user=user, chapter_id=chapter_id)
+
+    def _ask_fallback_json_any(self, *, system: str, user: str, chapter_id: str) -> Any | None:
+        if not self.fallback_client:
+            return None
+        ask_json_any = getattr(self.fallback_client, "ask_json_any", None)
+        if callable(ask_json_any):
+            return ask_json_any(system=system, user=user, chapter_id=chapter_id)
+        ask_json = getattr(self.fallback_client, "ask_json")
         return ask_json(system=system, user=user, chapter_id=chapter_id)
 
     def _ask_formatter_json_any(self, *, system: str, user: str, chapter_id: str) -> Any:
