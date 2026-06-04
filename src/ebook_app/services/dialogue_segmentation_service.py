@@ -16,6 +16,11 @@ SegmentType = Literal["dialogue", "thought", "narration", "general"]
 # walking too far back into already-processed text.
 _CHUNK_BOUNDARY_SEARCH_FRACTION = 10
 
+# Confidence assigned to speakers inferred from pass-2 attribution but not
+# detected in pass-1 (i.e. characters the LLM attributed dialogue to without
+# listing them explicitly in the character-detection pass).
+_INFERRED_SPEAKER_CONFIDENCE = 0.85
+
 _PASS_SHARED_RULES = """GLOBAL RULES
 1. Do NOT invent characters.
 2. Do NOT merge characters with similar names.
@@ -26,34 +31,55 @@ _PASS_SHARED_RULES = """GLOBAL RULES
 7. Never include trailing commas.
 """
 
-_PASS1_SYSTEM_PROMPT_PREFIX = """You are a deterministic text-analysis engine.
-Split the chapter into line-level semantic labels.
+_CHAR_DETECT_SYSTEM_PROMPT = """You are a deterministic character-extraction engine.
+Identify all named characters who appear or are mentioned in the chapter.
 
-PASS 1 — Line Classification
+CHARACTER DETECTION
 Output ONLY:
-[{ "line": "...", "type": "dialogue|thought|narration" }]
-
-Allowed type values: dialogue, thought, narration.
-Classify each non-empty line exactly once.
-""" + _PASS_SHARED_RULES
-
-_PASS2_SYSTEM_PROMPT_PREFIX = """You are a deterministic speaker-attribution engine.
-You will receive dialogue lines only.
-
-PASS 2 — Speaker Attribution
-Output ONLY:
-[{ "line": "...", "speaker": "Name or Unknown", "Confidence": "0-1" }]
+[{ "name": "...", "gender": "male|female|unknown", "confidence": 0.0-1.0 }]
 
 Rules:
-- Return one item per provided dialogue line.
-- If uncertain, speaker must be "Unknown".
-- Confidence must be numeric in [0, 1].
+- List every named character who appears or is mentioned.
+- Use the most canonical name form seen in the text.
+- Do NOT invent characters not present in the text.
+- gender must be "male", "female", or "unknown".
+- confidence is your certainty this is a distinct named character (0.0-1.0).
+""" + _PASS_SHARED_RULES
+
+_SEGMENT_ATTR_SYSTEM_PROMPT_PREFIX = """You are a deterministic dialogue-analysis engine.
+Classify every non-empty line and attribute the speaker or thinker.
+
+SEGMENT AND ATTRIBUTE
+Output ONLY:
+[{ "line": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator" }]
+
+Rules:
+- Return one item per non-empty line in order.
+- type must be: dialogue, thought, or narration.
+- For narration lines, set speaker to "narrator".
+- For dialogue and thought lines, use a name from KNOWN CHARACTERS, or "Unknown" if uncertain.
+- Preserve the original line text exactly.
 """ + _PASS_SHARED_RULES
 
 _DEFAULT_CHUNK_SIZE = 6000
 _DEFAULT_CHUNK_OVERLAP = 500
 # How many recent segments to inspect for overlap deduplication across chunks
 _CHUNK_DEDUP_WINDOW = 15
+
+_CHAPTER_SUMMARY_SYSTEM_PROMPT = """You are a concise chapter-summary assistant for a novel processing pipeline.
+Given a chapter of fiction text, produce a brief summary covering:
+- Named characters who appear and their roles
+- Key events and actions
+- Setting, mood, and important continuity details
+
+Output ONLY valid JSON:
+{"summary": "..."}
+
+Rules:
+- summary must be 2-4 sentences, under 200 words.
+- Do NOT invent details not present in the text.
+- Return ONLY the JSON object — no markdown fences, no extra keys.
+"""
 
 
 @dataclass
@@ -118,25 +144,31 @@ class DialogueSegmentationService:
                 characters=[],
             )
 
-        known_context = self._format_known_character_context(known_characters or [])
+        known_chars = known_characters or []
+        known_context = self._format_known_character_context(known_chars)
         hint_prefix = self._format_manual_segment_hints(manual_segment_hints or [])
-        memory_blocks = [block for block in (story_context_block, known_context) if block]
+        # Pass 0 (chapter summary): summarise the chapter text; used as pass-1 context
+        summary_block = self._summarize_chapter(text=cleaned, chapter_id=chapter_id)
+        # Pass 1 (character detection) receives: chapter summary + story context + known characters
+        pass1_memory_blocks = [block for block in (summary_block, story_context_block, known_context) if block]
 
         # Route long chapters through the chunked path
         if len(cleaned) > chunk_size:
             result = self._parse_chunked(
                 text=cleaned,
-                memory_blocks=memory_blocks,
+                known_characters=known_chars,
+                pass1_memory_blocks=pass1_memory_blocks,
                 hint_prefix=hint_prefix,
                 chapter_id=chapter_id,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
             )
         else:
-            result = self._parse_three_pass(
+            result = self._parse_two_pass(
                 text=cleaned,
                 chapter_id=chapter_id,
-                memory_blocks=memory_blocks,
+                known_characters=known_chars,
+                pass1_memory_blocks=pass1_memory_blocks,
                 hint_prefix=hint_prefix,
             )
 
@@ -152,7 +184,8 @@ class DialogueSegmentationService:
         self,
         *,
         text: str,
-        memory_blocks: list[str],
+        known_characters: list[str | dict[str, Any]],
+        pass1_memory_blocks: list[str],
         hint_prefix: str,
         chapter_id: str,
         chunk_size: int,
@@ -162,23 +195,37 @@ class DialogueSegmentationService:
         chunks = self._chunk_text(text, chunk_size, chunk_overlap)
         results: list[DialogueLLMResult] = []
         for i, chunk in enumerate(chunks):
-            r = self._parse_three_pass(
+            r = self._parse_two_pass(
                 text=chunk,
                 chapter_id=f"{chapter_id}_c{i}",
-                memory_blocks=memory_blocks,
+                known_characters=known_characters,
+                pass1_memory_blocks=pass1_memory_blocks,
                 hint_prefix=hint_prefix,
             )
             results.append(r)
         return self._merge_chunk_results(results)
 
-    def _parse_three_pass(
+    def _parse_two_pass(
         self,
         *,
         text: str,
         chapter_id: str,
-        memory_blocks: list[str],
+        known_characters: list[str | dict[str, Any]],
+        pass1_memory_blocks: list[str],
         hint_prefix: str,
     ) -> DialogueLLMResult:
+        """Run the two-pass LLM pipeline for a single text block.
+
+        Pass 1 — Character Detection:
+          System: char-detect prompt + story context + known characters
+          User:   original text
+          Result: update known characters for pass 2
+
+        Pass 2 — Segment and Attribute:
+          System: segment+attribute prompt + updated known characters only
+          User:   original text (+ manual hints)
+          Result: per-line type (dialogue/thought/narration) and speaker
+        """
         source_lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not source_lines:
             return DialogueLLMResult(
@@ -186,40 +233,32 @@ class DialogueSegmentationService:
                 characters=[],
             )
 
-        pass1_system = self._build_pass_prompt(_PASS1_SYSTEM_PROMPT_PREFIX, memory_blocks)
-        pass1_user = text
+        # Pass 1: character detection
+        pass1_system = self._build_pass_prompt(_CHAR_DETECT_SYSTEM_PROMPT, pass1_memory_blocks)
         pass1_raw = self._ask_json_any(
             system=pass1_system,
-            user=pass1_user,
+            user=text,
             chapter_id=f"{chapter_id}_p1",
         )
-        classified = self._normalize_pass1(pass1_raw, source_lines)
+        detected_chars = self._normalize_char_detect(pass1_raw)
 
-        dialogue_lines = [item["line"] for item in classified if item["type"] == "dialogue"]
-        attributions: dict[str, deque[tuple[str, float]]] = {}
-        attribution_fallback: deque[tuple[str, float]] = deque()
-        if dialogue_lines:
-            pass2_system = self._build_pass_prompt(_PASS2_SYSTEM_PROMPT_PREFIX, memory_blocks)
-            dialogue_block = "\n".join(f"- {line}" for line in dialogue_lines)
-            pass2_user = "\n\n".join(
-                part
-                for part in (
-                    hint_prefix,
-                    "DIALOGUE LINES (attribute speaker for each line):",
-                    dialogue_block,
-                    "FULL CHAPTER TEXT:",
-                    text,
-                )
-                if part
-            )
-            pass2_raw = self._ask_json_any(
-                system=pass2_system,
-                user=pass2_user,
-                chapter_id=f"{chapter_id}_p2",
-            )
-            attributions, attribution_fallback = self._normalize_pass2(pass2_raw)
+        # Merge pass-1 discoveries into known_characters for pass 2
+        updated_known = self._merge_detected_into_known(known_characters, detected_chars)
+        updated_known_context = self._format_known_character_context(updated_known)
 
-        return self._build_final_result(classified, attributions, attribution_fallback)
+        # Pass 2: combined segment classification + speaker attribution
+        # Receives only: task/format + updated known characters (no story context)
+        pass2_memory_blocks = [updated_known_context] if updated_known_context else []
+        pass2_system = self._build_pass_prompt(_SEGMENT_ATTR_SYSTEM_PROMPT_PREFIX, pass2_memory_blocks)
+        pass2_user = "\n\n".join(part for part in (hint_prefix, text) if part)
+        pass2_raw = self._ask_json_any(
+            system=pass2_system,
+            user=pass2_user,
+            chapter_id=f"{chapter_id}_p2",
+        )
+        classified = self._normalize_pass_combined(pass2_raw, source_lines)
+
+        return self._build_result_from_combined(classified, detected_chars)
 
     @staticmethod
     def _chunk_text(text: str, max_chars: int, overlap: int) -> list[str]:
@@ -300,39 +339,30 @@ class DialogueSegmentationService:
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
         return cleaned or source
 
-    def _build_final_result(
+    def _build_result_from_combined(
         self,
-        classified: list[dict[str, str]],
-        attributions: dict[str, deque[tuple[str, float]]],
-        attribution_fallback: deque[tuple[str, float]],
+        classified: list[dict],
+        detected_chars: list[dict],
     ) -> DialogueLLMResult:
+        """Build a DialogueLLMResult from the combined pass-2 output and pass-1 detected chars."""
         segments: list[DialogueLLMSegment] = []
-        character_best_conf: dict[str, float] = {}
+        extra_char_confs: dict[str, float] = {}
 
         for item in classified:
             line = item["line"]
-            seg_type = self._normalize_segment_type(item["type"])
-            speaker: str | None = None
-            speaker_conf = 0.0
+            seg_type = self._normalize_segment_type(item.get("type", "narration"))
+            speaker_raw = str(item.get("speaker", "narrator")).strip() or "narrator"
 
-            if seg_type == "dialogue":
-                attribution_queue = attributions.get(line)
-                if attribution_queue:
-                    speaker, speaker_conf = attribution_queue.popleft()
-                elif attribution_fallback:
-                    speaker, speaker_conf = attribution_fallback.popleft()
-                if not speaker:
-                    speaker = "Unknown"
-                    speaker_conf = 0.0
-                canonical = speaker.strip() or "Unknown"
-                if canonical.casefold() in {"unknown", "narrator"}:
+            if seg_type == "narration":
+                speaker = "narrator"
+            else:
+                # dialogue or thought: normalize speaker
+                canonical = speaker_raw.strip() or "Unknown"
+                if canonical.casefold() == "narrator":
                     canonical = "Unknown"
                 speaker = canonical
                 if speaker != "Unknown":
-                    existing_conf = character_best_conf.get(speaker, 0.0)
-                    character_best_conf[speaker] = max(existing_conf, speaker_conf)
-            elif seg_type == "narration":
-                speaker = "narrator"
+                    extra_char_confs[speaker] = max(extra_char_confs.get(speaker, 0.0), _INFERRED_SPEAKER_CONFIDENCE)
 
             if self.strict_quotes and seg_type in {"dialogue", "thought"} and not self._looks_quoted(line):
                 seg_type = "narration"
@@ -346,11 +376,16 @@ class DialogueSegmentationService:
                 characters=[],
             )
 
-        characters = [
-            {"name": name, "gender": "unknown", "confidence": conf}
-            for name, conf in character_best_conf.items()
-        ]
-        return DialogueLLMResult(segments=segments, characters=characters)
+        # Combine characters: pass-1 detections take priority; add any speakers from pass-2
+        all_chars: dict[str, dict] = {}
+        for char in detected_chars:
+            all_chars[char["name"].casefold()] = char
+        for name, conf in extra_char_confs.items():
+            key = name.casefold()
+            if key not in all_chars:
+                all_chars[key] = {"name": name, "gender": "unknown", "confidence": conf}
+
+        return DialogueLLMResult(segments=segments, characters=list(all_chars.values()))
 
     @staticmethod
     def _normalize_segment_type(raw_type: Any) -> SegmentType:
@@ -361,27 +396,78 @@ class DialogueSegmentationService:
             return "narration"
         return seg_type  # type: ignore[return-value]
 
-    def _normalize_pass1(
+    def _normalize_char_detect(self, payload: Any) -> list[dict]:
+        """Normalize Pass 1 (character detection) LLM output.
+
+        Expected: [{ "name": "...", "gender": "...", "confidence": 0.0-1.0 }]
+        Also handles a single-object dict or a dict with a "name" key.
+        """
+        items = self._coerce_list_payload(payload)
+        if not items and isinstance(payload, dict):
+            if payload.get("name"):
+                items = [payload]
+
+        chars: list[dict] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            gender = str(item.get("gender", "unknown")).strip().lower()
+            if gender not in {"male", "female"}:
+                gender = "unknown"
+            confidence = self._clamp_confidence(
+                item.get("confidence", item.get("Confidence", 0.85))
+            )
+            chars.append({"name": name, "gender": gender, "confidence": confidence})
+        return chars
+
+    def _normalize_pass_combined(
         self,
         payload: Any,
         source_lines: list[str],
-    ) -> list[dict[str, str]]:
+    ) -> list[dict]:
+        """Normalize Pass 2 (combined segment + attribute) LLM output.
+
+        Expected: [{ "line": "...", "type": "dialogue|thought|narration", "speaker": "..." }]
+        Also handles single-object and line-keyed dict forms.
+        """
         items = self._coerce_list_payload(payload)
         if not items and isinstance(payload, dict):
-            for line, value in payload.items():
-                if not isinstance(line, str):
-                    continue
-                line_text = line.strip()
-                if not line_text:
-                    continue
-                if isinstance(value, str):
-                    items.append({"line": line_text, "type": value})
-                elif isinstance(value, dict):
-                    seg_type = value.get("type") or value.get("label") or value.get("classification")
-                    if seg_type is not None:
-                        items.append({"line": line_text, "type": seg_type})
-        by_line: dict[str, deque[str]] = {}
-        positional_types: deque[str] = deque()
+            if "line" in payload:
+                items = [payload]
+            else:
+                for line_key, value in payload.items():
+                    if not isinstance(line_key, str):
+                        continue
+                    line_text = line_key.strip()
+                    if not line_text:
+                        continue
+                    if isinstance(value, str):
+                        items.append({"line": line_text, "type": value, "speaker": "narrator"})
+                    elif isinstance(value, dict):
+                        seg_type = (
+                            value.get("type")
+                            or value.get("label")
+                            or value.get("classification")
+                            or "narration"
+                        )
+                        speaker = (
+                            value.get("speaker")
+                            or value.get("name")
+                            or value.get("character")
+                            or "narrator"
+                        )
+                        items.append({"line": line_text, "type": seg_type, "speaker": speaker})
+
+        by_line: dict[str, deque[dict]] = {}
+        positional: deque[dict] = deque()
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -389,58 +475,54 @@ class DialogueSegmentationService:
             if not line:
                 continue
             seg_type = self._normalize_segment_type(item.get("type"))
-            positional_types.append(seg_type)
-            by_line.setdefault(line, deque()).append(seg_type)
+            speaker = str(item.get("speaker", "narrator")).strip() or "narrator"
+            entry = {"line": line, "type": seg_type, "speaker": speaker}
+            positional.append(entry)
+            by_line.setdefault(line, deque()).append(entry)
 
-        classified: list[dict[str, str]] = []
+        result: list[dict] = []
         for line in source_lines:
             queue = by_line.get(line)
             if queue:
-                seg_type = queue.popleft()
-            elif positional_types:
-                seg_type = positional_types.popleft()
+                entry = dict(queue.popleft())
+            elif positional:
+                entry = dict(positional.popleft())
+                entry["line"] = line
             else:
                 seg_type = self._fallback_line_type(line)
-            classified.append({"line": line, "type": seg_type})
-        return classified
+                entry = {"line": line, "type": seg_type, "speaker": "narrator"}
+            result.append(entry)
+        return result
 
-    def _normalize_pass2(
-        self,
-        payload: Any,
-    ) -> tuple[dict[str, deque[tuple[str, float]]], deque[tuple[str, float]]]:
-        items = self._coerce_list_payload(payload)
-        if not items and isinstance(payload, dict):
-            for line, value in payload.items():
-                if not isinstance(line, str):
-                    continue
-                line_text = line.strip()
-                if not line_text:
-                    continue
-                if isinstance(value, str):
-                    items.append({"line": line_text, "speaker": value})
-                elif isinstance(value, dict):
-                    speaker = value.get("speaker") or value.get("name") or value.get("character")
-                    if speaker is None:
-                        continue
-                    item = {"line": line_text, "speaker": speaker}
-                    if "Confidence" in value:
-                        item["confidence"] = value["Confidence"]
-                    elif "confidence" in value:
-                        item["confidence"] = value["confidence"]
-                    items.append(item)
-        by_line: dict[str, deque[tuple[str, float]]] = {}
-        positional_attrs: deque[tuple[str, float]] = deque()
-        for item in items:
-            if not isinstance(item, dict):
+    @staticmethod
+    def _merge_detected_into_known(
+        known_characters: list[str | dict[str, Any]],
+        detected_chars: list[dict],
+    ) -> list[str | dict[str, Any]]:
+        """Return a new list with pass-1 detected characters merged into known_characters."""
+        existing: set[str] = set()
+        for item in known_characters:
+            if isinstance(item, str):
+                existing.add(item.casefold())
+            elif isinstance(item, dict):
+                name = str(item.get("name", "")).strip()
+                if name:
+                    existing.add(name.casefold())
+
+        result: list[str | dict[str, Any]] = list(known_characters)
+        for char in detected_chars:
+            name = char.get("name", "")
+            if not name or name.casefold() in existing:
                 continue
-            line = str(item.get("line", "")).strip()
-            if not line:
-                continue
-            speaker = str(item.get("speaker", "Unknown")).strip() or "Unknown"
-            confidence = self._clamp_confidence(item.get("Confidence", item.get("confidence", 0.0)))
-            positional_attrs.append((speaker, confidence))
-            by_line.setdefault(line, deque()).append((speaker, confidence))
-        return by_line, positional_attrs
+            existing.add(name.casefold())
+            result.append(
+                {
+                    "name": name,
+                    "gender": char.get("gender", "unknown"),
+                    "confidence": char.get("confidence", 0.85),
+                }
+            )
+        return result
 
     @staticmethod
     def _clamp_confidence(raw_value: Any) -> float:
@@ -466,6 +548,34 @@ class DialogueSegmentationService:
                 if isinstance(value, list):
                     return value
         return []
+
+    def _summarize_chapter(self, *, text: str, chapter_id: str) -> str:
+        """Pass 0: Ask the LLM to summarise the chapter for use as pass-1 context.
+
+        Returns a formatted context block string, or an empty string if the call
+        fails or the LLM returns no usable summary.
+        """
+        try:
+            raw = self._ask_json_any(
+                system=_CHAPTER_SUMMARY_SYSTEM_PROMPT,
+                user=text,
+                chapter_id=f"{chapter_id}_p0",
+            )
+            if isinstance(raw, dict):
+                summary = str(raw.get("summary", "")).strip()
+            elif isinstance(raw, str):
+                summary = raw.strip()
+            else:
+                return ""
+            if summary:
+                return f"CHAPTER SUMMARY:\n{summary}"
+        except Exception:
+            logger.warning(
+                "Chapter summary (pass 0) failed for %s — continuing without.",
+                chapter_id,
+                exc_info=True,
+            )
+        return ""
 
     def _ask_json_any(self, *, system: str, user: str, chapter_id: str) -> Any:
         ask_json_any = getattr(self.client, "ask_json_any", None)
