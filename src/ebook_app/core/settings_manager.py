@@ -174,6 +174,17 @@ class SettingsManager(QObject):
                 self.data[key] = value
                 changed = True
 
+        canonical_dialogue_model = self._canonical_dialogue_model()
+        if self.data.get("dialogue_llm_model") != canonical_dialogue_model:
+            self.data["dialogue_llm_model"] = canonical_dialogue_model
+            changed = True
+        if self.data.get("dialogue_llm_semantic_model") != canonical_dialogue_model:
+            self.data["dialogue_llm_semantic_model"] = canonical_dialogue_model
+            changed = True
+        if self.data.get("dialogue_llm_formatter_model") != canonical_dialogue_model:
+            self.data["dialogue_llm_formatter_model"] = canonical_dialogue_model
+            changed = True
+
         for legacy_key in (
             "tts_backend_mode",
             "llm_api_url",
@@ -190,6 +201,13 @@ class SettingsManager(QObject):
         self._settings = self.data
         if changed:
             self.save()
+
+    def _canonical_dialogue_model(self) -> str:
+        semantic_model = str(self.data.get("dialogue_llm_semantic_model", "") or "").strip()
+        legacy_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
+        formatter_model = str(self.data.get("dialogue_llm_formatter_model", "") or "").strip()
+        default_model = str(self.DEFAULTS.get("dialogue_llm_semantic_model", "qwen2.5-coder:7b")).strip()
+        return semantic_model or legacy_model or formatter_model or default_model
 
     def save(self):
         try:

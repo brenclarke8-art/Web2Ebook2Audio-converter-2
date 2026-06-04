@@ -144,6 +144,22 @@ def test_run_all_executes_new_pipeline_steps_in_order(tmp_path):
     assert called == controller.STEPS
 
 
+def test_build_dialogue_parser_prefers_semantic_model_setting(tmp_path):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    settings.set("dialogue_llm_model", "legacy:model")
+    settings.set("dialogue_llm_semantic_model", "semantic:model")
+    settings.set("dialogue_llm_formatter_model", "formatter:model")
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+
+    parser = controller._build_dialogue_parser()
+
+    assert parser.model == "semantic:model"
+    assert parser.semantic_model == "semantic:model"
+    assert parser.fallback_model == "semantic:model"
+    assert parser.formatter_model == "semantic:model"
+
+
 def test_clean_chapters_removes_ui_noise_and_zero_width_chars(tmp_path):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))

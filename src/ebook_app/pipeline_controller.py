@@ -189,8 +189,8 @@ class PipelineController:
 
     def _build_dialogue_parser(self) -> DialogueParser:
         dialogue_model = (
-            self.settings.get("dialogue_llm_model", "")
-            or self.settings.get("dialogue_llm_semantic_model", "")
+            self.settings.get("dialogue_llm_semantic_model", "")
+            or self.settings.get("dialogue_llm_model", "")
             or self.settings.get("dialogue_llm_formatter_model", "")
         )
         return DialogueParser(
