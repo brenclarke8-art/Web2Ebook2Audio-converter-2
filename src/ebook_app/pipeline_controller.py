@@ -13,7 +13,11 @@ from ebook_app.core.tts.voice_router import VoiceRouter
 from ebook_app.models.book_library import FillerChapterFilter
 from ebook_app.models.dialogue_parser import DialogueParser, Segment
 from ebook_app.models.scraper import HttpWebScraper, TextCleaner, WebScraper
-from ebook_app.pipeline_contracts import TextSegment, chapter_id as make_chapter_id
+from ebook_app.pipeline_contracts import (
+    PIPELINE_STEPS,
+    TextSegment,
+    chapter_id as make_chapter_id,
+)
 from ebook_app.services.dialogue_segmentation_service import DialogueSegmentationService
 
 logger = logging.getLogger(__name__)
@@ -28,16 +32,7 @@ ProgressCallback = Callable[[str, int], None]
 class PipelineController:
     """Orchestrates the full Web-Novel → EPUB3 Audiobook pipeline."""
 
-    STEPS = [
-        "scrape_index",
-        "scrape_chapters",
-        "clean_chapters",
-        "llm_semantic_analysis",
-        "normalize_llm_output",
-        "smart_review_dialogue",
-        "tts_generate",
-        "epub_build",
-    ]
+    STEPS = list(PIPELINE_STEPS)
 
     _OLLAMA_TAGS_PATH = "/api/tags"
 
