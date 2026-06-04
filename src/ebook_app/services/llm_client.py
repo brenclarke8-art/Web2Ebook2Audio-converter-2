@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,8 +27,7 @@ STRICT JSON SCHEMA
   "characters": [
     {{
       "name": "",
-      "role": "",
-      "is_new": false
+      "gender": ""
     }}
   ],
   "segments": [
@@ -36,9 +36,7 @@ STRICT JSON SCHEMA
       "speaker": "",
       "text": ""
     }}
-  ],
-  "summary": "",
-  "confidence": 0.0
+  ]
 }}
 END_JSON
 
@@ -52,7 +50,8 @@ RULES
 - Preserve chronological order.
 - Segment types: "dialogue", "thought", "narration".
 - Dialogue = spoken lines. Thought = internal monologue. Narration = everything else.
-- Do NOT output "actions". Do NOT output "events". Do NOT summarize outside the summary field.
+- character gender: "male", "female", or "unknown".
+- Do NOT output "actions". Do NOT output "events".
 - No trailing commas. No commentary. JSON only.
 
 ========================
@@ -345,13 +344,10 @@ class OllamaChatClient:
             for char in character_memory.all():
                 name = getattr(char, "name", "")
                 gender = getattr(char, "gender", "unknown")
-                role = getattr(char, "role", "")
                 if name:
                     parts = [f"- {name}"]
                     if gender and gender != "unknown":
                         parts.append(f"gender={gender}")
-                    if role:
-                        parts.append(f"role={role}")
                     lines.append(" | ".join(parts))
         elif isinstance(character_memory, list):
             for item in character_memory:
@@ -363,12 +359,9 @@ class OllamaChatClient:
                     if not name:
                         continue
                     gender = str(item.get("gender", "unknown")).strip().lower()
-                    role = str(item.get("role", "")).strip()
                     parts = [f"- {name}"]
                     if gender and gender != "unknown":
                         parts.append(f"gender={gender}")
-                    if role:
-                        parts.append(f"role={role}")
                     lines.append(" | ".join(parts))
 
         known_characters_block = "\n".join(lines) if lines else "(none known yet)"
@@ -462,16 +455,17 @@ class OllamaChatClient:
         """Merge a list of per-chunk parse results into a single unified result.
 
         Merging rules:
-        - **characters**: deduplicated by name; first occurrence wins for
-          ``role`` and ``is_new``.
-        - **segments**: appended in order.
-        - **summary**: all non-empty summaries concatenated with a space.
-        - **confidence**: arithmetic mean of all non-zero values (or 0.0).
+        - **characters**: deduplicated by name (case-insensitive); first occurrence wins
+          for ``gender``.
+        - **segments**: appended in order with overlap deduplication — segments whose
+          normalised text was already seen within the previous
+          ``_CHUNK_DEDUP_WINDOW`` entries are silently dropped.
         """
+        _CHUNK_DEDUP_WINDOW = 15
+
         merged_chars: dict[str, dict[str, Any]] = {}
         merged_segments: list[dict[str, Any]] = []
-        summaries: list[str] = []
-        confidences: list[float] = []
+        recent_texts: deque[str] = deque(maxlen=_CHUNK_DEDUP_WINDOW)
 
         for result in results:
             if not isinstance(result, dict):
@@ -487,32 +481,25 @@ class OllamaChatClient:
                 if key not in merged_chars:
                     merged_chars[key] = {
                         "name": name,
-                        "role": str(char.get("role", "")).strip(),
-                        "is_new": bool(char.get("is_new", False)),
+                        "gender": str(char.get("gender", "unknown")).strip().lower() or "unknown",
                     }
 
             for seg in result.get("segments", []):
-                if isinstance(seg, dict) and str(seg.get("text", "")).strip():
-                    merged_segments.append(seg)
-
-            summary = str(result.get("summary", "")).strip()
-            if summary:
-                summaries.append(summary)
-
-            try:
-                conf = float(result.get("confidence", 0.0))
-                if conf > 0.0:
-                    confidences.append(conf)
-            except (TypeError, ValueError):
-                pass
-
-        avg_confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
+                if not isinstance(seg, dict):
+                    continue
+                text = str(seg.get("text", "")).strip()
+                if not text:
+                    continue
+                # Normalise whitespace for dedup comparison only
+                norm = " ".join(text.split())
+                if norm in recent_texts:
+                    continue
+                merged_segments.append(seg)
+                recent_texts.append(norm)
 
         return {
             "characters": list(merged_chars.values()),
             "segments": merged_segments,
-            "summary": " ".join(summaries),
-            "confidence": round(avg_confidence, 4),
         }
 
     # -----------------------------------------------------------------------

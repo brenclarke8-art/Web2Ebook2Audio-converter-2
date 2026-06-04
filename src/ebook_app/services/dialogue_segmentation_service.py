@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import re
 from typing import Any, Iterable, Literal
@@ -29,6 +30,11 @@ GLOBAL RULES
 CHARACTER MEMORY (from previous chapters)
 ========================
 """
+
+_DEFAULT_CHUNK_SIZE = 6000
+_DEFAULT_CHUNK_OVERLAP = 500
+# How many recent segments to inspect for overlap deduplication across chunks
+_CHUNK_DEDUP_WINDOW = 15
 
 
 @dataclass
@@ -83,6 +89,8 @@ class DialogueSegmentationService:
         known_characters: list[str | dict[str, Any]] | None = None,
         manual_segment_hints: list[dict[str, str]] | None = None,
         story_context_block: str | None = None,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP,
     ) -> DialogueLLMResult:
         cleaned = self.clean_text_for_llm(text)
         if not cleaned:
@@ -92,19 +100,28 @@ class DialogueSegmentationService:
             )
 
         known_context = self._format_known_character_context(known_characters or [])
-        hint_context = self._format_manual_segment_hints(manual_segment_hints or [])
+        hint_prefix = self._format_manual_segment_hints(manual_segment_hints or [])
 
         system_prompt = self._build_system_prompt(
             [block for block in (story_context_block, known_context) if block]
         )
-        if hint_context:
-            user_text = "\n\n".join((hint_context, cleaned))
+
+        # Route long chapters through the chunked path
+        if len(cleaned) > chunk_size:
+            result = self._parse_chunked(
+                text=cleaned,
+                system_prompt=system_prompt,
+                hint_prefix=hint_prefix,
+                chapter_id=chapter_id,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
         else:
-            user_text = cleaned
-        raw = self.client.ask_json(
-            system=system_prompt, user=user_text, chapter_id=chapter_id
-        )
-        result = self._normalize_payload(raw, source_text=cleaned)
+            user_text = "\n\n".join(part for part in (hint_prefix, cleaned) if part)
+            raw = self.client.ask_json(
+                system=system_prompt, user=user_text, chapter_id=chapter_id
+            )
+            result = self._normalize_payload(raw, source_text=cleaned)
 
         if not result.segments:
             result = DialogueLLMResult(
@@ -113,6 +130,84 @@ class DialogueSegmentationService:
             )
 
         return result
+
+    def _parse_chunked(
+        self,
+        *,
+        text: str,
+        system_prompt: str,
+        hint_prefix: str,
+        chapter_id: str,
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> DialogueLLMResult:
+        """Split *text* into overlapping chunks and merge results with dedup."""
+        chunks = self._chunk_text(text, chunk_size, chunk_overlap)
+        results: list[DialogueLLMResult] = []
+        for i, chunk in enumerate(chunks):
+            user_text = "\n\n".join(part for part in (hint_prefix, chunk) if part)
+            raw = self.client.ask_json(
+                system=system_prompt,
+                user=user_text,
+                chapter_id=f"{chapter_id}_c{i}",
+            )
+            r = self._normalize_payload(raw, source_text=chunk)
+            results.append(r)
+        return self._merge_chunk_results(results)
+
+    @staticmethod
+    def _chunk_text(text: str, max_chars: int, overlap: int) -> list[str]:
+        """Split *text* into overlapping chunks aligned to newline boundaries."""
+        if not text or len(text) <= max_chars:
+            return [text] if text else []
+
+        chunks: list[str] = []
+        start = 0
+        text_len = len(text)
+
+        while start < text_len:
+            end = min(start + max_chars, text_len)
+            if end < text_len:
+                search_from = max(start, end - max(1, max_chars // 10))
+                nl_pos = text.rfind("\n", search_from, end)
+                if nl_pos > start:
+                    end = nl_pos + 1
+            chunks.append(text[start:end])
+            if end >= text_len:
+                break
+            next_start = end - overlap
+            if next_start <= start:
+                next_start = start + 1
+            nl_pos = text.find("\n", next_start, end)
+            if nl_pos != -1:
+                next_start = nl_pos + 1
+            start = next_start
+
+        return chunks
+
+    @staticmethod
+    def _merge_chunk_results(results: list[DialogueLLMResult]) -> DialogueLLMResult:
+        """Merge per-chunk results, deduplicating overlapping segment texts."""
+        seen_chars: set[str] = set()
+        merged_chars: list[Any] = []
+        merged_segs: list[DialogueLLMSegment] = []
+        recent_texts: deque[str] = deque(maxlen=_CHUNK_DEDUP_WINDOW)
+
+        for r in results:
+            for c in r.characters:
+                name = c["name"] if isinstance(c, dict) else str(getattr(c, "name", ""))
+                key = name.casefold()
+                if key and key not in seen_chars:
+                    seen_chars.add(key)
+                    merged_chars.append(c)
+            for s in r.segments:
+                raw_text = s.text if isinstance(s, DialogueLLMSegment) else str(getattr(s, "text", ""))
+                norm = " ".join(raw_text.split())
+                if norm and norm not in recent_texts:
+                    merged_segs.append(s)
+                    recent_texts.append(norm)
+
+        return DialogueLLMResult(segments=merged_segs, characters=merged_chars)
 
     @classmethod
     def _is_noise_line(cls, line: str) -> bool:
