@@ -35,7 +35,12 @@ def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
 
     def _fake_post(*_args, **kwargs):
         prompt = kwargs.get("json", {}).get("prompt", "")
-        payload = pass1_payload if "CHARACTER DETECTION" in prompt else pass2_payload
+        if "chapter-summary assistant" in prompt:
+            payload = {"summary": "Alice arrives and greets Bob."}
+        elif "CHARACTER DETECTION" in prompt:
+            payload = pass1_payload
+        else:
+            payload = pass2_payload
         return _DummyResponse({"response": json.dumps(payload)})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
@@ -113,6 +118,8 @@ def test_dialogue_parser_accepts_markdown_wrapped_json(monkeypatch):
 
     def _fake_post(*_args, **kwargs):
         prompt = kwargs.get("json", {}).get("prompt", "")
+        if "chapter-summary assistant" in prompt:
+            return _DummyResponse({"response": '{"summary": "Alice says hi."}'})
         wrapped = wrapped_pass1 if "CHARACTER DETECTION" in prompt else wrapped_pass2
         return _DummyResponse({"response": wrapped})
 
@@ -131,7 +138,12 @@ def test_dialogue_parser_preserves_character_objects(monkeypatch):
 
     def _fake_post(*_args, **kwargs):
         prompt = kwargs.get("json", {}).get("prompt", "")
-        payload = pass1_payload if "CHARACTER DETECTION" in prompt else pass2_payload
+        if "chapter-summary assistant" in prompt:
+            payload = {"summary": "Alice said hello."}
+        elif "CHARACTER DETECTION" in prompt:
+            payload = pass1_payload
+        else:
+            payload = pass2_payload
         return _DummyResponse({"response": json.dumps(payload)})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
