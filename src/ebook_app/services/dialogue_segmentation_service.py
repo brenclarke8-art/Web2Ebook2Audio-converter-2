@@ -16,6 +16,11 @@ SegmentType = Literal["dialogue", "thought", "narration", "general"]
 # walking too far back into already-processed text.
 _CHUNK_BOUNDARY_SEARCH_FRACTION = 10
 
+# Confidence assigned to speakers inferred from pass-2 attribution but not
+# detected in pass-1 (i.e. characters the LLM attributed dialogue to without
+# listing them explicitly in the character-detection pass).
+_INFERRED_SPEAKER_CONFIDENCE = 0.85
+
 _PASS_SHARED_RULES = """GLOBAL RULES
 1. Do NOT invent characters.
 2. Do NOT merge characters with similar names.
@@ -340,7 +345,7 @@ class DialogueSegmentationService:
                     canonical = "Unknown"
                 speaker = canonical
                 if speaker != "Unknown":
-                    extra_char_confs[speaker] = max(extra_char_confs.get(speaker, 0.0), 0.85)
+                    extra_char_confs[speaker] = max(extra_char_confs.get(speaker, 0.0), _INFERRED_SPEAKER_CONFIDENCE)
 
             if self.strict_quotes and seg_type in {"dialogue", "thought"} and not self._looks_quoted(line):
                 seg_type = "narration"
