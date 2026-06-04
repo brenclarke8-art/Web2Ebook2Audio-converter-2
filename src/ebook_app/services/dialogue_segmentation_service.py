@@ -61,6 +61,7 @@ Rules:
 - Return exactly one item per provided id, in the same order.
 - Each item's "id" must match exactly one of the provided input ids.
 - Do not omit or invent ids.
+- Return a JSON array only. Never return a single JSON object.
 - type must be exactly one of: dialogue, thought, or narration.
 - For narration lines, set speaker to "narrator".
 - For dialogue and thought lines, use a name from KNOWN CHARACTERS, or "Unknown" if uncertain.
@@ -74,6 +75,7 @@ Produce a valid JSON array with this exact schema:
 Rules:
 - Include exactly one item per id from the SOURCE LIST. Do not omit or add ids.
 - Each "id" must exactly match an id from the source list.
+- Output must be a JSON array only (never a single object).
 - "type" must be exactly: dialogue, thought, or narration.
 - "speaker" must be a character name or "narrator" for narration lines.
 - Preserve semantic meaning from the malformed response where discernible.
@@ -748,21 +750,35 @@ class DialogueSegmentationService:
 
     @staticmethod
     def _validate_id_items(items: list[Any], valid_ids: set[str]) -> tuple[bool, float]:
-        """Validate that returned items have valid IDs.
-
-        Returns (is_valid, id_match_ratio) where is_valid is True when at
-        least 90 % of the expected IDs are present in *items*.
-        """
+        """Validate strict pass-2 schema and cardinality against source IDs."""
         if not valid_ids:
             return True, 1.0
         if not items:
             return False, 0.0
-        matched = sum(
-            1 for item in items
-            if isinstance(item, dict) and item.get("id") in valid_ids
-        )
-        ratio = matched / len(valid_ids)
-        return ratio >= 0.9, ratio
+
+        matched_ids: set[str] = set()
+        expected_count = len(valid_ids)
+
+        for item in items:
+            if not isinstance(item, dict):
+                return False, len(matched_ids) / expected_count
+
+            raw_id = str(item.get("id", "")).strip()
+            if not raw_id or raw_id not in valid_ids or raw_id in matched_ids:
+                return False, len(matched_ids) / expected_count
+            matched_ids.add(raw_id)
+
+            seg_type = str(item.get("type", "")).strip().lower()
+            if seg_type not in {"dialogue", "thought", "narration"}:
+                return False, len(matched_ids) / expected_count
+
+            speaker = str(item.get("speaker", "")).strip()
+            if not speaker:
+                return False, len(matched_ids) / expected_count
+
+        ratio = len(matched_ids) / expected_count
+        # Strict cardinality: exactly one valid entry per source id.
+        return len(items) == expected_count and ratio == 1.0, ratio
 
     def _normalize_id_items(
         self,
@@ -793,7 +809,10 @@ class DialogueSegmentationService:
             item = id_to_item.get(line_id)
             if item:
                 seg_type = self._normalize_segment_type(item.get("type"))
-                speaker = str(item.get("speaker", "narrator")).strip() or "narrator"
+                speaker = self._normalize_pass2_speaker(
+                    raw_speaker=item.get("speaker", "narrator"),
+                    seg_type=seg_type,
+                )
                 result.append({"line": line_text, "type": seg_type, "speaker": speaker})
             else:
                 # Heuristic-only fallback for this specific line; no positional remapping
@@ -963,6 +982,18 @@ class DialogueSegmentationService:
                 if isinstance(value, list):
                     return value
         return []
+
+    @staticmethod
+    def _normalize_pass2_speaker(*, raw_speaker: Any, seg_type: SegmentType) -> str:
+        speaker = str(raw_speaker or "").strip()
+        if seg_type == "narration":
+            return "narrator"
+        if not speaker:
+            return "Unknown"
+        canonical = " ".join(speaker.split())
+        if canonical.casefold() in {"narrator", "unknown"}:
+            return "Unknown"
+        return canonical
 
     def _summarize_chapter(self, *, text: str, chapter_id: str) -> str:
         """Pass 0: Ask the LLM to summarise the chapter for use as pass-1 context.

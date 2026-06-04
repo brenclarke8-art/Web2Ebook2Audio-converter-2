@@ -188,11 +188,16 @@ class PipelineController:
         )
 
     def _build_dialogue_parser(self) -> DialogueParser:
+        dialogue_model = (
+            self.settings.get("dialogue_llm_semantic_model", "")
+            or self.settings.get("dialogue_llm_model", "")
+            or self.settings.get("dialogue_llm_formatter_model", "")
+        )
         return DialogueParser(
             ollama_url=self.settings.get("dialogue_llm_url", ""),
-            semantic_model=self.settings.get("dialogue_llm_semantic_model", ""),
-            formatter_model=self.settings.get("dialogue_llm_formatter_model", ""),
-            model=self.settings.get("dialogue_llm_model", ""),  # backward compat
+            semantic_model=dialogue_model,
+            formatter_model=dialogue_model,
+            model=dialogue_model,  # backward compat
             timeout_s=int(self.settings.get("dialogue_llm_timeout", 120)),
             retries=int(self.settings.get("dialogue_llm_retries", 1)),
             llm_mode=str(self.settings.get("dialogue_llm_mode", "full")),
