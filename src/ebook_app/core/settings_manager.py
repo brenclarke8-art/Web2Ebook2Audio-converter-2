@@ -71,10 +71,9 @@ class SettingsManager(QObject):
         "dialogue_llm_mode": "full",
         "dialogue_llm_url": "http://127.0.0.1:11434/api/generate",
         # Legacy single-model setting kept for backward compatibility.
-        "dialogue_llm_model": "qwen2.5:7b-instruct",
-        # Two-model architecture: semantic model for reasoning tasks,
-        # formatter model for structured-output repair only.
-        "dialogue_llm_semantic_model": "qwen2.5:7b-instruct",
+        "dialogue_llm_model": "qwen2.5-coder:7b",
+        # Single-model architecture: keep compatibility keys in sync.
+        "dialogue_llm_semantic_model": "qwen2.5-coder:7b",
         "dialogue_llm_formatter_model": "qwen2.5-coder:7b",
         "dialogue_llm_timeout": 300,
         "dialogue_llm_retries": 1,

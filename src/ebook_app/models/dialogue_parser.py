@@ -54,13 +54,10 @@ class DialogueParser:
     """
     Contract-compliant DialogueParser for Phase 5 of the pipeline.
 
-    Uses a two-model local architecture:
-    - Semantic model (default: qwen2.5:7b-instruct) for reasoning tasks:
-      chapter summary, character detection, dialogue/thought/narration
-      classification, and speaker attribution.
-    - Formatter model (default: qwen2.5-coder:7b) for structured-output
-      enforcement: repairing malformed JSON from semantic outputs and
-      reformatting into the exact expected schema.
+    Uses a single local model architecture:
+    - qwen2.5-coder:7b is used for summary, character detection,
+      dialogue/thought/narration classification, speaker attribution,
+      and structured-output repair.
 
     Fully compatible with:
       - DialogueParserContract
@@ -72,7 +69,7 @@ class DialogueParser:
     _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
     _DEFAULT_MODEL = "qwen2.5-coder:7b"
     _DEFAULT_SEMANTIC_MODEL = "qwen2.5-coder:7b"
-    _DEFAULT_FALLBACK_MODEL = "qwen2.5:7b-instruct"
+    _DEFAULT_FALLBACK_MODEL = "qwen2.5-coder:7b"
     _DEFAULT_FORMATTER_MODEL = "qwen2.5-coder:7b"
 
     def __init__(
@@ -106,8 +103,9 @@ class DialogueParser:
         # not yet migrated to the two-model API; prefer `semantic_model` in
         # new code.
         resolved_semantic = (semantic_model or model or self._DEFAULT_SEMANTIC_MODEL).strip()
-        resolved_fallback = (fallback_model or self._DEFAULT_FALLBACK_MODEL).strip()
-        resolved_formatter = (formatter_model or self._DEFAULT_FORMATTER_MODEL).strip()
+        # Single-model policy: repair/retry paths use the same coder model.
+        resolved_fallback = resolved_semantic
+        resolved_formatter = resolved_semantic
 
         self.model = resolved_semantic  # backward-compat alias
         self.semantic_model = resolved_semantic

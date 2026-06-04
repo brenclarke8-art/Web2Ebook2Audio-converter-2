@@ -359,6 +359,40 @@ def test_dialogue_segmentation_accepts_single_object_payloads():
     assert result.characters[0]["name"] == "Alice"
 
 
+def test_pass2_singleton_output_rejected_when_multiple_ids_expected():
+    class _SingletonPass2Client:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Alice speaks twice."}
+            if chapter_id.endswith("_p1"):
+                # Single-object pass-1 is normalized safely.
+                return {"name": "Alice", "gender": "female", "confidence": 0.9}
+            if chapter_id.endswith("_p2"):
+                id_lines = json.loads(user)
+                return {"id": id_lines[0]["id"], "type": "dialogue", "speaker": "Alice"}
+            return []
+
+    class _BadRepairClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            # Regression from llm test artifact: fabricated singleton fallback object.
+            if chapter_id.endswith("_p2r"):
+                return {"id": "ch-singleton_L0", "type": "narration", "speaker": "narrator"}
+            return []
+
+    service = DialogueSegmentationService(
+        client=_SingletonPass2Client(),
+        formatter_client=_BadRepairClient(),
+    )
+    result = service.parse(text='"Hello."\n"Bye."', chapter_id="ch-singleton")
+
+    assert result.diagnostics.repair_attempted
+    assert not result.diagnostics.repair_succeeded
+    assert not result.diagnostics.validation_passed
+    assert result.diagnostics.needs_review
+    assert result.diagnostics.fallback_count == 2
+    assert len(result.segments) == 2
+
+
 def test_dialogue_segmentation_accepts_line_mapping_payloads():
     """Pass-2 responses with the legacy line-keyed dict format are handled via _normalize_pass_combined."""
     class _MappingClient:
@@ -393,19 +427,19 @@ def test_dialogue_segmentation_accepts_line_mapping_payloads():
 # ---------------------------------------------------------------------------
 
 
-def test_dialogue_parser_two_model_constructor_defaults():
-    """DialogueParser creates separate semantic and formatter clients by default."""
+def test_dialogue_parser_single_model_constructor_defaults():
+    """DialogueParser defaults all structured tasks to qwen coder."""
     parser = DialogueParser(ollama_url="http://example/api/generate")
     assert parser.client.model == "qwen2.5-coder:7b"
-    assert parser.fallback_client.model == "qwen2.5:7b-instruct"
+    assert parser.fallback_client.model == "qwen2.5-coder:7b"
     assert parser.formatter_client is not None
     assert parser.formatter_client.model == "qwen2.5-coder:7b"
     assert parser.service.fallback_client is parser.fallback_client
     assert parser.service.formatter_client is parser.formatter_client
 
 
-def test_dialogue_parser_two_model_constructor_explicit():
-    """DialogueParser respects explicit semantic/fallback/formatter model arguments."""
+def test_dialogue_parser_single_model_constructor_ignores_separate_fallback_formatter():
+    """DialogueParser keeps fallback/repair on the same semantic model."""
     parser = DialogueParser(
         ollama_url="http://example/api/generate",
         semantic_model="llama3:8b-instruct",
@@ -413,8 +447,8 @@ def test_dialogue_parser_two_model_constructor_explicit():
         formatter_model="codellama:7b",
     )
     assert parser.client.model == "llama3:8b-instruct"
-    assert parser.fallback_client.model == "qwen2.5:3b-instruct"
-    assert parser.formatter_client.model == "codellama:7b"
+    assert parser.fallback_client.model == "llama3:8b-instruct"
+    assert parser.formatter_client.model == "llama3:8b-instruct"
 
 
 def test_formatter_repair_succeeds_when_semantic_output_malformed():
@@ -563,6 +597,26 @@ def test_invalid_ids_rejected_safe_fallback_used():
     assert len(result.segments) >= 1
     # Heuristic speaker should not be "Ghost" (a wrong ID's speaker)
     assert all(s.speaker != "Ghost" for s in result.segments)
+
+
+def test_narrator_speaker_value_normalized_case_insensitively():
+    class _NarratorCaseClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Narration only."}
+            if chapter_id.endswith("_p1"):
+                return []
+            if chapter_id.endswith("_p2"):
+                id_lines = json.loads(user)
+                return [{"id": entry["id"], "type": "narration", "speaker": "Narrator"} for entry in id_lines]
+            return []
+
+    service = DialogueSegmentationService(client=_NarratorCaseClient())
+    result = service.parse(text="A quiet room.", chapter_id="ch-narrator-case")
+
+    assert result.diagnostics.validation_passed
+    assert result.segments[0].type == "narration"
+    assert result.segments[0].speaker == "narrator"
 
 
 def test_fallback_bug_regression_empty_segments_use_original_text(monkeypatch):
