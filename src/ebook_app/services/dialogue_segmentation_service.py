@@ -85,6 +85,11 @@ _DEFAULT_CHUNK_SIZE = 6000
 _DEFAULT_CHUNK_OVERLAP = 500
 # How many recent segments to inspect for overlap deduplication across chunks
 _CHUNK_DEDUP_WINDOW = 15
+_PASS2_UNKNOWN_RATIO_RETRY_THRESHOLD = 0.35
+_PASS1_NAME_HINT_STOP_WORDS = {
+    "chapter", "summary", "context", "from", "previous", "rules", "output", "json",
+    "named", "characters", "setting", "mood", "key", "events", "known", "story",
+}
 
 _CHAPTER_SUMMARY_SYSTEM_PROMPT = """You are a concise chapter-summary assistant for a novel processing pipeline.
 Given a chapter of fiction text, produce a brief summary covering:
@@ -634,6 +639,7 @@ class DialogueSegmentationService:
 
     @staticmethod
     def _extract_known_names(known_characters: list[str | dict[str, Any]]) -> set[str]:
+        """Extract case-insensitive known character names from mixed string/dict payloads."""
         names: set[str] = set()
         for item in known_characters:
             if isinstance(item, str):
@@ -648,15 +654,16 @@ class DialogueSegmentationService:
 
     @staticmethod
     def _estimate_name_hints(pass1_memory_blocks: list[str]) -> int:
+        """Estimate how many named entities appear in pass-1 context memory blocks."""
         text = "\n".join(block for block in pass1_memory_blocks if block)
         if not text:
             return 0
-        stop_words = {
-            "chapter", "summary", "context", "from", "previous", "rules", "output", "json",
-            "named", "characters", "setting", "mood", "key", "events", "known", "story",
-        }
         candidates = re.findall(r"\b[A-Z][a-z]{2,}\b", text)
-        unique = {token.casefold() for token in candidates if token.casefold() not in stop_words}
+        unique = {
+            token.casefold()
+            for token in candidates
+            if token.casefold() not in _PASS1_NAME_HINT_STOP_WORDS
+        }
         return len(unique)
 
     def _should_retry_pass1_with_fallback(
@@ -666,6 +673,7 @@ class DialogueSegmentationService:
         known_characters: list[str | dict[str, Any]],
         pass1_memory_blocks: list[str],
     ) -> bool:
+        """Return True when pass-1 output is empty/weak and context suggests more characters."""
         if not self.fallback_client:
             return False
         if not detected_chars:
@@ -678,6 +686,7 @@ class DialogueSegmentationService:
 
     @staticmethod
     def _is_better_pass1_result(primary: list[dict], candidate: list[dict]) -> bool:
+        """Prefer fallback pass-1 output when it expands weak/empty primary detections."""
         if not candidate:
             return False
         if len(primary) <= 1 and len(candidate) > len(primary):
@@ -686,6 +695,7 @@ class DialogueSegmentationService:
 
     @staticmethod
     def _pass2_quality_metrics(items: list[Any], valid_ids: set[str]) -> tuple[float, float]:
+        """Return (id_coverage_ratio, unknown_speaker_ratio) for pass-2 candidate items."""
         if not valid_ids:
             return 1.0, 0.0
         valid_len = len(valid_ids)
@@ -708,6 +718,7 @@ class DialogueSegmentationService:
         return coverage, unknown_ratio
 
     def _should_retry_pass2_with_fallback(self, *, items: list[Any], valid_ids: set[str]) -> bool:
+        """Retry pass-2 with fallback when coverage is incomplete or unknown speakers are high."""
         if not self.fallback_client:
             return False
         if not items:
@@ -715,7 +726,7 @@ class DialogueSegmentationService:
         if len(valid_ids) > 1 and len(items) <= 1:
             return True
         coverage, unknown_ratio = self._pass2_quality_metrics(items, valid_ids)
-        return coverage < 1.0 or unknown_ratio > 0.35
+        return coverage < 1.0 or unknown_ratio > _PASS2_UNKNOWN_RATIO_RETRY_THRESHOLD
 
     def _is_better_pass2_result(
         self,
@@ -724,6 +735,7 @@ class DialogueSegmentationService:
         fallback_items: list[Any],
         valid_ids: set[str],
     ) -> bool:
+        """Prefer higher ID coverage, then lower unknown ratio, then larger structured output."""
         if not fallback_items:
             return False
         primary_coverage, primary_unknown = self._pass2_quality_metrics(primary_items, valid_ids)
