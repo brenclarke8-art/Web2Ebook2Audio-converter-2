@@ -95,7 +95,14 @@ class DialogueParser:
         # Normalize URL to /api/generate
         self.ollama_url = self._normalize_generate_url(ollama_url or self._DEFAULT_OLLAMA_URL)
 
-        # semantic_model takes precedence over the legacy `model` parameter.
+        # Resolve effective model names.
+        # Precedence (highest → lowest):
+        #   1. semantic_model — explicit new-API parameter
+        #   2. model — legacy backward-compat parameter (still accepted)
+        #   3. _DEFAULT_SEMANTIC_MODEL — built-in default
+        # The legacy `model` parameter is kept for existing callers that have
+        # not yet migrated to the two-model API; prefer `semantic_model` in
+        # new code.
         resolved_semantic = (semantic_model or model or self._DEFAULT_SEMANTIC_MODEL).strip()
         resolved_formatter = (formatter_model or self._DEFAULT_FORMATTER_MODEL).strip()
 

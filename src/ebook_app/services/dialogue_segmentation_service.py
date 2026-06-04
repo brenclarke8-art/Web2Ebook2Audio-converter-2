@@ -443,8 +443,15 @@ class DialogueSegmentationService:
                     merged_diag.validation_passed = False
                 if d.repair_attempted:
                     merged_diag.repair_attempted = True
-                if not d.repair_succeeded and d.repair_attempted:
-                    merged_diag.repair_succeeded = False
+                    # repair_succeeded is True when at least one repair attempt
+                    # succeeded; False when any attempt failed.  Track both so
+                    # the caller can see partial-success scenarios.
+                    if d.repair_succeeded:
+                        merged_diag.repair_succeeded = True
+                    else:
+                        # Only downgrade to False if no earlier chunk succeeded.
+                        if not merged_diag.repair_succeeded:
+                            merged_diag.repair_succeeded = False
                 if d.needs_review:
                     merged_diag.needs_review = True
                 merged_diag.fallback_count += d.fallback_count
