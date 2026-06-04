@@ -54,6 +54,14 @@ class DialogueParser:
     """
     Contract-compliant DialogueParser for Phase 5 of the pipeline.
 
+    Uses a two-model local architecture:
+    - Semantic model (default: qwen2.5:7b-instruct) for reasoning tasks:
+      chapter summary, character detection, dialogue/thought/narration
+      classification, and speaker attribution.
+    - Formatter model (default: qwen2.5-coder:7b) for structured-output
+      enforcement: repairing malformed JSON from semantic outputs and
+      reformatting into the exact expected schema.
+
     Fully compatible with:
       - DialogueParserContract
       - SegmentLike
@@ -62,13 +70,17 @@ class DialogueParser:
     """
 
     _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-    _DEFAULT_MODEL = "mistral:instruct"
+    _DEFAULT_MODEL = "qwen2.5:7b-instruct"
+    _DEFAULT_SEMANTIC_MODEL = "qwen2.5:7b-instruct"
+    _DEFAULT_FORMATTER_MODEL = "qwen2.5-coder:7b"
 
     def __init__(
         self,
         *,
         ollama_url: str | None = None,
         model: str | None = None,
+        semantic_model: str | None = None,
+        formatter_model: str | None = None,
         timeout_s: int = 300,
         retries: int = 1,
         llm_mode: str = "full",
@@ -83,7 +95,13 @@ class DialogueParser:
         # Normalize URL to /api/generate
         self.ollama_url = self._normalize_generate_url(ollama_url or self._DEFAULT_OLLAMA_URL)
 
-        self.model = (model or self._DEFAULT_MODEL).strip()
+        # semantic_model takes precedence over the legacy `model` parameter.
+        resolved_semantic = (semantic_model or model or self._DEFAULT_SEMANTIC_MODEL).strip()
+        resolved_formatter = (formatter_model or self._DEFAULT_FORMATTER_MODEL).strip()
+
+        self.model = resolved_semantic  # backward-compat alias
+        self.semantic_model = resolved_semantic
+        self.formatter_model = resolved_formatter
         self.timeout_s = int(timeout_s)
         self.retries = max(0, int(retries))
         self.llm_mode = (llm_mode or "full").strip().lower()
@@ -93,9 +111,18 @@ class DialogueParser:
         self.llm_chunk_size = max(1000, int(llm_chunk_size))
         self.llm_chunk_overlap = max(0, int(llm_chunk_overlap))
 
-        # LLM client + segmentation service
+        # Semantic client — handles summary, character detection, and attribution
         self.client = OllamaChatClient(
-            model=self.model,
+            model=self.semantic_model,
+            url=self.ollama_url,
+            timeout_s=self.timeout_s,
+            retries=self.retries,
+            log_path=llm_log_path,
+        )
+
+        # Formatter client — handles JSON repair and schema enforcement only
+        self.formatter_client = OllamaChatClient(
+            model=self.formatter_model,
             url=self.ollama_url,
             timeout_s=self.timeout_s,
             retries=self.retries,
@@ -104,6 +131,7 @@ class DialogueParser:
 
         self.service = DialogueSegmentationService(
             client=self.client,
+            formatter_client=self.formatter_client,
             strict_quotes=self.llm_strict_quotes,
         )
 
@@ -186,6 +214,7 @@ class DialogueParser:
             raw_segments=raw_segments,
             chapter_id=chapter_id,
             gender_map=gender_map,
+            fallback_text=text,
         )
 
         # Convert raw characters → DetectedCharacter objects
@@ -209,6 +238,7 @@ class DialogueParser:
         raw_segments: list[Any],
         chapter_id: str,
         gender_map: dict[str, str],
+        fallback_text: str = "",
     ) -> List[Segment]:
 
         segments: List[Segment] = []
@@ -253,9 +283,10 @@ class DialogueParser:
                 )
             )
 
-        # Fallback if LLM produced nothing
+        # Fallback if LLM produced nothing — use the original chapter text,
+        # not the loop variable which may be empty or refer to the last item.
         if not segments:
-            clean = self.service.clean_text_for_llm(text_val)
+            clean = self.service.clean_text_for_llm(fallback_text)
             return [self._fallback_segment(clean, chapter_id, 0)]
 
         return segments
