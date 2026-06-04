@@ -128,10 +128,12 @@ class DialogueParser:
         Args:
             text: Chapter text to parse.
             chapter_id: Stable identifier for this chapter (e.g. ``"ch001"``).
+            manual_segment_hints: User-approved speaker corrections forwarded
+                verbatim into the LLM prompt as authoritative ground truth.
             story_context_block: Optional pre-formatted story-context string
                 produced by ``StoryContext.to_prompt_block()``.  When provided,
-                it is prepended to the user message sent to the LLM so the
-                model can maintain continuity across chapters.
+                it is prepended to the system prompt so the model can maintain
+                continuity across chapters.
         """
 
         # LLM disabled → fallback
@@ -140,20 +142,19 @@ class DialogueParser:
             seg = self._fallback_segment(clean, chapter_id, 0)
             return DialogueParseResult(segments=[seg], detected_characters=[])
 
-        # Call segmentation service — use chunked path for long chapters
+        # Route through the canonical segmentation service, which handles
+        # known-character context, manual hints, story context, and chunking.
+        known_chars = self._known_characters_for_llm()
         try:
-            # Clean text first (removes UI noise, collapses whitespace)
-            clean = self.service.clean_text_for_llm(text)
-            if len(clean) > self.llm_chunk_size:
-                raw_dict = self.client.parse_chapter_chunked(
-                    clean, chapter_id, memory=self.character_db,
-                    max_chars=self.llm_chunk_size, overlap=self.llm_chunk_overlap,
-                )
-            else:
-                raw_dict = self.client.parse_chapter(
-                    clean, chapter_id, memory=self.character_db
-                )
-            result = self.service._normalize_payload(raw_dict, source_text=clean)
+            result = self.service.parse(
+                text=text,
+                chapter_id=chapter_id,
+                known_characters=known_chars,
+                manual_segment_hints=manual_segment_hints,
+                story_context_block=story_context_block,
+                chunk_size=self.llm_chunk_size,
+                chunk_overlap=self.llm_chunk_overlap,
+            )
         except Exception as exc:
             logger.error("LLM chapter parse failed: %s", exc)
             clean = self.service.clean_text_for_llm(text)

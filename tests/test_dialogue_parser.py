@@ -169,13 +169,13 @@ def test_dialogue_parser_canonicalizes_detected_and_segment_speakers(tmp_path, m
     )
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct", character_db=db)
 
-    def _fake_parse_chapter(text, chapter_id, memory=None):
+    def _fake_ask_json(*, system, user, chapter_id):
         return {
             "segments": [{"text": '"Hello."', "type": "dialogue", "speaker": "Lady Alice."}],
             "characters": [{"name": " lady alice ", "gender": "unknown", "confidence": 0.7}],
         }
 
-    monkeypatch.setattr(parser.client, "parse_chapter", _fake_parse_chapter)
+    monkeypatch.setattr(parser.client, "ask_json", _fake_ask_json)
     result = parser.parse("Lady Alice spoke.", chapter_id="ch-canonical")
 
     assert result.segments[0].speaker == "Alice"
@@ -237,13 +237,13 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
 def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
 
-    def _fake_parse_chapter(text, chapter_id, memory=None):
+    def _fake_ask_json(*, system, user, chapter_id):
         return {
             "segments": [{"text": '"Hello."', "type": "dialogue", "speaker": "Unknown"}],
             "characters": [],
         }
 
-    monkeypatch.setattr(parser.client, "parse_chapter", _fake_parse_chapter)
+    monkeypatch.setattr(parser.client, "ask_json", _fake_ask_json)
     result = parser.parse("Someone spoke.", chapter_id="ch-unknown")
 
     assert result.segments[0].speaker == "unknown"
