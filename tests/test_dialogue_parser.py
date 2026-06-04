@@ -30,12 +30,12 @@ class _CaptureClient:
 
 def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
-    pass1_payload = [{"line": '"Hello there."', "type": "dialogue"}]
-    pass2_payload = [{"line": '"Hello there."', "speaker": "Alice", "Confidence": "0.91"}]
+    pass1_payload = [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+    pass2_payload = [{"line": '"Hello there."', "type": "dialogue", "speaker": "Alice"}]
 
     def _fake_post(*_args, **kwargs):
         prompt = kwargs.get("json", {}).get("prompt", "")
-        payload = pass1_payload if "PASS 1" in prompt else pass2_payload
+        payload = pass1_payload if "CHARACTER DETECTION" in prompt else pass2_payload
         return _DummyResponse({"response": json.dumps(payload)})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
@@ -105,15 +105,15 @@ def test_dialogue_parser_falls_back_on_invalid_output(monkeypatch):
 def test_dialogue_parser_accepts_markdown_wrapped_json(monkeypatch):
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
     wrapped_pass1 = """```json
-[{"line":"\\"Hi\\"","type":"dialogue"}]
+[{"name":"Alice","gender":"female","confidence":0.9}]
 ```"""
     wrapped_pass2 = """```json
-[{"line":"\\"Hi\\"","speaker":"Alice","Confidence":"0.92"}]
+[{"line":"\\"Hi\\"","type":"dialogue","speaker":"Alice"}]
 ```"""
 
     def _fake_post(*_args, **kwargs):
         prompt = kwargs.get("json", {}).get("prompt", "")
-        wrapped = wrapped_pass1 if "PASS 1" in prompt else wrapped_pass2
+        wrapped = wrapped_pass1 if "CHARACTER DETECTION" in prompt else wrapped_pass2
         return _DummyResponse({"response": wrapped})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
@@ -126,12 +126,12 @@ def test_dialogue_parser_accepts_markdown_wrapped_json(monkeypatch):
 
 def test_dialogue_parser_preserves_character_objects(monkeypatch):
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
-    pass1_payload = [{"line": '"Hello."', "type": "dialogue"}]
-    pass2_payload = [{"line": '"Hello."', "speaker": "Alice", "Confidence": "0.91"}]
+    pass1_payload = [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+    pass2_payload = [{"line": '"Hello."', "type": "dialogue", "speaker": "Alice"}]
 
     def _fake_post(*_args, **kwargs):
         prompt = kwargs.get("json", {}).get("prompt", "")
-        payload = pass1_payload if "PASS 1" in prompt else pass2_payload
+        payload = pass1_payload if "CHARACTER DETECTION" in prompt else pass2_payload
         return _DummyResponse({"response": json.dumps(payload)})
 
     monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
@@ -170,9 +170,9 @@ def test_dialogue_parser_canonicalizes_detected_and_segment_speakers(tmp_path, m
 
     def _fake_ask_json_any(*, system, user, chapter_id):
         if chapter_id.endswith("_p1"):
-            return [{"line": '"Hello."', "type": "dialogue"}]
+            return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
         if chapter_id.endswith("_p2"):
-            return [{"line": '"Hello."', "speaker": "Lady Alice.", "Confidence": "0.7"}]
+            return [{"line": '"Hello."', "type": "dialogue", "speaker": "Lady Alice."}]
         return []
 
     monkeypatch.setattr(parser.client, "ask_json_any", _fake_ask_json_any)
@@ -216,8 +216,9 @@ def test_dialogue_segmentation_service_injects_structured_known_character_contex
     )
 
     assert client.calls
+    # Pass 1 (character detection) should include known character context
     system_text = client.calls[0]["system"]
-    assert "PASS 1 — Line Classification" in system_text
+    assert "CHARACTER DETECTION" in system_text
     assert "CONTEXT (from previous chapters):" in system_text
     assert "KNOWN CHARACTER CONTEXT (canonical names):" in system_text
     assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in system_text
@@ -229,11 +230,15 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
     service.parse(text="Story text.", chapter_id="ch-prompt")
 
     assert client.calls
-    system_text = client.calls[0]["system"]
-    assert system_text.startswith("You are a deterministic text-analysis engine.")
-    assert "PASS 1 — Line Classification" in system_text
-    assert '[{ "line": "...", "type": "dialogue|thought|narration" }]' in system_text
-    assert '"characters": [' not in system_text
+    # Pass 1: character detection prompt
+    pass1_system = client.calls[0]["system"]
+    assert pass1_system.startswith("You are a deterministic character-extraction engine.")
+    assert "CHARACTER DETECTION" in pass1_system
+    assert '[{ "name": "...", "gender": "male|female|unknown", "confidence": 0.0-1.0 }]' in pass1_system
+    # Pass 2: segment + attribute prompt
+    pass2_system = client.calls[1]["system"]
+    assert "SEGMENT AND ATTRIBUTE" in pass2_system
+    assert '[{ "line": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator" }]' in pass2_system
 
 
 def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
@@ -241,9 +246,9 @@ def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
 
     def _fake_ask_json_any(*, system, user, chapter_id):
         if chapter_id.endswith("_p1"):
-            return [{"line": '"Hello."', "type": "dialogue"}]
+            return []  # no characters detected
         if chapter_id.endswith("_p2"):
-            return [{"line": '"Hello."', "speaker": "Unknown", "Confidence": "0.3"}]
+            return [{"line": '"Hello."', "type": "dialogue", "speaker": "Unknown"}]
         return []
 
     monkeypatch.setattr(parser.client, "ask_json_any", _fake_ask_json_any)
@@ -256,9 +261,11 @@ def test_dialogue_segmentation_accepts_single_object_payloads():
     class _SingleObjectClient:
         def ask_json_any(self, *, system, user, chapter_id):
             if chapter_id.endswith("_p1"):
-                return {"line": '"Hello there."', "type": "dialogue"}
+                # Pass 1: single character detection object
+                return {"name": "Alice", "gender": "female", "confidence": 0.9}
             if chapter_id.endswith("_p2"):
-                return {"line": '"Hello there."', "speaker": "Alice", "Confidence": "0.92"}
+                # Pass 2: single combined segment object
+                return {"line": '"Hello there."', "type": "dialogue", "speaker": "Alice"}
             return []
 
     service = DialogueSegmentationService(client=_SingleObjectClient())
@@ -273,13 +280,12 @@ def test_dialogue_segmentation_accepts_line_mapping_payloads():
     class _MappingClient:
         def ask_json_any(self, *, system, user, chapter_id):
             if chapter_id.endswith("_p1"):
-                return {
-                    '"Hello there."': "dialogue",
-                    "A narration line.": "narration",
-                }
+                return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
             if chapter_id.endswith("_p2"):
+                # Pass 2 combined: line → {type, speaker}
                 return {
-                    '"Hello there."': {"speaker": "Alice", "confidence": 0.88},
+                    '"Hello there."': {"type": "dialogue", "speaker": "Alice"},
+                    "A narration line.": {"type": "narration", "speaker": "narrator"},
                 }
             return []
 

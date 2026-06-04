@@ -250,17 +250,16 @@ def test_service_truncates_long_chapter_text():
 
 
 def test_segmentation_service_receives_story_context(monkeypatch):
-    """Story context block should be inserted into the system prompt memory section."""
+    """Story context block should be inserted into pass-1 (character detection) system prompt."""
     from ebook_app.services.dialogue_segmentation_service import (
         DialogueSegmentationService,
     )
 
-    captured: dict = {}
+    calls: list[dict] = []
 
     class _CapClient:
         def ask_json(self, *, system, user, chapter_id):
-            captured["system"] = system
-            captured["user"] = user
+            calls.append({"system": system, "user": user, "chapter_id": chapter_id})
             return {"segments": [], "characters": []}
 
     svc = DialogueSegmentationService(client=_CapClient())
@@ -270,8 +269,13 @@ def test_segmentation_service_receives_story_context(monkeypatch):
         chapter_id="ch002",
         story_context_block=ctx_block,
     )
-    assert ctx_block in captured["system"]
-    assert "Alice arrived at the castle." in captured["user"]
+    # Story context feeds pass 1 (character detection) only
+    pass1_call = next(c for c in calls if c["chapter_id"].endswith("_p1"))
+    assert ctx_block in pass1_call["system"]
+    assert "Alice arrived at the castle." in pass1_call["user"]
+    # Pass 2 (segment + attribute) must NOT receive the story context
+    pass2_call = next(c for c in calls if c["chapter_id"].endswith("_p2"))
+    assert ctx_block not in pass2_call["system"]
 
 
 def test_segmentation_service_no_story_context_unchanged(monkeypatch):
