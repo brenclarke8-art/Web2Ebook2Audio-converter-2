@@ -207,13 +207,24 @@ class DialogueSegmentationService:
         known_chars = known_characters or []
         known_context = self._format_known_character_context(known_chars)
         hint_prefix = self._format_manual_segment_hints(manual_segment_hints or [])
-        # Pass 0 (chapter summary): summarise the chapter text; used as pass-1 context
-        summary_block = self._summarize_chapter(text=cleaned, chapter_id=chapter_id)
+        is_chunked_parse = len(cleaned) > chunk_size
+        # Pass 0 (chapter summary): summarise text used as pass-1 context.
+        # For long chapters, summarize per chunk so raw full-chapter text is never
+        # sent to the model in a single request.
+        if is_chunked_parse:
+            summary_block = self._summarize_chapter_chunked(
+                text=cleaned,
+                chapter_id=chapter_id,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+        else:
+            summary_block = self._summarize_chapter(text=cleaned, chapter_id=chapter_id)
         # Pass 1 (character detection) receives: chapter summary + story context + known characters
         pass1_memory_blocks = [block for block in (summary_block, story_context_block, known_context) if block]
 
         # Route long chapters through the chunked path
-        if len(cleaned) > chunk_size:
+        if is_chunked_parse:
             result = self._parse_chunked(
                 text=cleaned,
                 known_characters=known_chars,
@@ -543,6 +554,35 @@ class DialogueSegmentationService:
         cleaned = re.sub(r"[ \t]+", " ", cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
         return cleaned or source
+
+    def _summarize_chapter_chunked(
+        self,
+        *,
+        text: str,
+        chapter_id: str,
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> str:
+        """Build chapter summary context from chunk-level summaries."""
+        chunks = self._chunk_text(text, chunk_size, chunk_overlap)
+        if not chunks:
+            return ""
+
+        chunk_summaries: list[str] = []
+        for i, chunk in enumerate(chunks):
+            block = self._summarize_chapter(text=chunk, chapter_id=f"{chapter_id}_c{i}")
+            if not block:
+                continue
+            summary = block
+            if summary.startswith("CHAPTER SUMMARY:\n"):
+                summary = summary[len("CHAPTER SUMMARY:\n"):]
+            summary = summary.strip()
+            if summary:
+                chunk_summaries.append(f"Chunk {i + 1}: {summary}")
+
+        if not chunk_summaries:
+            return ""
+        return "CHAPTER SUMMARY:\n" + "\n".join(chunk_summaries)
 
     def _build_result_from_combined(
         self,

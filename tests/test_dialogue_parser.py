@@ -314,6 +314,50 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
     assert '[{"id": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator"}]' in pass2_system
 
 
+def test_dialogue_segmentation_long_text_is_chunked_before_llm_calls():
+    class _ChunkCaptureClient:
+        def __init__(self):
+            self.calls: list[dict[str, str]] = []
+
+        def ask_json_any(self, *, system, user, chapter_id):
+            self.calls.append({"system": system, "user": user, "chapter_id": chapter_id})
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Alice talks."}
+            if chapter_id.endswith("_p1"):
+                return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+            if chapter_id.endswith("_p2"):
+                try:
+                    id_lines = json.loads(user) if isinstance(user, str) else user
+                except json.JSONDecodeError:
+                    id_lines = []
+                return [{"id": entry["id"], "type": "dialogue", "speaker": "Alice"} for entry in id_lines]
+            return []
+
+    client = _ChunkCaptureClient()
+    service = DialogueSegmentationService(client=client)
+    long_text = "\n".join(f'"Line {i}."' for i in range(1, 61))
+
+    chunk_size = 120
+    result = service.parse(
+        text=long_text,
+        chapter_id="ch-chunked",
+        chunk_size=chunk_size,
+        chunk_overlap=20,
+    )
+
+    pass0_calls = [c for c in client.calls if c["chapter_id"].endswith("_p0")]
+    pass1_calls = [c for c in client.calls if c["chapter_id"].endswith("_p1")]
+    pass2_calls = [c for c in client.calls if c["chapter_id"].endswith("_p2")]
+
+    assert len(pass0_calls) > 1
+    assert len(pass1_calls) > 1
+    assert len(pass2_calls) > 1
+    assert all(len(call["user"]) <= chunk_size for call in pass0_calls)
+    assert all(len(call["user"]) <= chunk_size for call in pass1_calls)
+    assert all(call["user"] != long_text for call in pass0_calls)
+    assert all(call["user"] != long_text for call in pass1_calls)
+    assert result.segments
+
 def test_dialogue_parser_normalizes_capitalized_unknown_speaker(monkeypatch):
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
 
