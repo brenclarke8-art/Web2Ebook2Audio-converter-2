@@ -197,6 +197,7 @@ class DialogueSegmentationService:
 
         dialogue_lines = [item["line"] for item in classified if item["type"] == "dialogue"]
         attributions: dict[str, deque[tuple[str, float]]] = {}
+        attribution_fallback: deque[tuple[str, float]] = deque()
         if dialogue_lines:
             pass2_system = self._build_pass_prompt(_PASS2_SYSTEM_PROMPT_PREFIX, memory_blocks)
             dialogue_block = "\n".join(f"- {line}" for line in dialogue_lines)
@@ -216,9 +217,9 @@ class DialogueSegmentationService:
                 user=pass2_user,
                 chapter_id=f"{chapter_id}_p2",
             )
-            attributions = self._normalize_pass2(pass2_raw)
+            attributions, attribution_fallback = self._normalize_pass2(pass2_raw)
 
-        return self._build_final_result(classified, attributions)
+        return self._build_final_result(classified, attributions, attribution_fallback)
 
     @staticmethod
     def _chunk_text(text: str, max_chars: int, overlap: int) -> list[str]:
@@ -303,6 +304,7 @@ class DialogueSegmentationService:
         self,
         classified: list[dict[str, str]],
         attributions: dict[str, deque[tuple[str, float]]],
+        attribution_fallback: deque[tuple[str, float]],
     ) -> DialogueLLMResult:
         segments: list[DialogueLLMSegment] = []
         character_best_conf: dict[str, float] = {}
@@ -317,6 +319,8 @@ class DialogueSegmentationService:
                 attribution_queue = attributions.get(line)
                 if attribution_queue:
                     speaker, speaker_conf = attribution_queue.popleft()
+                elif attribution_fallback:
+                    speaker, speaker_conf = attribution_fallback.popleft()
                 if not speaker:
                     speaker = "Unknown"
                     speaker_conf = 0.0
@@ -364,6 +368,7 @@ class DialogueSegmentationService:
     ) -> list[dict[str, str]]:
         items = self._coerce_list_payload(payload)
         by_line: dict[str, deque[str]] = {}
+        positional_types: deque[str] = deque()
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -371,21 +376,28 @@ class DialogueSegmentationService:
             if not line:
                 continue
             seg_type = self._normalize_segment_type(item.get("type"))
+            positional_types.append(seg_type)
             by_line.setdefault(line, deque()).append(seg_type)
 
         classified: list[dict[str, str]] = []
         for line in source_lines:
             queue = by_line.get(line)
-            seg_type = queue.popleft() if queue else self._fallback_line_type(line)
+            if queue:
+                seg_type = queue.popleft()
+            elif positional_types:
+                seg_type = positional_types.popleft()
+            else:
+                seg_type = self._fallback_line_type(line)
             classified.append({"line": line, "type": seg_type})
         return classified
 
     def _normalize_pass2(
         self,
         payload: Any,
-    ) -> dict[str, deque[tuple[str, float]]]:
+    ) -> tuple[dict[str, deque[tuple[str, float]]], deque[tuple[str, float]]]:
         items = self._coerce_list_payload(payload)
         by_line: dict[str, deque[tuple[str, float]]] = {}
+        positional_attrs: deque[tuple[str, float]] = deque()
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -394,8 +406,9 @@ class DialogueSegmentationService:
                 continue
             speaker = str(item.get("speaker", "Unknown")).strip() or "Unknown"
             confidence = self._clamp_confidence(item.get("Confidence", item.get("confidence", 0.0)))
+            positional_attrs.append((speaker, confidence))
             by_line.setdefault(line, deque()).append((speaker, confidence))
-        return by_line
+        return by_line, positional_attrs
 
     @staticmethod
     def _clamp_confidence(raw_value: Any) -> float:
