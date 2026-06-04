@@ -367,6 +367,19 @@ class DialogueSegmentationService:
         source_lines: list[str],
     ) -> list[dict[str, str]]:
         items = self._coerce_list_payload(payload)
+        if not items and isinstance(payload, dict):
+            for line, value in payload.items():
+                if not isinstance(line, str):
+                    continue
+                line_text = line.strip()
+                if not line_text:
+                    continue
+                if isinstance(value, str):
+                    items.append({"line": line_text, "type": value})
+                elif isinstance(value, dict):
+                    seg_type = value.get("type") or value.get("label") or value.get("classification")
+                    if seg_type is not None:
+                        items.append({"line": line_text, "type": seg_type})
         by_line: dict[str, deque[str]] = {}
         positional_types: deque[str] = deque()
         for item in items:
@@ -396,6 +409,25 @@ class DialogueSegmentationService:
         payload: Any,
     ) -> tuple[dict[str, deque[tuple[str, float]]], deque[tuple[str, float]]]:
         items = self._coerce_list_payload(payload)
+        if not items and isinstance(payload, dict):
+            for line, value in payload.items():
+                if not isinstance(line, str):
+                    continue
+                line_text = line.strip()
+                if not line_text:
+                    continue
+                if isinstance(value, str):
+                    items.append({"line": line_text, "speaker": value})
+                elif isinstance(value, dict):
+                    speaker = value.get("speaker") or value.get("name") or value.get("character")
+                    if speaker is None:
+                        continue
+                    item = {"line": line_text, "speaker": speaker}
+                    if "Confidence" in value:
+                        item["Confidence"] = value["Confidence"]
+                    elif "confidence" in value:
+                        item["confidence"] = value["confidence"]
+                    items.append(item)
         by_line: dict[str, deque[tuple[str, float]]] = {}
         positional_attrs: deque[tuple[str, float]] = deque()
         for item in items:
@@ -427,6 +459,8 @@ class DialogueSegmentationService:
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
+            if "line" in payload:
+                return [payload]
             for key in ("items", "lines", "results", "data"):
                 value = payload.get(key)
                 if isinstance(value, list):
