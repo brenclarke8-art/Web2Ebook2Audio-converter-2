@@ -396,20 +396,24 @@ def test_dialogue_segmentation_accepts_line_mapping_payloads():
 def test_dialogue_parser_two_model_constructor_defaults():
     """DialogueParser creates separate semantic and formatter clients by default."""
     parser = DialogueParser(ollama_url="http://example/api/generate")
-    assert parser.client.model == "qwen2.5:7b-instruct"
+    assert parser.client.model == "qwen2.5-coder:7b"
+    assert parser.fallback_client.model == "qwen2.5:7b-instruct"
     assert parser.formatter_client is not None
     assert parser.formatter_client.model == "qwen2.5-coder:7b"
+    assert parser.service.fallback_client is parser.fallback_client
     assert parser.service.formatter_client is parser.formatter_client
 
 
 def test_dialogue_parser_two_model_constructor_explicit():
-    """DialogueParser respects explicit semantic_model and formatter_model arguments."""
+    """DialogueParser respects explicit semantic/fallback/formatter model arguments."""
     parser = DialogueParser(
         ollama_url="http://example/api/generate",
         semantic_model="llama3:8b-instruct",
+        fallback_model="qwen2.5:3b-instruct",
         formatter_model="codellama:7b",
     )
     assert parser.client.model == "llama3:8b-instruct"
+    assert parser.fallback_client.model == "qwen2.5:3b-instruct"
     assert parser.formatter_client.model == "codellama:7b"
 
 
@@ -453,6 +457,81 @@ def test_formatter_repair_succeeds_when_semantic_output_malformed():
     assert result.diagnostics.validation_passed
     assert result.segments[0].type == "dialogue"
     assert result.segments[0].speaker == "Bob"
+
+
+def test_pass1_uses_fallback_when_primary_is_suspiciously_weak():
+    class _PrimaryClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Alice and Bob argue in the hall while Carol listens."}
+            if chapter_id.endswith("_p1"):
+                return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+            if chapter_id.endswith("_p2"):
+                id_lines = json.loads(user) if isinstance(user, str) else user
+                return [{"id": entry["id"], "type": "dialogue", "speaker": "Alice"} for entry in id_lines]
+            return []
+
+    class _Pass1FallbackClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p1f"):
+                return [
+                    {"name": "Alice", "gender": "female", "confidence": 0.9},
+                    {"name": "Bob", "gender": "male", "confidence": 0.85},
+                ]
+            return []
+
+    service = DialogueSegmentationService(
+        client=_PrimaryClient(),
+        fallback_client=_Pass1FallbackClient(),
+    )
+    result = service.parse(text='"Hello."\n"Go away."', chapter_id="ch-pass1-fallback")
+
+    assert result.diagnostics.pass1_fallback_attempted
+    assert result.diagnostics.pass1_fallback_used
+    assert {c["name"] for c in result.characters} >= {"Alice", "Bob"}
+
+
+def test_pass2_fallback_runs_before_formatter_repair():
+    class _PrimaryClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Test."}
+            if chapter_id.endswith("_p1"):
+                return []
+            if chapter_id.endswith("_p2"):
+                # Invalid coverage from primary
+                id_lines = json.loads(user)
+                return {"id": id_lines[0]["id"], "type": "dialogue", "speaker": "Unknown"}
+            return []
+
+    class _FallbackClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p2f"):
+                id_lines = json.loads(user)
+                return [{"id": entry["id"], "type": "dialogue", "speaker": "Alice"} for entry in id_lines]
+            return []
+
+    class _FormatterClient:
+        def __init__(self):
+            self.called = False
+
+        def ask_json_any(self, *, system, user, chapter_id):
+            self.called = True
+            return []
+
+    formatter = _FormatterClient()
+    service = DialogueSegmentationService(
+        client=_PrimaryClient(),
+        fallback_client=_FallbackClient(),
+        formatter_client=formatter,
+    )
+    result = service.parse(text='"Hello."\n"Bye."', chapter_id="ch-pass2-fallback")
+
+    assert result.diagnostics.pass2_fallback_attempted
+    assert result.diagnostics.pass2_fallback_used
+    assert not result.diagnostics.repair_attempted
+    assert not formatter.called
+    assert all(s.speaker == "Alice" for s in result.segments)
 
 
 def test_invalid_ids_rejected_safe_fallback_used():
@@ -558,4 +637,3 @@ def test_repair_failure_falls_back_safely():
     # Heuristic fallback still produces output
     assert len(result.segments) >= 1
     assert all(s.speaker != "Ghost" for s in result.segments)
-
