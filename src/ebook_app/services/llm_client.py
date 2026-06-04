@@ -90,6 +90,10 @@ class OllamaChatClient:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def ask_json(self, *, system: str, user: str | dict[str, Any], chapter_id: str = "ch") -> dict[str, Any]:
+        parsed = self.ask_json_any(system=system, user=user, chapter_id=chapter_id)
+        return parsed if isinstance(parsed, dict) else {}
+
+    def ask_json_any(self, *, system: str, user: str | dict[str, Any], chapter_id: str = "ch") -> Any:
         if self.disabled:
             return {}
 
@@ -112,7 +116,7 @@ class OllamaChatClient:
                 response.raise_for_status()
                 body = response.json()
                 content = body.get("response", "")
-                parsed = self._parse_json_content(content)
+                parsed = self._parse_json_content_any(content)
                 elapsed = time.perf_counter() - start
                 self._write_log_entry(
                     chapter_id=chapter_id,
@@ -143,12 +147,19 @@ class OllamaChatClient:
 
     @staticmethod
     def _parse_json_content(content: str) -> dict[str, Any]:
+        parsed = OllamaChatClient._parse_json_content_any(content)
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _parse_json_content_any(content: str) -> Any:
         if not content:
             return {}
         raw = content.strip()
         try:
             parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else {}
+            if isinstance(parsed, (dict, list)):
+                return parsed
+            return {}
         except json.JSONDecodeError:
             pass
 
@@ -157,7 +168,7 @@ class OllamaChatClient:
                 parsed = json.loads(candidate)
             except json.JSONDecodeError:
                 continue
-            if isinstance(parsed, dict):
+            if isinstance(parsed, (dict, list)):
                 return parsed
         return {}
 
@@ -221,7 +232,7 @@ class OllamaChatClient:
         request: dict[str, Any],
         response_status: int | None = None,
         response_raw: str | None = None,
-        response_parsed: dict[str, Any] | None = None,
+        response_parsed: Any | None = None,
         elapsed: float | None = None,
         error: str | None = None,
     ) -> None:
