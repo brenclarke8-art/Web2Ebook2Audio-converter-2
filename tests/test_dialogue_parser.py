@@ -216,8 +216,9 @@ def test_dialogue_segmentation_service_injects_structured_known_character_contex
     )
 
     assert client.calls
-    # Pass 1 (character detection) should include known character context
-    system_text = client.calls[0]["system"]
+    # Pass 0 is the new chapter summary call; pass 1 (character detection) is now calls[1]
+    assert len(client.calls) >= 2
+    system_text = client.calls[1]["system"]
     assert "CHARACTER DETECTION" in system_text
     assert "CONTEXT (from previous chapters):" in system_text
     assert "KNOWN CHARACTER CONTEXT (canonical names):" in system_text
@@ -230,13 +231,18 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
     service.parse(text="Story text.", chapter_id="ch-prompt")
 
     assert client.calls
+    # Pass 0 is the chapter summary call; pass 1 and pass 2 follow
+    assert len(client.calls) >= 3
+    # Pass 0: chapter summary prompt
+    pass0_system = client.calls[0]["system"]
+    assert "chapter-summary assistant" in pass0_system
     # Pass 1: character detection prompt
-    pass1_system = client.calls[0]["system"]
+    pass1_system = client.calls[1]["system"]
     assert pass1_system.startswith("You are a deterministic character-extraction engine.")
     assert "CHARACTER DETECTION" in pass1_system
     assert '[{ "name": "...", "gender": "male|female|unknown", "confidence": 0.0-1.0 }]' in pass1_system
     # Pass 2: segment + attribute prompt
-    pass2_system = client.calls[1]["system"]
+    pass2_system = client.calls[2]["system"]
     assert "SEGMENT AND ATTRIBUTE" in pass2_system
     assert '[{ "line": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator" }]' in pass2_system
 

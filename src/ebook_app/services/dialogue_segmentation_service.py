@@ -66,6 +66,21 @@ _DEFAULT_CHUNK_OVERLAP = 500
 # How many recent segments to inspect for overlap deduplication across chunks
 _CHUNK_DEDUP_WINDOW = 15
 
+_CHAPTER_SUMMARY_SYSTEM_PROMPT = """You are a concise chapter-summary assistant for a novel processing pipeline.
+Given a chapter of fiction text, produce a brief summary covering:
+- Named characters who appear and their roles
+- Key events and actions
+- Setting, mood, and important continuity details
+
+Output ONLY valid JSON:
+{"summary": "..."}
+
+Rules:
+- summary must be 2-4 sentences, under 200 words.
+- Do NOT invent details not present in the text.
+- Return ONLY the JSON object — no markdown fences, no extra keys.
+"""
+
 
 @dataclass
 class DialogueLLMSegment:
@@ -132,8 +147,10 @@ class DialogueSegmentationService:
         known_chars = known_characters or []
         known_context = self._format_known_character_context(known_chars)
         hint_prefix = self._format_manual_segment_hints(manual_segment_hints or [])
-        # Pass 1 (character detection) receives: story context + known characters
-        pass1_memory_blocks = [block for block in (story_context_block, known_context) if block]
+        # Pass 0 (chapter summary): summarise the chapter text; used as pass-1 context
+        summary_block = self._summarize_chapter(text=cleaned, chapter_id=chapter_id)
+        # Pass 1 (character detection) receives: chapter summary + story context + known characters
+        pass1_memory_blocks = [block for block in (summary_block, story_context_block, known_context) if block]
 
         # Route long chapters through the chunked path
         if len(cleaned) > chunk_size:
@@ -531,6 +548,34 @@ class DialogueSegmentationService:
                 if isinstance(value, list):
                     return value
         return []
+
+    def _summarize_chapter(self, *, text: str, chapter_id: str) -> str:
+        """Pass 0: Ask the LLM to summarise the chapter for use as pass-1 context.
+
+        Returns a formatted context block string, or an empty string if the call
+        fails or the LLM returns no usable summary.
+        """
+        try:
+            raw = self._ask_json_any(
+                system=_CHAPTER_SUMMARY_SYSTEM_PROMPT,
+                user=text,
+                chapter_id=f"{chapter_id}_p0",
+            )
+            if isinstance(raw, dict):
+                summary = str(raw.get("summary", "")).strip()
+            elif isinstance(raw, str):
+                summary = raw.strip()
+            else:
+                return ""
+            if summary:
+                return f"CHAPTER SUMMARY:\n{summary}"
+        except Exception:
+            logger.warning(
+                "Chapter summary (pass 0) failed for %s — continuing without.",
+                chapter_id,
+                exc_info=True,
+            )
+        return ""
 
     def _ask_json_any(self, *, system: str, user: str, chapter_id: str) -> Any:
         ask_json_any = getattr(self.client, "ask_json_any", None)
