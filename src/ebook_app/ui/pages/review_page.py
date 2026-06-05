@@ -1,23 +1,24 @@
 # src/ebook_app/ui/pages/review_page.py
 
 from __future__ import annotations
+
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QPushButton, QTableWidget, QTableWidgetItem, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
+    QMessageBox
 )
 from PySide6.QtCore import Qt, Slot
+
+from ebook_app.ui.widgets.segment_table import SegmentTable
+from ebook_app.ui.widgets.chapter_selector import ChapterSelector
+from ebook_app.ui.widgets.review_inspector_panel import ReviewInspectorPanel
 
 
 class ReviewPage(QWidget):
     """
     Review & Dialogue Inspector Page.
-    Allows the user to:
-        - Select a chapter
-        - View Pass‑2 segments
-        - View final rebuilt segments
-        - Edit speaker/type/text
-        - Preview TTS for any segment
-        - Save updated final chapter JSON
+    Now includes:
+        - Left pane: chapter selector, mode toggle, segment table, save button
+        - Right pane: ReviewInspectorPanel (metadata, waveform, diff, etc.)
     """
 
     def __init__(self, settings, log, project_manager):
@@ -27,48 +28,64 @@ class ReviewPage(QWidget):
         self.log_console = log
         self.project_manager = project_manager
 
-        # Currently loaded chapter data
+        # Data
         self.current_chapter_id: str | None = None
         self.pass2_segments: list[dict] = []
         self.final_segments: list[dict] = []
 
         # --------------------------------------------------------------
-        # Layout
+        # Main layout: horizontal split
         # --------------------------------------------------------------
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(10)
 
+        # Left side
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(10)
+        main_layout.addLayout(left_layout, 3)
+
+        # Right side: Inspector Panel
+        self.inspector = ReviewInspectorPanel()
+        main_layout.addWidget(self.inspector, 2)
+
+        # --------------------------------------------------------------
+        # Title
+        # --------------------------------------------------------------
         title = QLabel("Review & Dialogue Inspector")
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        layout.addWidget(title)
+        left_layout.addWidget(title)
 
         # --------------------------------------------------------------
-        # Chapter selector row
+        # Chapter selector
         # --------------------------------------------------------------
-        row = QHBoxLayout()
-        layout.addLayout(row)
+        self.chapter_selector = ChapterSelector(self.project_manager)
+        self.chapter_selector.chapter_changed.connect(self._on_chapter_changed)
+        left_layout.addWidget(self.chapter_selector)
 
-        row.addWidget(QLabel("Chapter:"))
+        # --------------------------------------------------------------
+        # Mode toggle (Final / Pass‑2)
+        # --------------------------------------------------------------
+        mode_row = QHBoxLayout()
+        left_layout.addLayout(mode_row)
 
-        self.chapter_combo = QComboBox()
-        self.chapter_combo.currentIndexChanged.connect(self._on_chapter_changed)
-        row.addWidget(self.chapter_combo, 1)
+        mode_row.addWidget(QLabel("View:"))
 
-        self.btn_reload = QPushButton("Reload")
-        self.btn_reload.clicked.connect(self._reload_current)
-        row.addWidget(self.btn_reload)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Final", "Pass‑2"])
+        self.mode_combo.currentIndexChanged.connect(self._refresh_table)
+        mode_row.addWidget(self.mode_combo)
+
+        mode_row.addStretch()
 
         # --------------------------------------------------------------
         # Segment table
         # --------------------------------------------------------------
-        self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels([
-            "Paragraph ID", "Type", "Speaker", "Text", "Preview"
-        ])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table, 1)
+        self.segment_table = SegmentTable()
+        left_layout.addWidget(self.segment_table, 1)
+
+        # Connect selection → inspector
+        self.segment_table.table.itemSelectionChanged.connect(self._on_segment_selected)
 
         # --------------------------------------------------------------
         # Save button
@@ -76,47 +93,24 @@ class ReviewPage(QWidget):
         self.btn_save = QPushButton("Save Final Chapter")
         self.btn_save.setStyleSheet("font-weight: bold; padding: 6px;")
         self.btn_save.clicked.connect(self._save_final_chapter)
-        layout.addWidget(self.btn_save)
+        left_layout.addWidget(self.btn_save)
 
-        # Load chapter list
-        self._load_chapter_list()
+        # --------------------------------------------------------------
+        # Inspector signals → ReviewPage
+        # --------------------------------------------------------------
+        self.inspector.speaker_changed.connect(self._on_speaker_changed)
+        self.inspector.text_changed.connect(self._on_text_changed)
+        self.inspector.request_preview_tts.connect(self._on_preview_tts)
+        self.inspector.request_rerun_llm.connect(self._on_rerun_llm)
+        self.inspector.request_open_character.connect(self._on_open_character)
 
-    # ------------------------------------------------------------------
-    # Load chapter list
-    # ------------------------------------------------------------------
-
-    def _load_chapter_list(self):
-        chapters = self.project_manager.load_chapter_index()
-        self.chapter_combo.clear()
-
-        if not chapters:
-            self.chapter_combo.addItem("No chapters found")
-            return
-
-        for idx, ch in enumerate(chapters):
-            title = ch.get("title", f"Chapter {idx+1}")
-            chapter_id = f"ch{idx+1:03d}"
-            self.chapter_combo.addItem(f"{idx+1:03d} — {title}", chapter_id)
-
-    # ------------------------------------------------------------------
-    # Chapter changed
-    # ------------------------------------------------------------------
-
-    @Slot(int)
-    def _on_chapter_changed(self, index: int):
-        if index < 0:
-            return
-
-        chapter_id = self.chapter_combo.currentData()
-        if not chapter_id:
-            return
-
+    # ==================================================================
+    # Chapter loading
+    # ==================================================================
+    @Slot(str)
+    def _on_chapter_changed(self, chapter_id: str):
         self.current_chapter_id = chapter_id
         self._load_chapter_data()
-
-    # ------------------------------------------------------------------
-    # Load Pass‑2 + Final segments
-    # ------------------------------------------------------------------
 
     def _load_chapter_data(self):
         if not self.current_chapter_id:
@@ -131,93 +125,143 @@ class ReviewPage(QWidget):
         final = self.project_manager.load_final_chapter(self.current_chapter_id)
         self.final_segments = final.get("segments", []) if final else []
 
-        self._populate_table()
+        # Load Character DB into inspector
+        if hasattr(self.project_manager, "load_character_db"):
+            char_db = self.project_manager.load_character_db()
+            self.inspector.load_character_db(char_db)
 
+        self._refresh_table()
         self.log_console.log(f"Loaded chapter {self.current_chapter_id}")
 
-    # ------------------------------------------------------------------
-    # Populate table
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Table refresh
+    # ==================================================================
+    def _refresh_table(self):
+        if not self.current_chapter_id:
+            return
 
-    def _populate_table(self):
-        segs = self.final_segments or self.pass2_segments
+        mode = self.mode_combo.currentText()
 
-        self.table.setRowCount(len(segs))
+        if mode == "Final" and self.final_segments:
+            segments = self.final_segments
+        elif mode == "Final" and not self.final_segments:
+            segments = self.pass2_segments
+        else:
+            segments = self.pass2_segments
 
-        for row, seg in enumerate(segs):
-            pid = str(seg.get("paragraph_id", ""))
-            typ = seg.get("type", "")
-            speaker = seg.get("speaker", "")
-            text = seg.get("text", "")
+        self.segment_table.load_segments(segments)
 
-            # Paragraph ID
-            self.table.setItem(row, 0, QTableWidgetItem(pid))
+    # ==================================================================
+    # Segment selection → Inspector
+    # ==================================================================
+    def _on_segment_selected(self):
+        if not self.current_chapter_id:
+            return
 
-            # Type
-            self.table.setItem(row, 1, QTableWidgetItem(typ))
+        selected = self.segment_table.table.selectedIndexes()
+        if not selected:
+            return
 
-            # Speaker
-            self.table.setItem(row, 2, QTableWidgetItem(speaker))
+        row = selected[0].row()
 
-            # Text
-            item_text = QTableWidgetItem(text)
-            item_text.setFlags(item_text.flags() | Qt.ItemIsEditable)
-            self.table.setItem(row, 3, item_text)
+        # Determine mode
+        mode = self.mode_combo.currentText()
+        if mode == "Final" and self.final_segments:
+            segment = self.final_segments[row]
+        else:
+            segment = self.pass2_segments[row]
 
-            # Preview button
-            btn = QPushButton("▶")
-            btn.clicked.connect(lambda _, r=row: self._preview_segment(r))
-            self.table.setCellWidget(row, 4, btn)
+        # JSON for diff viewer
+        pass2_json = {"segments": self.pass2_segments}
+        final_json = {"segments": self.final_segments}
 
-        self.table.resizeColumnsToContents()
+        # Load into inspector
+        self.inspector.load_segment(row, segment, pass2_json, final_json)
 
-    # ------------------------------------------------------------------
-    # Reload current chapter
-    # ------------------------------------------------------------------
+        # Load waveform
+        self._load_waveform_for_segment(row)
 
-    def _reload_current(self):
-        if self.current_chapter_id:
-            self._load_chapter_data()
+    def _load_waveform_for_segment(self, row: int):
+        try:
+            wav_path = self.project_manager.pipeline_controller.preview_segment(
+                self.current_chapter_id,
+                row
+            )
+            self.inspector.load_waveform(wav_path)
+        except Exception as e:
+            self.log_console.log(f"Waveform load error: {e}")
 
-    # ------------------------------------------------------------------
-    # Preview TTS
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Inspector → ReviewPage updates
+    # ==================================================================
+    def _on_speaker_changed(self, name: str):
+        selected = self.segment_table.table.selectedIndexes()
+        if not selected:
+            return
+        row = selected[0].row()
 
+        mode = self.mode_combo.currentText()
+        target = self.final_segments if (mode == "Final" and self.final_segments) else self.pass2_segments
+        target[row]["speaker"] = name
+
+        self._refresh_table()
+
+    def _on_text_changed(self, new_text: str):
+        selected = self.segment_table.table.selectedIndexes()
+        if not selected:
+            return
+        row = selected[0].row()
+
+        mode = self.mode_combo.currentText()
+        target = self.final_segments if (mode == "Final" and self.final_segments) else self.pass2_segments
+        target[row]["text"] = new_text
+
+    def _on_preview_tts(self, row: int):
+        self._preview_segment(row)
+
+    def _on_rerun_llm(self, row: int):
+        self.log_console.log(f"Re-running LLM classification for segment {row}…")
+        # TODO: integrate your LLM reclassification pipeline
+
+    def _on_open_character(self, name: str):
+        self.log_console.log(f"Open Character DB for: {name}")
+        # TODO: switch to CharacterDBPage and select character
+
+    # ==================================================================
+    # TTS preview
+    # ==================================================================
     def _preview_segment(self, row: int):
         if not self.current_chapter_id:
             return
 
         try:
-            path = self.project_manager.pipeline_controller.tts_generate_segment(
-                chapter_index=int(self.current_chapter_id[2:]) - 1,
-                segment_index=row,
+            path = self.project_manager.pipeline_controller.preview_segment(
+                self.current_chapter_id,
+                row
             )
             self.log_console.log(f"Preview generated: {path}")
         except Exception as e:
             QMessageBox.critical(self, "TTS Error", str(e))
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # Save final chapter
-    # ------------------------------------------------------------------
-
+    # ==================================================================
     def _save_final_chapter(self):
         if not self.current_chapter_id:
             return
 
-        # Update final_segments from table
-        for row in range(self.table.rowCount()):
-            seg = self.final_segments[row] if row < len(self.final_segments) else {}
-
-            seg["paragraph_id"] = self.table.item(row, 0).text()
-            seg["type"] = self.table.item(row, 1).text()
-            seg["speaker"] = self.table.item(row, 2).text()
-            seg["text"] = self.table.item(row, 3).text()
+        # Extract edited segments from table
+        edited = self.segment_table.extract_segments(
+            self.final_segments if self.final_segments else self.pass2_segments
+        )
 
         # Save via ProjectManager
         self.project_manager.save_final_chapter(
             self.current_chapter_id,
-            {"chapter_id": self.current_chapter_id, "segments": self.final_segments},
+            {"chapter_id": self.current_chapter_id, "segments": edited},
         )
+
+        self.final_segments = edited
 
         self.log_console.log(f"Saved final chapter {self.current_chapter_id}")
         QMessageBox.information(self, "Saved", "Final chapter saved.")
