@@ -9,10 +9,10 @@ from typing import Any, Dict, List
 from ebook_app.pipeline.pass1_extractor import Pass1Extractor
 from ebook_app.pipeline.pass2_classifier import Pass2Classifier, LLMClient
 from ebook_app.pipeline.character_merger import CharacterMerger
-from ebook_app.pipeline.voice_router import VoiceRouter
+from ebook_app.tts.voice_router import VoiceRouter
 from ebook_app.pipeline.chapter_rebuilder import ChapterRebuilder
-from ebook_app.pipeline.epub_builder import EPUBBuilder
-from ebook_app.pipeline.tts_engine import TTSEngineContract
+from ebook_app.epub.epub_builder import EPUBBuilder
+from ebook_app.tts.tts_engine import TTSEngineContract, TTSEngine
 
 logger = logging.getLogger(__name__)
 
@@ -256,110 +256,63 @@ class PipelineController:
         logger.info("Phase 3 — Pass‑1 extraction complete.")
         self._on_progress("pass1_extraction", 100)
 
-# ------------------------------------------------------------------
-# Phase 4 — pass2_classification (LLM-based)
-# ------------------------------------------------------------------
-
-# src/ebook_app/pipeline/chapter_rebuilder.py
-"""
-Chapter Rebuilder
------------------
-Takes Pass‑2 classified segments and produces the final chapter structure.
-"""
-
-from __future__ import annotations
-from typing import List, Dict
-
-
-def normalize_name(name: str) -> str:
-    if not name:
-        return ""
-    return (
-        name.strip()
-            .lower()
-            .replace(".", "")
-            .replace(",", "")
-            .replace("  ", " ")
-    )
-
-
-class ChapterRebuilder:
-    """
-    Rebuilds a chapter from Pass‑2 segments into final TTS/EPUB-ready format.
-    """
-
-    def __init__(self, voice_router=None):
-        # voice_router is optional; voices are assigned later in TTS
-        self.voice_router = voice_router
-
     # ------------------------------------------------------------------
-    # Public API
+    # Phase 4 — pass2_classification (LLM-based)
     # ------------------------------------------------------------------
 
-    def rebuild_chapter(
-        self,
-        chapter_id: str,
-        title: str,
-        pass2_segments: List[Dict],
-        character_db: List[Dict],
-    ) -> Dict:
+    def pass2_classification(self) -> None:
         """
-        Build the final chapter structure.
+        Phase 4:
+        - Read chXXX_pass1.json
+        - Run Pass‑2 classifier (LLM-based)
+        - Write chXXX_pass2.json
         """
-        final_segments: List[Dict] = []
-        final_chars_map: Dict[str, Dict] = {}
+        logger.info("[Phase 4] Pass‑2 classification…")
 
-        for seg in pass2_segments:
-            speaker = str(seg.get("speaker", "")).strip()
-            gender = str(seg.get("gender", "unknown")).lower()
-            norm = normalize_name(speaker) if speaker else ""
+        chapters = self._load_json(self.work_dir / "chapters_raw.json", default=[])
+        total = len(chapters)
+        if total == 0:
+            logger.warning("No chapters_raw.json found — cannot run Pass‑2.")
+            return
 
-            # Track characters for final output (but do NOT mutate DB)
-            if speaker and norm:
-                # Find canonical entry
-                entry = next(
-                    (c for c in character_db if normalize_name(c.get("name", "")) == norm),
-                    None,
-                )
-                if entry:
-                    final_chars_map[norm] = {
-                        "name": entry["name"],
-                        "gender": entry["gender"],
-                        "voice": entry.get("voice", ""),
-                    }
-                else:
-                    # Character not in DB (rare) — include minimal info
-                    final_chars_map[norm] = {
-                        "name": speaker,
-                        "gender": gender,
-                        "voice": "",
-                    }
+        for idx in range(total):
+            if self._cancelled("pass2_classification"):
+                return
 
-            # Build final segment dict (NO voice assignment here)
-            final_segments.append(
-                {
-                    "text": seg.get("text", ""),
-                    "type": seg.get("type", "narration"),
-                    "speaker": speaker,
-                    "gender": gender,
-                    "speaker_confidence": float(seg.get("speaker_confidence", 0.0)),
-                    "gender_confidence": float(seg.get("gender_confidence", 0.0)),
-                    "character_confidence": float(seg.get("character_confidence", 0.0)),
-                    "paragraph_id": int(seg.get("paragraph_id", -1)),
-                    # voice is assigned later in TTS or controller
-                }
+            chapter_id = self._chapter_id_for_offset(idx)
+            pass1_path = self._chapter_pass1_path(chapter_id)
+
+            if not pass1_path.exists():
+                logger.warning("Missing Pass‑1 output for %s — skipping Pass‑2.", chapter_id)
+                continue
+
+            data = self._load_json(pass1_path, default={})
+            segments = data.get("segments", [])
+            if not segments:
+                logger.warning("No Pass‑1 segments in %s — skipping.", pass1_path)
+                continue
+
+            classified = []
+            for seg in segments:
+                result = self.pass2_classifier.classify_segment(seg)
+                classified.append(result)
+
+            out_path = self._chapter_pass2_path(chapter_id)
+            self._save_json(out_path, {"chapter_id": chapter_id, "segments": classified})
+
+            logger.info(
+                "Pass‑2 classified %d segments for %s (%d/%d).",
+                len(classified),
+                chapter_id,
+                idx + 1,
+                total,
             )
 
-        return {
-            "chapter_id": chapter_id,
-            "title": title,
-            "segments": final_segments,
-            "characters": list(final_chars_map.values()),
-        }
-        
-        self._save_json(self.work_dir / "character_db.json", self.character_db)
+            percent = int((idx + 1) * 100 / total)
+            self._on_progress("pass2_classification", percent)
 
-
+        logger.info("Phase 4 — Pass‑2 classification complete.")
+        self._on_progress("pass2_classification", 100)
 
     # ------------------------------------------------------------------
     # Phase 5 — smart_review_dialogue (rebuild final chapters)

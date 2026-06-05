@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import QObject, Signal
 
 from ebook_app.core.settings_manager import SettingsManager
-from ebook_app.models.book_library import BookLibrary
+from ebook_app.core.book_library import BookLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -345,31 +345,94 @@ class ProjectManager(QObject):
         self.pipeline_state_changed.emit(step, progress)
 
     def create_pipeline_controller(self, on_progress=None):
-        """
-        Create a PipelineController instance configured for the current project.
-
-        Args:
-            on_progress: Optional callback for pipeline progress updates
-
-        Returns:
-            PipelineController instance or None if no project is loaded
-        """
         if not self.current_project_dir:
-            logger.warning("Cannot create pipeline controller: no project loaded")
             return None
-
-        from ebook_app.pipeline_controller import PipelineController
-
+        from ebook_app.pipeline.pipeline_controller import PipelineController, PipelineSettings
         work_dir = self.get_work_dir()
-        return PipelineController(
-            settings=self.settings,
-            on_progress=on_progress,
+        ps = PipelineSettings(
             work_dir=work_dir,
+            output_dir=self.output_dir,
+            book_title=self._project_data.get("title", ""),
+            book_author=self._project_data.get("author", ""),
+            llm_base_url=self.settings.get("dialogue_llm_url", ""),
+            llm_model=self.settings.get("dialogue_llm_model", ""),
         )
+        ctrl = PipelineController(ps)
+        if on_progress:
+            ctrl.set_progress_callback(on_progress)
+        return ctrl
 
     # ------------------------------------------------------------------
     # Library operations
     # ------------------------------------------------------------------
+
+    def load_chapter_index(self) -> list:
+        """Load chapter index from work dir."""
+        work_dir = self.get_work_dir()
+        if not work_dir:
+            return []
+        for fname in ("chapters.json", "chapters_raw.json"):
+            path = work_dir / fname
+            if path.exists():
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception:
+                    pass
+        return []
+
+    def load_pass2_segments(self, chapter_id: str) -> list:
+        work_dir = self.get_work_dir()
+        if not work_dir:
+            return []
+        for fname in (f"{chapter_id}_llm_normalized.json", f"{chapter_id}_pass2.json"):
+            path = work_dir / fname
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    return data.get("segments", [])
+                except Exception:
+                    pass
+        return []
+
+    def load_final_chapter(self, chapter_id: str) -> dict:
+        work_dir = self.get_work_dir()
+        if not work_dir:
+            return {}
+        for fname in (f"{chapter_id}_chapter_info_final.json", f"{chapter_id}_final.json"):
+            path = work_dir / fname
+            if path.exists():
+                try:
+                    return json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+        return {}
+
+    def save_final_chapter(self, chapter_id: str, data: dict) -> None:
+        work_dir = self.get_work_dir()
+        if not work_dir:
+            return
+        path = work_dir / f"{chapter_id}_chapter_info_final.json"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def load_character_db(self) -> list:
+        work_dir = self.get_work_dir()
+        if not work_dir:
+            return []
+        path = work_dir / "character_database.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return list(self.settings.get("character_db", []) or [])
+
+    def save_character_db(self, data: list) -> None:
+        work_dir = self.get_work_dir()
+        if work_dir:
+            path = work_dir / "character_database.json"
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.settings.set("character_db", data)
 
     def list_all_projects(self) -> List[Dict[str, Any]]:
         """Get list of all projects in the library."""
