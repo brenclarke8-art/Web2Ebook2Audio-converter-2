@@ -18,20 +18,13 @@ from .pipeline_steps import PIPELINE_STEPS
 from .pass1_extractor import Pass1Extractor
 from .pass2_classifier import Pass2Classifier, LLMClient
 from .character_merger import CharacterMerger
-from .voice_router import VoiceRouter
 from .chapter_rebuilder import ChapterRebuilder
 
-# Optional components (implemented elsewhere)
-# These are imported for convenience if the user wants direct access.
+# VoiceRouter lives in ebook_app.tts
 try:
-    from .epub_builder import EPUBBuilder
+    from ebook_app.tts.voice_router import VoiceRouter
 except Exception:
-    EPUBBuilder = None
-
-try:
-    from .tts_engine import TTSEngineContract
-except Exception:
-    TTSEngineContract = None
+    VoiceRouter = None
 
 __all__ = [
     "PipelineController",
@@ -43,6 +36,4 @@ __all__ = [
     "CharacterMerger",
     "VoiceRouter",
     "ChapterRebuilder",
-    "EPUBBuilder",
-    "TTSEngineContract",
 ]
