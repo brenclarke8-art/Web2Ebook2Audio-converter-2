@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from ebook_app.characters.character_db import CharacterDatabase
+from ebook_app.models.character_db
+ import CharacterDatabase
 from ebook_app.scraping.text_cleaner import TextCleaner
 from ebook_app.services.dialogue_segmentation_service import DialogueSegmentationService
 from ebook_app.services.llm_client import OllamaChatClient
