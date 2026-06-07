@@ -6,13 +6,13 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ebook_app.models.character_db import CharacterDatabase
 from ebook_app.pipeline.pass1_extractor import Pass1Extractor
 from ebook_app.pipeline.pass2_classifier import Pass2Classifier, LLMClient
-from ebook_app.pipeline.character_merger import CharacterMerger
 from ebook_app.tts.voice_router import VoiceRouter
 from ebook_app.pipeline.chapter_rebuilder import ChapterRebuilder
 from ebook_app.epub.epub_builder import EPUBBuilder
-from ebook_app.tts.tts_engine import TTSEngineContract, TTSEngine
+from ebook_app.tts.tts_engine import TTSEngineContract
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,11 @@ class PipelineController:
         self.work_dir: Path = settings.work_dir
         self.selected_start_chapter: int = 1
 
-        # Character DB (shared across chapters)
-        self.character_db: List[Dict] = []
+        self.character_db = CharacterDatabase(
+            path=self.work_dir / "character_database.json"
+        )
+
+
 
         # Voice routing + chapter rebuild helpers
         self.voice_router = VoiceRouter(
@@ -83,9 +86,6 @@ class PipelineController:
             model=settings.llm_model,
         )
         self.pass2_classifier = Pass2Classifier(self.llm_client)
-
-        # Character merger
-        self.character_merger = CharacterMerger()
 
         # Cancellation + progress callbacks
         self._cancel_flags: Dict[str, bool] = {}
@@ -145,45 +145,70 @@ class PipelineController:
         self._progress_callback = cb
 
     # ------------------------------------------------------------------
-    # Phase 1 — scrape_index (placeholder)
+    # Phase 1 — scrape_index (web scraping to get chapter list)
     # ------------------------------------------------------------------
 
     def scrape_index(self) -> None:
         """
         Phase 1:
-        - Scrape / load the book index (chapter list)
-        - Write chapters_raw.json
+        - Scrape the chapter index using WebScraper
+        - Write chapters_raw.json with a list of chapter metadata
         """
         logger.info("[Phase 1] Scraping index…")
 
-        # This is a placeholder; implement your actual index scraping here.
-        # For now, assume chapters_raw.json already exists or is created elsewhere.
-        chapters_path = self.work_dir / "chapters_raw.json"
-        chapters = self._load_json(chapters_path, default=[])
-        if not chapters:
-            logger.warning("chapters_raw.json is empty or missing.")
-        else:
-            logger.info("Index loaded: %d chapters.", len(chapters))
+        from ebook_app.scraping.browser_scraper import WebScraper
 
+        index_url = self.settings.llm_base_url or ""
+        if not index_url:
+            logger.warning("No index URL configured — cannot scrape index.")
+            self._on_progress("scrape_index", 100)
+            return
+
+        scraper = WebScraper()
+        try:
+            chapters = list(scraper.scrape_index_page(index_url))
+        except Exception:
+            logger.error("Index scraping failed.", exc_info=True)
+            chapters = []
+
+        # Normalize into a list of dicts
+        normalized = []
+        for idx, url in enumerate(chapters):
+            normalized.append({
+                "title": f"Chapter {idx + 1}",
+                "source": str(url),
+            })
+
+        out_path = self.work_dir / "chapters_raw.json"
+        self._save_json(out_path, normalized)
+
+        logger.info("Index scraped: %d chapters.", len(normalized))
         self._on_progress("scrape_index", 100)
 
+
     # ------------------------------------------------------------------
-    # Phase 2 — scrape_chapters (placeholder)
+    # Phase 2 — scrape_chapters (per-chapter scraping + cleaning)
     # ------------------------------------------------------------------
 
     def scrape_chapters(self) -> None:
         """
         Phase 2:
-        - Scrape / load each chapter's raw text
-        - Normalize and write chXXX_cleaned.txt
+        - Scrape each chapter's raw text
+        - Clean it using TextCleaner
+        - Write chXXX_cleaned.txt
         """
         logger.info("[Phase 2] Scraping chapters…")
+
+        from ebook_app.scraping.browser_scraper import WebScraper
+        from ebook_app.scraping.text_cleaner import TextCleaner
 
         chapters = self._load_json(self.work_dir / "chapters_raw.json", default=[])
         total = len(chapters)
         if total == 0:
             logger.warning("No chapters_raw.json found — cannot scrape chapters.")
             return
+
+        scraper = WebScraper()
 
         for idx, ch in enumerate(chapters):
             if self._cancelled("scrape_chapters"):
@@ -192,11 +217,21 @@ class PipelineController:
             chapter_id = self._chapter_id_for_offset(idx)
             cleaned_path = self._chapter_cleaned_text_path(chapter_id)
 
-            # Placeholder: assume cleaned text already exists or is generated elsewhere.
-            if not cleaned_path.exists():
-                logger.warning("Missing cleaned text for %s — expected at %s", chapter_id, cleaned_path)
-            else:
-                logger.info("Found cleaned text for %s", chapter_id)
+            url = ch.get("source", "")
+            if not url:
+                logger.warning("Chapter %s has no source URL.", chapter_id)
+                continue
+
+            try:
+                raw_text = scraper.scrape_single_chapter(url)
+            except Exception:
+                logger.error("Failed to scrape %s", url, exc_info=True)
+                raw_text = ""
+
+            cleaned = TextCleaner.clean_text(raw_text or "")
+            cleaned_path.write_text(cleaned, encoding="utf-8")
+
+            logger.info("Scraped + cleaned %s", chapter_id)
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("scrape_chapters", percent)
@@ -293,9 +328,31 @@ class PipelineController:
                 continue
 
             classified = []
-            for seg in segments:
-                result = self.pass2_classifier.classify_segment(seg)
-                classified.append(result)
+            for seg_idx, seg in enumerate(segments):
+                if self._cancelled("pass2_classification"):
+                    return
+
+                try:
+                    result = self.pass2_classifier.classify_segment(seg)
+                    merged = {**seg, **result}
+                except Exception:
+                    logger.error(
+                        "Pass‑2 classification failed for %s segment %d",
+                        chapter_id,
+                        seg_idx,
+                        exc_info=True,
+                    )
+                    merged = {
+                        **seg,
+                        "type": "narration",
+                        "speaker": "unknown",
+                        "gender": "unknown",
+                        "confidence": 0.0,
+                    }
+
+                classified.append(merged)
+
+
 
             out_path = self._chapter_pass2_path(chapter_id)
             self._save_json(out_path, {"chapter_id": chapter_id, "segments": classified})
@@ -350,19 +407,21 @@ class PipelineController:
                 chapter_id=chapter_id,
                 title=title,
                 pass2_segments=segments,
-                character_db=self.character_db,
+                character_db=self.character_db,   # CharacterDatabase instance
             )
 
-            # Save final chapter
             out_path = self._chapter_final_path(chapter_id)
             self._save_json(out_path, final_chapter)
 
             percent = int((idx + 1) * 100 / total)
             self._on_progress("smart_review_dialogue", percent)
 
+        # NEW: persist character DB
+        if hasattr(self.character_db, "save"):
+            self.character_db.save()
+
         logger.info("Phase 5 — smart_review_dialogue complete.")
         self._on_progress("smart_review_dialogue", 100)
-
 
     # ------------------------------------------------------------------
     # Phase 6 — TTS generation (per-segment, per-chapter)
@@ -537,8 +596,11 @@ class PipelineController:
         preview_dir = self.work_dir / "previews"
         preview_dir.mkdir(parents=True, exist_ok=True)
 
+        # Use stable segment_id
+        seg_id = seg.get("segment_id", f"{chapter_id}_s{segment_index:03d}")
+        out_path = preview_dir / f"{seg_id}_preview.wav"
+
         engine = self._make_tts_backend(output_dir=str(preview_dir))
-        out_path = preview_dir / f"{chapter_id}_seg{segment_index:03d}_preview.wav"
 
         logger.info(
             "TTS segment preview: chapter=%s, segment=%d, speaker=%s, type=%s, voice=%s",
@@ -551,7 +613,7 @@ class PipelineController:
 
         engine.generate_audio(
             text=text,
-            output_filename=out_path.name,
+            output_filename=str(out_path),
             voice=voice_name,
             speed=self.settings.tts_speed,
         )

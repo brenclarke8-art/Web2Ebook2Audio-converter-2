@@ -1,10 +1,11 @@
 # src/ebook_app/pipeline/voice_router.py
 """
-Voice Router with alias matching.
+Voice Router with CharacterDatabase integration.
 """
 
 from __future__ import annotations
-from typing import List, Dict
+from typing import Dict
+from ebook_app.models.character_db import CharacterDatabase
 
 
 def _normalize_name(name: str) -> str:
@@ -25,7 +26,7 @@ class VoiceRouter:
         - segment type
         - speaker name
         - gender
-        - character DB (with alias support)
+        - CharacterDatabase (canonical + alias + fuzzy)
         - global defaults
     """
 
@@ -39,14 +40,10 @@ class VoiceRouter:
         self.default_male_voice = default_male_voice
         self.default_female_voice = default_female_voice
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def get_voice_for_segment(
         self,
         segment: Dict,
-        character_db: List[Dict],
+        character_db: CharacterDatabase,
     ) -> str:
         """
         Decide which voice to use for a given segment.
@@ -61,7 +58,7 @@ class VoiceRouter:
         speaker = str(segment.get("speaker", "") or "").strip()
         gender = str(segment.get("gender", "unknown") or "unknown").lower()
 
-        # Thought segments → narrator voice (optional improvement)
+        # Thought → narrator voice
         if seg_type == "thought":
             return self.narrator_voice
 
@@ -69,30 +66,12 @@ class VoiceRouter:
         if not speaker or speaker.lower() in {"narrator", "unknown"}:
             return self.narrator_voice
 
-        norm = _normalize_name(speaker)
-
         # ------------------------------------------------------------------
-        # Alias matching
+        # CharacterDatabase lookup (canonical + alias + fuzzy)
         # ------------------------------------------------------------------
-        for c in character_db:
-            cname = str(c.get("name", "") or "").strip()
-            if not cname:
-                continue
-
-            # Normalize canonical name
-            if _normalize_name(cname) == norm:
-                voice = str(c.get("voice", "") or "").strip()
-                if voice:
-                    return voice
-
-            # Check aliases
-            aliases = c.get("aliases", [])
-            if isinstance(aliases, list):
-                for alias in aliases:
-                    if _normalize_name(alias) == norm:
-                        voice = str(c.get("voice", "") or "").strip()
-                        if voice:
-                            return voice
+        entry = character_db.get(speaker)
+        if entry and entry.voice:
+            return entry.voice
 
         # ------------------------------------------------------------------
         # Fallback by gender

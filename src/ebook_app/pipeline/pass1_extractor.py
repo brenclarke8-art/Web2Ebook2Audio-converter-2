@@ -15,7 +15,7 @@ It ONLY:
     - Splits cleaned text into paragraphs
     - Identifies candidate dialogue lines
     - Extracts minimal context (prev/next paragraph)
-    - Assigns paragraph_id
+    - Assigns paragraph_id + segment_id
     - Returns plain dict segments for Pass‑2 classification
 """
 
@@ -33,9 +33,11 @@ class Pass1Extractor:
     [
         {
             "text": "...",
-            "paragraph_id": 12,
+            "paragraph_id": "ch001_p000",
+            "segment_id": "ch001_s000",
             "context_before": "...",
-            "context_after": "..."
+            "context_after": "...",
+            "is_dialogue_candidate": true
         }
     ]
     """
@@ -52,21 +54,6 @@ class Pass1Extractor:
     PARAGRAPH_SPLIT_RE = re.compile(r'\n{2,}|\r{2,}')
 
     def extract(self, text: str, chapter_id: str) -> List[Dict]:
-        """
-        Extract candidate segments from cleaned chapter text.
-
-        Parameters
-        ----------
-        text : str
-            Cleaned chapter text (from scrape_chapters()).
-        chapter_id : str
-            Chapter identifier (e.g., "ch001").
-
-        Returns
-        -------
-        List[Dict]
-            List of segment dictionaries.
-        """
         if not text or not text.strip():
             return []
 
@@ -77,20 +64,23 @@ class Pass1Extractor:
         segments: List[Dict] = []
 
         for idx, para in enumerate(paragraphs):
-            paragraph_id = idx
+            # Fix #1 — stable string paragraph_id
+            paragraph_id = f"{chapter_id}_p{idx:03d}"
 
-            # Determine context
+            # Fix #2 — stable segment_id
+            segment_id = f"{chapter_id}_s{idx:03d}"
+
+            # Context (you chose to keep these)
             context_before = paragraphs[idx - 1] if idx > 0 else ""
             context_after = paragraphs[idx + 1] if idx + 1 < len(paragraphs) else ""
 
-            # Determine if this paragraph is a dialogue candidate
+            # Dialogue candidate detection
             is_dialogue = any(pat.search(para) for pat in self.DIALOGUE_PATTERNS)
 
-            # Pass‑1 does NOT classify type — but we DO mark dialogue candidates
-            # so Pass‑2 can use this as a hint.
             segment = {
                 "text": para,
                 "paragraph_id": paragraph_id,
+                "segment_id": segment_id,
                 "context_before": context_before,
                 "context_after": context_after,
                 "is_dialogue_candidate": bool(is_dialogue),
