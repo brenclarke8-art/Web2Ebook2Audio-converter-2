@@ -522,7 +522,9 @@ class ReviewPage(BasePage):
             )
             ctrl.pass2_classification()
             ctrl.smart_review_dialogue()
-            self._load_pass2_segments(self.current_chapter_id, self._work_dir())
+            work_dir = self._work_dir()
+            if work_dir is not None:
+                self._load_pass2_segments(self.current_chapter_id, work_dir)
             self.log.log("LLM re-classification complete.", level="SUCCESS")
         except Exception as exc:
             self.log.log(f"LLM re-classification failed: {exc}", level="ERROR")
