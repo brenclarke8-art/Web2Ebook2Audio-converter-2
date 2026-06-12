@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ebook_app.app.state.character_db import CharacterDatabase
 from ebook_app.text.identify.role_tagger import Pass1Extractor
@@ -14,7 +14,26 @@ from ebook_app.pipeline.chapter_rebuilder import ChapterRebuilder
 from ebook_app.epub.packaging import EPUBBuilder
 from ebook_app.tts.tts_service import TTSEngineContract
 
+try:
+    from ebook_app.text.scrape.browser_scraper import WebScraper as WebScraper  # noqa: F401
+except ImportError:  # pragma: no cover
+    WebScraper = None  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+
+def _gs(settings: Any, *keys: str, default: Any = "") -> Any:
+    """Return the first non-None value found by direct attribute or .get() on settings."""
+    for key in keys:
+        v = getattr(settings, key, None)
+        if v is not None:
+            return v
+    if hasattr(settings, "get"):
+        for key in keys:
+            v = settings.get(key, None)
+            if v is not None:
+                return v
+    return default
 
 
 class PipelineSettings:
@@ -63,35 +82,89 @@ class PipelineController:
         7. epub_build
     """
 
-    def __init__(self, settings: PipelineSettings) -> None:
+    STEPS: List[str] = [
+        "scrape_index",
+        "scrape_chapters",
+        "pass1_extraction",
+        "pass2_classification",
+        "smart_review_dialogue",
+        "tts_generate",
+        "epub_build",
+    ]
+
+    def __init__(
+        self,
+        settings: Any,
+        work_dir: Optional[Path] = None,
+    ) -> None:
         self.settings = settings
-        self.work_dir: Path = settings.work_dir
+
+        # work_dir: prefer explicit arg, then settings.work_dir, then fallback
+        if work_dir is not None:
+            self.work_dir = Path(work_dir)
+        else:
+            wd = getattr(settings, "work_dir", None)
+            self.work_dir = Path(wd) if wd else Path("pipeline_work")
+
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Chapter state
         self.selected_start_chapter: int = 1
+        self.selected_end_chapter: int = 0
+        self.chapters: List[Dict] = []
+        self.raw_chapter_urls: List[str] = []
+        self.chapter_urls: List[str] = []
 
         self.character_db = CharacterDatabase(
             path=self.work_dir / "character_database.json"
         )
 
-
-
         # Voice routing + chapter rebuild helpers
+        narrator = _gs(settings, "narrator_voice", default="af_narrator")
+        default_male = _gs(settings, "default_male_voice", default="am_adam")
+        default_female = _gs(settings, "default_female_voice", default="af_heart")
         self.voice_router = VoiceRouter(
-            narrator_voice=settings.narrator_voice,
-            default_male_voice=settings.default_male_voice,
-            default_female_voice=settings.default_female_voice,
+            narrator_voice=narrator,
+            default_male_voice=default_male,
+            default_female_voice=default_female,
         )
         self.chapter_rebuilder = ChapterRebuilder(self.voice_router)
 
         # LLM client + Pass‑2 classifier
+        llm_url = _gs(settings, "llm_base_url", "dialogue_llm_url", default="")
+        llm_model = _gs(settings, "llm_model", "dialogue_llm_model", default="")
         self.llm_client = LLMClient(
-            base_url=settings.llm_base_url,
-            model=settings.llm_model,
+            base_url=llm_url,
+            model=llm_model,
         )
         self.pass2_classifier = Pass2Classifier(self.llm_client)
 
         # Cancellation + progress callbacks
         self._cancel_flags: Dict[str, bool] = {}
         self._progress_callback = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle: start / stop / run_all
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        """Reset all cancellation flags so the pipeline can run."""
+        self._cancel_flags = {}
+
+    def stop(self) -> None:
+        """Request cancellation of all phases."""
+        for step in self.STEPS:
+            self._cancel_flags[step] = True
+
+    def set_chapter_range(self, start: int, end: int) -> None:
+        """Set the inclusive 1-based chapter range to process."""
+        self.selected_start_chapter = start
+        self.selected_end_chapter = end
+
+    def run_all(self) -> None:
+        """Execute every pipeline step in order."""
+        for step in self.STEPS:
+            getattr(self, step)()
 
     # ------------------------------------------------------------------
     # Helpers: JSON I/O, paths, progress, cancellation
@@ -116,10 +189,13 @@ class PipelineController:
             logger.error("Failed to save JSON to %s", path, exc_info=True)
 
     def _chapter_id_for_offset(self, offset: int) -> str:
-        return f"ch{offset + 1:03d}"
+        return f"ch{offset + 1}"
 
     def _chapter_cleaned_text_path(self, chapter_id: str) -> Path:
         return self.work_dir / f"{chapter_id}_cleaned.txt"
+
+    def _chapter_raw_text_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_raw.txt"
 
     def _chapter_pass1_path(self, chapter_id: str) -> Path:
         return self.work_dir / f"{chapter_id}_pass1.json"
@@ -129,6 +205,15 @@ class PipelineController:
 
     def _chapter_final_path(self, chapter_id: str) -> Path:
         return self.work_dir / f"{chapter_id}_final.json"
+
+    def _chapter_info_final_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_chapter_info_final.json"
+
+    def _chapter_llm_raw_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_llm_raw.json"
+
+    def _chapter_llm_normalized_path(self, chapter_id: str) -> Path:
+        return self.work_dir / f"{chapter_id}_llm_normalized.json"
 
     def _on_progress(self, phase: str, percent: int) -> None:
         if self._progress_callback:
@@ -154,13 +239,12 @@ class PipelineController:
         """
         Phase 1:
         - Scrape the chapter index using WebScraper
-        - Write chapters_raw.json with a list of chapter metadata
+        - Filter placeholder/paywalled URLs
+        - Write chapters_raw.json, raw_chapter_urls.json, chapter_urls.json
         """
         logger.info("[Phase 1] Scraping index…")
 
-        from ebook_app.text.scrape.browser_scraper import WebScraper
-
-        index_url = self.settings.index_url or ""
+        index_url = _gs(self.settings, "index_url", default="")
         if not index_url:
             logger.warning("No index URL configured — cannot scrape index.")
             self._on_progress("scrape_index", 100)
@@ -168,23 +252,29 @@ class PipelineController:
 
         scraper = WebScraper()
         try:
-            chapters = list(scraper.scrape_index_page(index_url))
+            all_urls = list(scraper.scrape_index_page(index_url))
         except Exception:
             logger.error("Index scraping failed.", exc_info=True)
-            chapters = []
+            all_urls = []
 
-        # Normalize into a list of dicts
-        normalized = []
-        for idx, url in enumerate(chapters):
-            normalized.append({
-                "title": f"Chapter {idx + 1}",
-                "source": str(url),
-            })
+        self.raw_chapter_urls = [str(u) for u in all_urls]
+        self.chapter_urls = [u for u in self.raw_chapter_urls if "paywalled" not in u]
 
-        out_path = self.work_dir / "chapters_raw.json"
-        self._save_json(out_path, normalized)
+        # Normalize into a list of dicts for legacy pipeline worker
+        normalized = [
+            {"title": f"Chapter {i + 1}", "source": url}
+            for i, url in enumerate(self.chapter_urls)
+        ]
 
-        logger.info("Index scraped: %d chapters.", len(normalized))
+        self._save_json(self.work_dir / "chapters_raw.json", normalized)
+        self._save_json(self.work_dir / "raw_chapter_urls.json", self.raw_chapter_urls)
+        self._save_json(self.work_dir / "chapter_urls.json", self.chapter_urls)
+
+        logger.info(
+            "Index scraped: %d total, %d valid chapters.",
+            len(self.raw_chapter_urls),
+            len(self.chapter_urls),
+        )
         self._on_progress("scrape_index", 100)
 
 
@@ -195,54 +285,89 @@ class PipelineController:
     def scrape_chapters(self) -> None:
         """
         Phase 2:
-        - Scrape each chapter's raw text
-        - Clean it using TextCleaner
-        - Write chXXX_cleaned.txt
+        - Select URLs based on chapter range + self.chapter_urls
+        - Batch-scrape with WebScraper.scrape_chapters()
+        - Write chN_raw.txt and chN_cleaned.txt for each chapter
+        - Set self.chapters with scraped data
         """
         logger.info("[Phase 2] Scraping chapters…")
 
-        from ebook_app.text.scrape.browser_scraper import WebScraper
         from ebook_app.text.parse.html_cleaner import TextCleaner
 
-        chapters = self._load_json(self.work_dir / "chapters_raw.json", default=[])
-        total = len(chapters)
-        if total == 0:
-            logger.warning("No chapters_raw.json found — cannot scrape chapters.")
+        if self.chapter_urls:
+            start_idx = self.selected_start_chapter - 1
+            end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(self.chapter_urls)
+            selected_urls = self.chapter_urls[start_idx:end_idx]
+        else:
+            chapters_raw = self._load_json(self.work_dir / "chapters_raw.json", default=[])
+            selected_urls = [ch.get("source", "") for ch in chapters_raw if ch.get("source")]
+
+        if not selected_urls:
+            logger.warning("No chapter URLs — cannot scrape chapters.")
             return
 
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         scraper = WebScraper()
+        try:
+            results = scraper.scrape_chapters(selected_urls)
+        except Exception:
+            logger.error("Chapter scraping failed.", exc_info=True)
+            results = []
 
-        for idx, ch in enumerate(chapters):
+        self.chapters = []
+        for idx, result in enumerate(results):
             if self._cancelled("scrape_chapters"):
                 return
 
-            chapter_id = self._chapter_id_for_offset(idx)
-            cleaned_path = self._chapter_cleaned_text_path(chapter_id)
+            chapter_id = f"ch{self.selected_start_chapter + idx}"
+            content = result.get("content", "") or ""
+            title = result.get("title", f"Chapter {self.selected_start_chapter + idx}")
 
-            url = ch.get("source", "")
-            if not url:
-                logger.warning("Chapter %s has no source URL.", chapter_id)
-                continue
+            raw_path = self._chapter_raw_text_path(chapter_id)
+            raw_path.write_text(content, encoding="utf-8")
 
-            try:
-                results = scraper.scrape_chapters([url])
-                raw_text = results[0].get("content", "") if results else ""
-                if not raw_text:
-                    logger.warning("Scraper returned empty content for %s", url)
-            except Exception:
-                logger.error("Failed to scrape %s", url, exc_info=True)
-                raw_text = ""
+            cleaned = TextCleaner.clean_text(content)
+            self._chapter_cleaned_text_path(chapter_id).write_text(cleaned, encoding="utf-8")
 
-            cleaned = TextCleaner.clean_text(raw_text or "")
-            cleaned_path.write_text(cleaned, encoding="utf-8")
-
-            logger.info("Scraped + cleaned %s", chapter_id)
-
-            percent = int((idx + 1) * 100 / total)
-            self._on_progress("scrape_chapters", percent)
+            self.chapters.append({"title": title, "content": content})
+            logger.info("Scraped %s", chapter_id)
 
         logger.info("Phase 2 — scrape_chapters complete.")
         self._on_progress("scrape_chapters", 100)
+
+    # ------------------------------------------------------------------
+    # Phase 2b — clean_chapters (noise + zero-width char removal)
+    # ------------------------------------------------------------------
+
+    def clean_chapters(self) -> None:
+        """
+        Clean self.chapters in-memory and write chN_cleaned.txt.
+        Removes UI noise lines ("Next Chapter", "Subscribe now") and
+        zero-width characters.
+        """
+        logger.info("clean_chapters: cleaning %d chapters…", len(self.chapters))
+        NOISE_LINES = {"next chapter", "subscribe now"}
+        ZERO_WIDTH = "\u200b\u200c\u200d\ufeff"
+
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        for idx, ch in enumerate(self.chapters):
+            chapter_id = f"ch{self.selected_start_chapter + idx}"
+            content = ch.get("content", "") or ""
+
+            for char in ZERO_WIDTH:
+                content = content.replace(char, "")
+
+            lines = [
+                line for line in content.splitlines()
+                if line.strip().casefold() not in NOISE_LINES
+            ]
+            cleaned = "\n".join(lines)
+
+            self._chapter_cleaned_text_path(chapter_id).write_text(cleaned, encoding="utf-8")
+            logger.info("clean_chapters: wrote %s_cleaned.txt", chapter_id)
+
+        logger.info("clean_chapters complete.")
+
 
     # ------------------------------------------------------------------
     # Phase 3 — pass1_extraction (deterministic, no LLM)
@@ -432,7 +557,184 @@ class PipelineController:
     # Phase 6 — TTS generation (per-segment, per-chapter)
     # ------------------------------------------------------------------
 
-    def _make_tts_backend(self, output_dir: str) -> TTSEngineContract:
+    # ------------------------------------------------------------------
+    # LLM helpers (dialogue parsing)
+    # ------------------------------------------------------------------
+
+    def _build_dialogue_parser(self):
+        """Build a DialogueParser using current settings."""
+        from ebook_app.text.identify.speaker_llm import DialogueParser
+
+        url = _gs(
+            self.settings,
+            "dialogue_llm_url",
+            "dialogue_llm_base_url",
+            "llm_base_url",
+            default="http://127.0.0.1:11434/api/chat",
+        )
+        semantic_model = _gs(self.settings, "dialogue_llm_semantic_model", default="") or None
+        base_model = _gs(self.settings, "dialogue_llm_model", "llm_model", default="") or None
+        return DialogueParser(
+            ollama_url=url,
+            semantic_model=semantic_model,
+            model=base_model,
+        )
+
+    def _preflight_llm_check(self, parser) -> None:
+        """Check that the model used by *parser* is installed in Ollama."""
+        import requests
+
+        base_url = getattr(parser, "ollama_url", "")
+        for suffix in ("/api/generate", "/api/chat"):
+            if base_url.endswith(suffix):
+                base_url = base_url[: -len(suffix)]
+                break
+        tags_url = base_url.rstrip("/") + "/api/tags"
+        resp = requests.get(tags_url)
+        resp.raise_for_status()
+        installed = [m.get("name", "") for m in resp.json().get("models", [])]
+        model = getattr(parser, "model", "")
+        if model not in installed:
+            raise RuntimeError(
+                f"Ollama model '{model}' is not installed. "
+                "Install it with: ollama pull " + model
+            )
+
+    def llm_semantic_analysis(self) -> None:
+        """
+        Run dialogue parsing on each cleaned chapter and write chN_llm_raw.json.
+        """
+        logger.info("llm_semantic_analysis: starting…")
+
+        chapters = (
+            self._load_json(self.work_dir / "chapters.json", default=None)
+            or self._load_json(self.work_dir / "chapters_raw.json", default=[])
+        )
+        total = len(chapters)
+        if total == 0:
+            logger.warning("No chapters found — cannot run LLM semantic analysis.")
+            return
+
+        for idx in range(total):
+            chapter_id = f"ch{self.selected_start_chapter + idx}"
+            cleaned_path = self._chapter_cleaned_text_path(chapter_id)
+            if not cleaned_path.exists():
+                logger.warning("Missing cleaned text for %s — skipping.", chapter_id)
+                continue
+
+            text = cleaned_path.read_text(encoding="utf-8")
+            parser = self._build_dialogue_parser()
+            result = parser.parse(text, chapter_id)
+
+            def _to_dict(obj):
+                if hasattr(obj, "__dataclass_fields__"):
+                    from dataclasses import asdict
+                    return asdict(obj)
+                if hasattr(obj, "__dict__"):
+                    return vars(obj)
+                return dict(obj)
+
+            raw_data = {
+                "segments": [_to_dict(s) for s in result.segments],
+                "detected_characters": [_to_dict(c) for c in result.detected_characters],
+            }
+            self._save_json(self._chapter_llm_raw_path(chapter_id), raw_data)
+            logger.info("llm_semantic_analysis: wrote %s_llm_raw.json", chapter_id)
+
+        logger.info("llm_semantic_analysis complete.")
+
+    def _write_final_chapter_files(
+        self,
+        chapter_id: str,
+        segments: List[Dict],
+        detected_chars: List[Dict],
+        narrator_voice: str,
+        default_male: str,
+        default_female: str,
+        character_db: Any,
+    ) -> None:
+        """
+        Assign voices to characters and write chN_chapter_info_final.json.
+        *character_db* may be a list of dicts or a CharacterDatabase object.
+        Unknown characters are added to *character_db* with their assigned voice.
+        """
+        def _lookup_voice(name: str) -> Optional[str]:
+            if isinstance(character_db, list):
+                norm = name.strip().casefold()
+                for entry in character_db:
+                    if entry.get("name", "").strip().casefold() == norm:
+                        return entry.get("voice") or None
+                return None
+            # CharacterDatabase object
+            c = character_db.get(name)
+            return c.voice if c and c.voice else None
+
+        def _add_to_db(name: str, gender: str, voice: str) -> None:
+            if isinstance(character_db, list):
+                character_db.append(
+                    {"name": name, "gender": gender, "voice": voice, "description": ""}
+                )
+            else:
+                character_db.add_or_update(name, gender=gender, voice=voice)
+
+        final_chars: List[Dict] = []
+        seen_names: set = set()
+        for entry in detected_chars:
+            name = entry.get("name", "")
+            gender = entry.get("gender", "unknown")
+            if not name or name.strip().casefold() in seen_names:
+                continue
+            seen_names.add(name.strip().casefold())
+            voice = _lookup_voice(name)
+            if not voice:
+                voice = default_male if gender == "male" else (
+                    default_female if gender == "female" else narrator_voice
+                )
+                _add_to_db(name, gender, voice)
+            final_chars.append({"name": name, "gender": gender, "voice": voice})
+
+        out = {"characters": final_chars, "segments": segments}
+        self._save_json(self._chapter_info_final_path(chapter_id), out)
+        logger.info("_write_final_chapter_files: wrote %s_chapter_info_final.json", chapter_id)
+
+    def recheck_dialogue_with_manual_context(
+        self,
+        chapter_id: str,
+        hints: List[Dict],
+    ) -> Dict:
+        """
+        Re-run dialogue parsing for *chapter_id* with manual segment hints and
+        overwrite the LLM output files.
+        Returns {"chapter_id": ..., "segment_count": ..., "character_count": ...}.
+        """
+        cleaned_path = self._chapter_cleaned_text_path(chapter_id)
+        text = cleaned_path.read_text(encoding="utf-8") if cleaned_path.exists() else ""
+
+        parser = self._build_dialogue_parser()
+        result = parser.parse(text, chapter_id, manual_segment_hints=hints)
+
+        def _to_dict(obj):
+            if hasattr(obj, "__dataclass_fields__"):
+                from dataclasses import asdict
+                return asdict(obj)
+            if hasattr(obj, "__dict__"):
+                return vars(obj)
+            return dict(obj)
+
+        raw_data = {
+            "segments": [_to_dict(s) for s in result.segments],
+            "detected_characters": [_to_dict(c) for c in result.detected_characters],
+        }
+        self._save_json(self._chapter_llm_raw_path(chapter_id), raw_data)
+        self._save_json(self._chapter_llm_normalized_path(chapter_id), raw_data)
+
+        return {
+            "chapter_id": chapter_id,
+            "segment_count": len(result.segments),
+            "character_count": len(result.detected_characters),
+        }
+
+    def _make_tts_backend(self, output_dir: Optional[str] = None) -> TTSEngineContract:
         """
         Build a TTS backend instance.
         This must be implemented to return an object that satisfies TTSEngineContract.
@@ -442,17 +744,20 @@ class PipelineController:
     def tts_generate(self) -> None:
         """
         Phase 6:
-        - Read chXXX_final.json
+        - Read chXXX_chapter_info_final.json (falls back to chXXX_final.json)
         - Generate per-segment WAVs: audio/chXXX/chXXX_segYYY.wav
         - Concatenate per-chapter WAV: audio/chXXX/chXXX.wav
         - Write audio_timing.json
         """
         logger.info("[Phase 6] Generating TTS audio…")
 
-        chapters = self._load_json(self.work_dir / "chapters_raw.json", default=[])
+        chapters = (
+            self._load_json(self.work_dir / "chapters.json", default=None)
+            or self._load_json(self.work_dir / "chapters_raw.json", default=[])
+        )
         total = len(chapters)
         if total == 0:
-            logger.warning("No chapters_raw.json found — skipping TTS generation.")
+            logger.warning("No chapters file found — skipping TTS generation.")
             return
 
         audio_root = self.work_dir / "audio"
@@ -460,14 +765,17 @@ class PipelineController:
         engine = self._make_tts_backend(output_dir=str(audio_root))
 
         audio_timing: Dict[str, List[Dict]] = {}
-        tts_speed = float(self.settings.tts_speed or 1.0)
+        tts_speed = float(_gs(self.settings, "tts_speed", default=1.0) or 1.0)
 
         for idx in range(total):
             if self._cancelled("tts_generate"):
                 return
 
-            chapter_id = self._chapter_id_for_offset(idx)
-            final_info_path = self._chapter_final_path(chapter_id)
+            chapter_id = f"ch{self.selected_start_chapter + idx}"
+            # Try chapter_info_final first (new format), fall back to legacy _final.json
+            final_info_path = self._chapter_info_final_path(chapter_id)
+            if not final_info_path.exists():
+                final_info_path = self._chapter_final_path(chapter_id)
 
             if not final_info_path.exists():
                 logger.warning(

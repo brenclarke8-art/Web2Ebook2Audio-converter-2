@@ -158,6 +158,7 @@ class CharacterDatabase:
         """Store a Character object directly (convenience wrapper for tests / batch load)."""
         norm = normalize_character_name(character.name)
         self._chars[norm] = character
+        self.save()
         return character
 
     def add_or_update(
@@ -218,6 +219,17 @@ class CharacterDatabase:
         # Remove secondary
         sec_norm = normalize_character_name(secondary.name)
         self._chars.pop(sec_norm, None)
+
+    def remove(self, name: str) -> None:
+        """Remove a character by name and auto-save."""
+        norm = normalize_character_name(name)
+        self._chars.pop(norm, None)
+        # Also remove any entry whose canonical name matches (alias-based lookup)
+        for key, char in list(self._chars.items()):
+            if normalize_character_name(char.name) == norm:
+                del self._chars[key]
+                break
+        self.save()
 
     # --------------------------------------------------------
     # List / Export

@@ -76,7 +76,7 @@ def test_scrape_index_filters_placeholder_urls(tmp_path, monkeypatch):
         def scrape_index_page(self, _url):
             return urls
 
-    monkeypatch.setattr("ebook_app.pipeline_controller.WebScraper", _FakeScraper)
+    monkeypatch.setattr("ebook_app.pipeline.controller.WebScraper", _FakeScraper)
 
     controller.scrape_index()
 
@@ -116,7 +116,7 @@ def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
                 for idx, url in enumerate(selected_urls)
             ]
 
-    monkeypatch.setattr("ebook_app.pipeline_controller.WebScraper", _FakeScraper)
+    monkeypatch.setattr("ebook_app.pipeline.controller.WebScraper", _FakeScraper)
 
     controller.scrape_chapters()
 
