@@ -19,6 +19,16 @@ try:
 except ImportError:  # pragma: no cover
     WebScraper = None  # type: ignore
 
+def _obj_to_dict(obj: Any) -> Dict:
+    """Convert a dataclass or namespace object to a plain dict."""
+    if hasattr(obj, "__dataclass_fields__"):
+        from dataclasses import asdict
+        return asdict(obj)
+    if hasattr(obj, "__dict__"):
+        return vars(obj)
+    return dict(obj)  # type: ignore
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -626,17 +636,9 @@ class PipelineController:
             parser = self._build_dialogue_parser()
             result = parser.parse(text, chapter_id)
 
-            def _to_dict(obj):
-                if hasattr(obj, "__dataclass_fields__"):
-                    from dataclasses import asdict
-                    return asdict(obj)
-                if hasattr(obj, "__dict__"):
-                    return vars(obj)
-                return dict(obj)
-
             raw_data = {
-                "segments": [_to_dict(s) for s in result.segments],
-                "detected_characters": [_to_dict(c) for c in result.detected_characters],
+                "segments": [_obj_to_dict(s) for s in result.segments],
+                "detected_characters": [_obj_to_dict(c) for c in result.detected_characters],
             }
             self._save_json(self._chapter_llm_raw_path(chapter_id), raw_data)
             logger.info("llm_semantic_analysis: wrote %s_llm_raw.json", chapter_id)
@@ -713,17 +715,9 @@ class PipelineController:
         parser = self._build_dialogue_parser()
         result = parser.parse(text, chapter_id, manual_segment_hints=hints)
 
-        def _to_dict(obj):
-            if hasattr(obj, "__dataclass_fields__"):
-                from dataclasses import asdict
-                return asdict(obj)
-            if hasattr(obj, "__dict__"):
-                return vars(obj)
-            return dict(obj)
-
         raw_data = {
-            "segments": [_to_dict(s) for s in result.segments],
-            "detected_characters": [_to_dict(c) for c in result.detected_characters],
+            "segments": [_obj_to_dict(s) for s in result.segments],
+            "detected_characters": [_obj_to_dict(c) for c in result.detected_characters],
         }
         self._save_json(self._chapter_llm_raw_path(chapter_id), raw_data)
         self._save_json(self._chapter_llm_normalized_path(chapter_id), raw_data)

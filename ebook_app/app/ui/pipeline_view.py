@@ -490,11 +490,15 @@ class PipelinePage(BasePage):
         return segments
 
     def _refresh_final_review_view(self, chapter_id: str) -> None:
-        """Refresh the final review view panel for the given chapter (no-op if not built)."""
+        """Refresh the final review view panel for the given chapter.
+
+        This is a no-op in the base implementation; the full pipeline UI
+        overrides this to repopulate the review tab after segment edits.
+        """
         views = getattr(self, '_review_stage_views', {})
         view = views.get(chapter_id)
         if view is not None and hasattr(self, '_segments_to_html'):
-            pass  # actual refresh handled by subclass / full UI
+            pass  # actual refresh delegated to full UI subclass
 
     def _character_db_path(self) -> Path:
         return Path(self.project_manager.get_work_dir()) / "character_database.json"
@@ -600,5 +604,9 @@ class PipelinePage(BasePage):
         self.log.log("Dialogue recheck complete.", level="SUCCESS")
 
     def _refresh_segment_speaker_options(self) -> None:
-        """Refresh speaker combo options in the segment review table (no-op stub)."""
+        """Refresh speaker combo-box options in the segment review table.
+
+        This is a no-op placeholder; the full pipeline UI overrides this to
+        repopulate combo boxes when the character database changes.
+        """
 
