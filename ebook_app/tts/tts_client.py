@@ -7,9 +7,9 @@ import requests
 
 
 class TTSClient:
-    def __init__(self, base_url: str = 'http://127.0.0.1:5005', timeout: int = 10):
+    def __init__(self, base_url: str = 'http://127.0.0.1:5005', timeout: float = 10):
         self.base_url = base_url.rstrip('/')
-        self.timeout = int(timeout)
+        self.timeout = float(timeout)
 
     def health(self) -> dict:
         try:
