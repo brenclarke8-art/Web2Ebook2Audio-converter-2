@@ -176,7 +176,7 @@ You can also launch the default local service from **Settings â†’ TTS Backend â†
 In a separate terminal, from the repository root, activate the GUI venv and run:
 
 ```bash
-python -m ebook_app.main
+python -m ebook_app.app.main
 ```
 
 After the editable install, the console entry point is also available:
@@ -451,7 +451,7 @@ python -c "from pathlib import Path; print(Path('tts_service/requirements.txt').
 Try running directly with Python:
 
 ```bash
-python -m ebook_app.main
+python -m ebook_app.app.main
 ```
 
 Check for missing dependencies:
