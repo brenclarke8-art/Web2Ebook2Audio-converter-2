@@ -42,7 +42,7 @@ def trim_silence(
     else:
         mono = data
 
-    threshold_linear = 10 ** (threshold_db / 20.0)
+    threshold_linear = 10 ** (threshold_db / 20.0)  # dBFS → linear amplitude: amplitude = 10^(dB/20)
     padding_samples = int(samplerate * padding_ms / 1000)
 
     # Find first and last sample above threshold

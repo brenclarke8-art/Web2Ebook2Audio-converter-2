@@ -75,10 +75,18 @@ def build_opf(
             attrs["media-overlay"] = ch["smil_filename"].replace(".", "_")
         ET.SubElement(manifest, "item", attrs)
         if ch.get("audio_filename"):
+            audio_fname = ch["audio_filename"]
+            # Determine media-type from file extension
+            if audio_fname.lower().endswith(".wav"):
+                audio_media_type = "audio/wav"
+            elif audio_fname.lower().endswith(".ogg"):
+                audio_media_type = "audio/ogg"
+            else:
+                audio_media_type = "audio/mpeg"
             ET.SubElement(manifest, "item", {
-                "id": ch["audio_filename"].replace(".", "_"),
-                "href": f"audio/{ch['audio_filename']}",
-                "media-type": "audio/mpeg",
+                "id": audio_fname.replace(".", "_"),
+                "href": f"audio/{audio_fname}",
+                "media-type": audio_media_type,
             })
         if has_smil and ch.get("smil_filename"):
             ET.SubElement(manifest, "item", {

@@ -38,4 +38,4 @@ ebook-audio-studio = "ebook_app.app.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ebook_app*"]
+include = ["ebook_app", "ebook_app.*"]

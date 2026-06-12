@@ -29,6 +29,12 @@ class EmotionTagger:
         self._llm: Optional[EmotionLlm] = None
         if use_llm:
             self._llm = EmotionLlm(llm_url=llm_url, model=llm_model)
+        # Pre-compile keyword patterns per emotion profile for efficiency
+        self._patterns: Dict[str, List[re.Pattern]] = {
+            name: [re.compile(r"\b" + re.escape(kw) + r"\b") for kw in profile.keywords]
+            for name, profile in self.profiles.items()
+            if name != "neutral"
+        }
 
     def tag_segment(self, segment: Dict[str, Any]) -> Dict[str, Any]:
         """Add an "emotion" key to *segment* dict. Returns the updated dict."""
@@ -60,10 +66,8 @@ class EmotionTagger:
         return [self.tag_segment(s) for s in segments]
 
     def _keyword_match(self, text: str) -> str:
-        for name, profile in self.profiles.items():
-            if name == "neutral":
-                continue
-            for kw in profile.keywords:
-                if re.search(r"\b" + re.escape(kw) + r"\b", text):
+        for name, patterns in self._patterns.items():
+            for pattern in patterns:
+                if pattern.search(text):
                     return name
         return ""
