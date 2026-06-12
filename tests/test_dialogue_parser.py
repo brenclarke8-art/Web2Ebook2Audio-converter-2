@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import re
 
-from ebook_app.models.character_db import Character, CharacterDatabase
-from ebook_app.models.dialogue_parser import DialogueParser
-from ebook_app.services.dialogue_segmentation_service import (
+from ebook_app.app.state.character_db import Character, CharacterDatabase
+from ebook_app.text.identify.speaker_llm import DialogueParser
+from ebook_app.text.segment.segmenter import (
     DialogueLLMResult,
     DialogueLLMSegment,
     DialogueSegmentationService,
@@ -83,7 +83,7 @@ def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
             ]
         return _DummyResponse({"response": json.dumps(payload)})
 
-    monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.requests.post", _fake_post)
     result = parser.parse('"Hello there."', chapter_id="ch001")
 
     assert len(result.segments) == 1
@@ -100,7 +100,7 @@ def test_dialogue_parser_cleans_ui_noise_before_prompt(monkeypatch):
         captured_payload.update(kwargs.get("json", {}))
         return _DummyResponse({"response": json.dumps({"segments": [], "characters": []})})
 
-    monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.requests.post", _fake_post)
     parser.parse(
         "Next Chapter\nSubscribe now\nActual story line.\nAnother story paragraph.",
         chapter_id="ch-clean",
@@ -123,7 +123,7 @@ def test_dialogue_parser_writes_llm_communication_log(monkeypatch, tmp_path):
     def _fake_post(*_args, **_kwargs):
         return _DummyResponse({"response": json.dumps({"segments": [], "characters": []})})
 
-    monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.requests.post", _fake_post)
     parser.parse("Story text only.", chapter_id="ch-log")
 
     lines = [line for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -139,7 +139,7 @@ def test_dialogue_parser_falls_back_on_invalid_output(monkeypatch):
     def _fake_post(*_args, **_kwargs):
         return _DummyResponse({"response": "not-json"})
 
-    monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.requests.post", _fake_post)
     result = parser.parse("Fallback content.", chapter_id="ch002")
 
     assert len(result.segments) == 1
@@ -168,7 +168,7 @@ def test_dialogue_parser_accepts_markdown_wrapped_json(monkeypatch):
         wrapped = f"```json\n{json.dumps(items)}\n```"
         return _DummyResponse({"response": wrapped})
 
-    monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.requests.post", _fake_post)
     result = parser.parse('"Hi."', chapter_id="ch-wrap")
 
     assert result.segments[0].type == "dialogue"
@@ -194,7 +194,7 @@ def test_dialogue_parser_preserves_character_objects(monkeypatch):
             ]
         return _DummyResponse({"response": json.dumps(payload)})
 
-    monkeypatch.setattr("ebook_app.services.llm_client.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.requests.post", _fake_post)
     result = parser.parse("Alice said hello.", chapter_id="ch-characters")
 
     assert any(c.name == "Alice" for c in result.detected_characters)

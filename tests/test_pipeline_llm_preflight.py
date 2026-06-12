@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ebook_app.models.dialogue_parser import DialogueParser
+from ebook_app.text.identify.speaker_llm import DialogueParser
 from ebook_app.pipeline_controller import PipelineController
 
 

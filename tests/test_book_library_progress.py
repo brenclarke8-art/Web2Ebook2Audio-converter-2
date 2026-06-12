@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ebook_app.models.book_library import BookLibrary
+from ebook_app.app.state.book_library import BookLibrary
 
 
 def test_book_library_persists_inventory_and_last_processed(tmp_path):

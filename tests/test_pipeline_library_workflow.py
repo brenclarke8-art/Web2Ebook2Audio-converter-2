@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from ebook_app.pipeline_controller import PipelineController
+from ebook_app.pipeline.controller import PipelineController
 
 
 class DummySettings:

@@ -1,4 +1,4 @@
-from ebook_app.models.scraper.text_cleaner import TextCleaner
+from ebook_app.text.parse.html_cleaner import TextCleaner
 
 
 def test_clean_text_removes_reader_control_block() -> None:

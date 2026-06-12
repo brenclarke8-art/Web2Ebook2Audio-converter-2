@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ebook-audio-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "A PySide6 desktop app that converts web novels into EPUB3 audiobooks with multi-speaker TTS."
 requires-python = ">=3.10"
 dependencies = [
@@ -34,7 +34,8 @@ full = [
 ]
 
 [project.scripts]
-ebook-audio-studio = "ebook_app.main:main"
+ebook-audio-studio = "ebook_app.app.main:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["ebook_app*"]

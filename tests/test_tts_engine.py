@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from ebook_app.core.tts.tts_engine import TTSEngine
+from ebook_app.tts.tts_service import TTSEngine
 
 
 class _FakeResponse:
@@ -43,8 +43,8 @@ def test_generate_audio_retries_once_on_503_and_succeeds(tmp_path, monkeypatch):
         calls.append({"url": url, "json": json, "timeout": timeout})
         return responses.pop(0)
 
-    monkeypatch.setattr("ebook_app.core.tts.tts_engine.requests.post", _fake_post)
-    monkeypatch.setattr("ebook_app.core.tts.tts_engine.time.sleep", lambda *_: None)
+    monkeypatch.setattr("ebook_app.tts.tts_service.requests.post", _fake_post)
+    monkeypatch.setattr("ebook_app.tts.tts_service.time.sleep", lambda *_: None)
 
     engine = TTSEngine(output_dir=out_dir, retry_attempts=3, retry_backoff_sec=0)
     output_path = engine.generate_audio(
@@ -70,8 +70,8 @@ def test_generate_audio_raises_after_retry_budget_exhausted(tmp_path, monkeypatc
         calls += 1
         return _FakeResponse(503)
 
-    monkeypatch.setattr("ebook_app.core.tts.tts_engine.requests.post", _always_503)
-    monkeypatch.setattr("ebook_app.core.tts.tts_engine.time.sleep", lambda *_: None)
+    monkeypatch.setattr("ebook_app.tts.tts_service.requests.post", _always_503)
+    monkeypatch.setattr("ebook_app.tts.tts_service.time.sleep", lambda *_: None)
 
     engine = TTSEngine(output_dir=out_dir, retry_attempts=attempts, retry_backoff_sec=0)
     with pytest.raises(requests.HTTPError):
@@ -94,8 +94,8 @@ def test_generate_audio_does_not_retry_non_retryable_503(tmp_path, monkeypatch):
         calls += 1
         return _FakeResponse(503, {"detail": "Kokoro model file not found: /missing/model.onnx"})
 
-    monkeypatch.setattr("ebook_app.core.tts.tts_engine.requests.post", _always_missing_model)
-    monkeypatch.setattr("ebook_app.core.tts.tts_engine.time.sleep", lambda *_: None)
+    monkeypatch.setattr("ebook_app.tts.tts_service.requests.post", _always_missing_model)
+    monkeypatch.setattr("ebook_app.tts.tts_service.time.sleep", lambda *_: None)
 
     engine = TTSEngine(output_dir=out_dir, retry_attempts=3, retry_backoff_sec=0)
     with pytest.raises(requests.HTTPError):

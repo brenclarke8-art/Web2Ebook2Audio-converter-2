@@ -251,7 +251,7 @@ def test_service_truncates_long_chapter_text():
 
 def test_segmentation_service_receives_story_context(monkeypatch):
     """Story context block should be inserted into pass-1 (character detection) system prompt."""
-    from ebook_app.services.dialogue_segmentation_service import (
+    from ebook_app.text.segment.segmenter import (
         DialogueSegmentationService,
     )
 
@@ -280,7 +280,7 @@ def test_segmentation_service_receives_story_context(monkeypatch):
 
 def test_segmentation_service_no_story_context_unchanged(monkeypatch):
     """Without story context, the user message should not contain context headers."""
-    from ebook_app.services.dialogue_segmentation_service import (
+    from ebook_app.text.segment.segmenter import (
         DialogueSegmentationService,
     )
 

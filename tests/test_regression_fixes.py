@@ -4,7 +4,7 @@ import json
 import re
 
 from ebook_app.core.epub.epub_builder import EPUBBuilder
-from ebook_app.models.character_db import Character, CharacterDatabase
+from ebook_app.app.state.character_db import Character, CharacterDatabase
 
 
 def test_epub_builder_writes_nav_namespace_overlay_and_unique_id(tmp_path):

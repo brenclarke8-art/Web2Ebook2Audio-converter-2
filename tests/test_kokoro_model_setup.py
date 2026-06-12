@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ebook_app.services import kokoro_model_setup
+from ebook_app.tts import kokoro_model_setup
 
 
 class _FakeResponse:

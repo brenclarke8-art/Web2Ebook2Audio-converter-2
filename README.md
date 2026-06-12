@@ -6,34 +6,38 @@ A PySide6 desktop application that converts web novels into EPUB3 audiobooks wit
 
 ### Core Components
 
-- **ProjectManager** (`src/ebook_app/core/project_manager.py`): Centralized state management for the current project/book, coordinating between UI, BookLibrary, and PipelineController.
-- **SettingsManager** (`src/ebook_app/core/settings_manager.py`): Persistent application settings storage.
-- **BookLibrary** (`src/ebook_app/models/book_library.py`): Multi-book library management with metadata and progress tracking.
-- **PipelineController** (`src/ebook_app/pipeline_controller.py`): Orchestrates the end-to-end conversion pipeline.
+- **ProjectManager** (`ebook_app/app/state/book_state.py`): Centralized state management for the current project/book, coordinating between UI, BookLibrary, and PipelineController.
+- **SettingsManager** (`ebook_app/app/state/settings_manager.py`): Persistent application settings storage.
+- **BookLibrary** (`ebook_app/app/state/book_library.py`): Multi-book library management with metadata and progress tracking.
+- **PipelineController** (`ebook_app/pipeline/controller.py`): Orchestrates the end-to-end conversion pipeline.
 
 ### Project Structure
 
 ```
-src/ebook_app/
-├── core/               # Core application components
-│   ├── project_manager.py
-│   └── settings_manager.py
-├── models/             # Data models and business logic
-│   ├── book_library.py
-│   ├── epub_builder.py
-│   ├── scraper.py
-│   ├── tts_engine_cli.py   # Kokoro-ONNX Python API wrapper
-│   ├── voice_catalog.py    # Full 28-voice catalog
-│   └── ...
-├── services/           # Service layer
-│   ├── epub_service.py
-│   └── ...
-├── ui/                 # User interface
+ebook_app/
+├── app/                # Application entry point, UI, state management
+│   ├── main.py
 │   ├── main_window.py
-│   ├── pages/
-│   └── ...
-├── pipeline_controller.py
-└── main.py            # Application entry point
+│   ├── ui/             # UI pages
+│   ├── state/          # State management (book, chapter, character, settings)
+│   ├── widgets/        # Reusable UI widgets
+│   └── dialogs/        # Dialog windows
+├── pipeline/           # Pipeline controller and phase definitions
+│   ├── controller.py
+│   └── phases.py
+├── text/               # Text processing sub-packages
+│   ├── scrape/         # Web/EPUB/PDF/file/OCR importers
+│   ├── parse/          # HTML cleaner, text normalizer
+│   ├── translate/      # Translation engine and profiles
+│   ├── overrides/      # Override rules and glossary
+│   ├── segment/        # Dialogue/thought segmentation
+│   ├── identify/       # Speaker ID, character DB update
+│   └── emotion/        # Emotion tagging
+├── tts/                # TTS engine, voice routing, audio utils
+├── epub/               # EPUB3 builder (XHTML, SMIL, OPF, TOC)
+├── config/             # Default JSON configuration files
+├── logs/               # Runtime log outputs
+└── output/             # Generated EPUB and audio output
 ```
 
 ## Architecture
