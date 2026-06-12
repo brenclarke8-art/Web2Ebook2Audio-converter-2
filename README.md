@@ -201,7 +201,7 @@ Model files are downloaded and saved to `<repo>/.ebook_audio_studio/models/` by 
 **Method B — Command line:**
 
 ```python
-from ebook_app.services.kokoro_model_setup import download_and_setup_kokoro_models
+from ebook_app.tts.kokoro_model_setup import download_and_setup_kokoro_models
 download_and_setup_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models/
 ```
 
@@ -210,7 +210,7 @@ download_and_setup_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models
 Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
 <https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0> and either:
 - Place them in `<repo>/.ebook_audio_studio/models/` (auto-discovered), or
-- Set custom paths via **Settings → Model file (.onnx)** and **Settings → Voices file (.bin)**
+- Set custom paths via **Settings → TTS Backend → Model file (.onnx)** and **Settings → TTS Backend → Voices file (.bin)**
 
 #### Optional: Browser scraping support (Playwright)
 
@@ -240,7 +240,7 @@ uvicorn tts_server:app --host 127.0.0.1 --port 5005
 1. Launch `ebook-audio-studio` (from the GUI venv)
 2. Navigate to **Settings**
 3. Ensure **Service URL** is `http://127.0.0.1:5005`
-4. Click **Check Service** — the indicator should turn green
+4. Click **Test TTS Server** — the indicator should turn green
 5. Click **Save Settings**
 
 The Pipeline workflow will now use that remote backend for all voice synthesis,
@@ -295,45 +295,58 @@ The application follows a project-based workflow:
 For programmatic use or automation:
 
 ```python
-from ebook_app.core.settings_manager import SettingsManager
-from ebook_app.pipeline_controller import PipelineController
+from ebook_app.app.state.settings_manager import SettingsManager
+from ebook_app.pipeline.controller import PipelineController, PipelineSettings
+from pathlib import Path
 
 settings = SettingsManager()
-pipeline = PipelineController(settings)
+ps = PipelineSettings(
+    work_dir=Path("output/my-book/pipeline_work"),
+    output_dir=Path("output"),
+    book_title="My Book",
+    book_author="Author Name",
+    llm_base_url=settings.get("dialogue_llm_url", ""),
+    llm_model=settings.get("dialogue_llm_model", ""),
+)
+pipeline = PipelineController(ps)
 
-# Run individual steps
+# Phase 1 — scrape chapter list from index URL
 pipeline.scrape_index()
+# Phase 2 — scrape and clean each chapter's text
 pipeline.scrape_chapters()
-pipeline.clean_chapters()
-pipeline.plan_clean_review()
-pipeline.llm_semantic_analysis()
-pipeline.normalize_llm_output()
+# Phase 3 — deterministic Pass-1 extraction (no LLM)
+pipeline.pass1_extraction()
+# Phase 4 — LLM-based Pass-2 classification
+pipeline.pass2_classification()
+# Phase 5 — rebuild final chapters from reviewed character DB
 pipeline.smart_review_dialogue()
+# Phase 6 — TTS audio generation (per-segment WAVs + concat)
 pipeline.tts_generate()
+# Phase 7 — EPUB3 build with Media Overlays
 pipeline.epub_build()
-
-# Or run all steps at once
-pipeline.run_all()
 ```
 
 ### Project Directory Structure
 
 ```
 output/
-└── <project-name>/
+└── <book-id>/
     ├── project.json              # Project metadata and state
-    ├── pipeline_work/            # Intermediate files
-    │   ├── chapters.json         # Scraped chapter data
-    │   ├── translated.json       # Translated content (if applicable)
-    │   ├── dialogue.json         # Parsed dialogue segments
-    │   ├── audio/                # Generated audio files
-    │   │   ├── chapter_001.wav
-    │   │   └── ...
-    │   ├── audio_timing.json     # Paragraph-to-audio timing map
-    │   ├── chapter_info_all.json # Aggregated semantic analysis output
+    ├── pipeline_work/            # Intermediate pipeline files
+    │   ├── chapters_raw.json     # Scraped chapter list (titles + source URLs)
+    │   ├── chXXX_cleaned.txt     # Cleaned chapter text (one file per chapter)
+    │   ├── chXXX_pass1.json      # Pass-1 extraction output
+    │   ├── chXXX_pass2.json      # Pass-2 LLM classification output
+    │   ├── chXXX_final.json      # Final chapter info used for TTS + EPUB
     │   ├── character_database.json
-    │   └── semantic_review_plan.json
-    └── <project-name>.epub       # Final EPUB3 output
+    │   ├── audio/                # Generated audio files
+    │   │   ├── chXXX/
+    │   │   │   ├── chXXX_seg000.wav  # Per-segment WAV
+    │   │   │   └── chXXX.wav         # Concatenated chapter WAV
+    │   │   └── …
+    │   ├── audio_timing.json     # Paragraph-to-audio timing map
+    │   └── epub_build/           # EPUB staging directory
+    └── <book-title>.epub         # Final EPUB3 output
 ```
 
 ---
@@ -358,21 +371,21 @@ Kokoro ONNX model files are stored at (by default):
 └── voices-v1.0.bin
 ```
 
-Custom paths can be set in **Settings → Kokoro ONNX Models**.
+Custom paths can be set in **Settings → TTS Backend → Model file (.onnx)** and **Settings → TTS Backend → Voices file (.bin)**.
 
 ### Configurable Settings
 
 | Setting | Description | Default |
 |---|---|---|
 | **Output Directory** | Where projects are created | `<repo>/output` |
+| **Model file (.onnx)** | Path to Kokoro ONNX model (blank = auto-discover) | auto |
+| **Voices file (.bin)** | Path to Kokoro voices file (blank = auto-discover) | auto |
 | **TTS Voice** | Default voice for narration | `af_heart` |
 | **Speech Speed** | Global speed multiplier | `1.0` |
-| **Model file (.onnx)** | Path to Kokoro ONNX model | auto (see above) |
-| **Voices file (.bin)** | Path to Kokoro voices file | auto (see above) |
-| **Dialogue LLM URL** | Ollama chat endpoint used for dialogue segmentation | `http://127.0.0.1:11434/api/chat` |
-| **Dialogue LLM model** | Ollama model for chapter segmentation | `mistral:instruct` |
-| **Dialogue LLM mode** | Segmentation mode (`full` or `off`) | `full` |
-| **Dialogue LLM timeout / retries** | Network timeout and retry count for LLM requests | `120s / 1` |
+| **Dialogue LLM URL** | Ollama API endpoint for dialogue classification | `http://127.0.0.1:11434/api/generate` |
+| **Dialogue LLM model** | Ollama model for Pass-2 chapter classification | `qwen2.5-coder:7b` |
+| **Dialogue LLM timeout** | Network timeout for LLM requests (seconds) | `300` |
+| **Dialogue LLM retries** | Retry count for failed LLM requests | `1` |
 
 ### Available Voices (Kokoro 1.0)
 
@@ -415,7 +428,7 @@ Custom paths can be set in **Settings → Kokoro ONNX Models**.
 
 The status indicators in Settings show amber (⚠) if model files are missing.
 
-**Fix:** Go to **Settings** and click **"Download Models from GitHub"**, or manually place the files in `<repo>/.ebook_audio_studio/models/`.
+**Fix:** Go to **Settings → TTS Backend** and click **"Download + Setup Kokoro Models"**, or manually place the files in `<repo>/.ebook_audio_studio/models/`.
 
 ### TTS Service Dependency Error
 
@@ -485,11 +498,11 @@ The project uses Python type hints and follows PEP 8 conventions.
 
 ### Architecture Overview
 
-- **ProjectManager**: Centralized state management for the current project
-- **SettingsManager**: Persistent application settings (`<repo>/.ebook_audio_studio/settings.json`)
-- **BookLibrary**: Multi-book library management
-- **PipelineController**: Orchestrates the end-to-end conversion pipeline
-- **TTSEngine**: Wraps `kokoro_onnx.Kokoro` with lazy model loading and multi-speaker support
-- **EPUBBuilder**: EPUB3 generation with Media Overlays
+- **ProjectManager** (`ebook_app/app/state/book_state.py`): Centralized state management for the current project
+- **SettingsManager** (`ebook_app/app/state/settings_manager.py`): Persistent application settings (`<repo>/.ebook_audio_studio/settings.json`)
+- **BookLibrary** (`ebook_app/app/state/book_library.py`): Multi-book library management
+- **PipelineController** (`ebook_app/pipeline/controller.py`): Orchestrates the 7-phase end-to-end conversion pipeline
+- **TTSEngine** (`ebook_app/tts/`): Remote TTS via HTTP to `tts_service/tts_server.py`; uses kokoro-onnx
+- **EPUBBuilder** (`ebook_app/epub/`): EPUB3 generation with Media Overlays
 
 Each project maintains its own directory with intermediate files and state preservation for resume support.

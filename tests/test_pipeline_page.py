@@ -157,20 +157,16 @@ def test_run_to_review_reuses_cached_index_inventory(tmp_path) -> None:
     ctrl = SimpleNamespace(
         work_dir=tmp_path,
         chapter_urls=[],
-        set_chapter_range=lambda start, end: calls.append(f"range:{start}-{end}"),
         scrape_index=lambda: calls.append("scrape_index"),
         scrape_chapters=lambda: calls.append("scrape_chapters"),
-        clean_chapters=lambda: calls.append("clean_chapters"),
-        plan_clean_review=lambda: calls.append("plan_clean_review"),
-        llm_semantic_analysis=lambda: calls.append("llm_semantic_analysis"),
-        normalize_llm_output=lambda: calls.append("normalize_llm_output"),
+        pass1_extraction=lambda: calls.append("pass1_extraction"),
+        pass2_classification=lambda: calls.append("pass2_classification"),
         smart_review_dialogue=lambda: calls.append("smart_review_dialogue"),
     )
 
     worker._run_to_review(ctrl)
 
     assert "scrape_index" not in calls
-    assert ctrl.chapter_urls == ["u1", "u2", "u3"]
     assert worker.inventory_ready.calls == [({"raw_count": 5, "valid_count": 3, "chapter_urls": ["u1", "u2", "u3"]},)]
     assert worker.failed.calls == []
     assert worker.finished_ok.calls == [
@@ -202,13 +198,10 @@ def test_run_to_review_cached_index_falls_back_raw_count_when_missing(tmp_path) 
     ctrl = SimpleNamespace(
         work_dir=tmp_path,
         chapter_urls=[],
-        set_chapter_range=lambda *_args: None,
         scrape_index=lambda: None,
         scrape_chapters=lambda: None,
-        clean_chapters=lambda: None,
-        plan_clean_review=lambda: None,
-        llm_semantic_analysis=lambda: None,
-        normalize_llm_output=lambda: None,
+        pass1_extraction=lambda: None,
+        pass2_classification=lambda: None,
         smart_review_dialogue=lambda: None,
     )
 
@@ -219,10 +212,20 @@ def test_run_to_review_cached_index_falls_back_raw_count_when_missing(tmp_path) 
 
 
 def test_run_to_review_scrapes_index_when_cache_missing(tmp_path) -> None:
+    import json as _json
+
+    # Write chapters_raw.json that scrape_index would produce
+    chapters_raw = tmp_path / "chapters_raw.json"
+    chapters_raw.write_text(
+        _json.dumps([{"title": "Ch 1", "source": "http://example.com/ch1"}]),
+        encoding="utf-8",
+    )
+
     worker = _PipelineWorker(
         project_manager=SimpleNamespace(
             get_chapter_urls=lambda: [],
             get_inventory=lambda: {"raw_chapter_count": 0, "valid_chapter_count": 0},
+            get_work_dir=lambda: tmp_path,
         ),
         settings=SimpleNamespace(),
         mode=_PipelineWorker.RUN_TO_REVIEW,
@@ -234,28 +237,23 @@ def test_run_to_review_scrapes_index_when_cache_missing(tmp_path) -> None:
     worker.finished_ok = _SignalCapture()
     worker.failed = _SignalCapture()
 
-    (tmp_path / "semantic_review_plan.json").write_text('{"needs_review": []}', encoding="utf-8")
-
     calls: list[str] = []
 
     ctrl = SimpleNamespace(
         work_dir=tmp_path,
-        chapter_urls=["fresh"],
-        set_chapter_range=lambda *_args: None,
         scrape_index=lambda: calls.append("scrape_index"),
-        get_chapter_inventory=lambda: {"raw_count": 1, "valid_count": 1},
         scrape_chapters=lambda: calls.append("scrape_chapters"),
-        clean_chapters=lambda: calls.append("clean_chapters"),
-        plan_clean_review=lambda: calls.append("plan_clean_review"),
-        llm_semantic_analysis=lambda: calls.append("llm_semantic_analysis"),
-        normalize_llm_output=lambda: calls.append("normalize_llm_output"),
+        pass1_extraction=lambda: calls.append("pass1_extraction"),
+        pass2_classification=lambda: calls.append("pass2_classification"),
         smart_review_dialogue=lambda: calls.append("smart_review_dialogue"),
     )
 
     worker._run_to_review(ctrl)
 
     assert calls[0] == "scrape_index"
-    assert worker.inventory_ready.calls == [({"raw_count": 1, "valid_count": 1, "chapter_urls": ["fresh"]},)]
+    assert worker.inventory_ready.calls == [
+        ({"raw_count": 1, "valid_count": 1, "chapter_urls": ["http://example.com/ch1"]},)
+    ]
     assert worker.failed.calls == []
 
 
@@ -425,7 +423,6 @@ def test_run_continue_audio_finalizes_review_before_audio(tmp_path) -> None:
 
     calls: list[str] = []
     ctrl = SimpleNamespace(
-        set_chapter_range=lambda start, end: calls.append(f"range:{start}-{end}"),
         smart_review_dialogue=lambda: calls.append("smart_review_dialogue"),
         tts_generate=lambda: calls.append("tts_generate"),
         epub_build=lambda: calls.append("epub_build"),
@@ -433,7 +430,7 @@ def test_run_continue_audio_finalizes_review_before_audio(tmp_path) -> None:
 
     worker._run_continue_audio(ctrl)
 
-    assert calls == ["range:2-3", "smart_review_dialogue", "tts_generate", "epub_build"]
+    assert calls == ["smart_review_dialogue", "tts_generate", "epub_build"]
 
 
 def test_stop_pipeline_requests_worker_stop() -> None:
@@ -476,23 +473,17 @@ def test_on_recheck_dialogue_reparses_with_manual_hints() -> None:
         log=_LogCapture(),
     )
 
-    calls: list[tuple[str, list[dict]]] = []
+    calls: list[str] = []
     controller = SimpleNamespace(
-        set_chapter_range=lambda _start, _end: None,
-        recheck_dialogue_with_manual_context=lambda chapter_id, hints: (
-            calls.append((chapter_id, hints)) or {"chapter_id": chapter_id, "segment_count": 1, "character_count": 1}
-        ),
+        pass2_classification=lambda: calls.append("pass2_classification"),
+        smart_review_dialogue=lambda: calls.append("smart_review_dialogue"),
     )
     page.project_manager = SimpleNamespace(
         create_pipeline_controller=lambda: controller,
-        get_selected_range=lambda: {"start": 1, "end": 1},
     )
 
     PipelinePage._on_recheck_dialogue(page)
 
-    assert calls == [("ch1", [{"text": "Hello", "speaker": "Alice", "type": "dialogue"}])]
-    assert page.log.messages[0] == ("Running dialogue recheck with your manual corrections…", "INFO")
-    assert page.log.messages[1] == (
-        "Dialogue recheck complete for ch1: 1 segments, 1 characters.",
-        "SUCCESS",
-    )
+    assert calls == ["pass2_classification", "smart_review_dialogue"]
+    assert page.log.messages[0][1] == "INFO"
+    assert page.log.messages[-1] == ("Dialogue recheck complete.", "SUCCESS")

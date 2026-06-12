@@ -48,33 +48,56 @@ class _PipelineWorker(QThread):
         return False
 
     def _run_to_review(self, ctrl):
+        import json as _json
+
         cached_urls = list(getattr(self.project_manager, 'get_chapter_urls', lambda: [])() or [])
         cached_inventory = getattr(self.project_manager, 'get_inventory', lambda: {})() or {}
         if cached_urls:
-            ctrl.chapter_urls = cached_urls
             raw_count = int(cached_inventory.get('raw_chapter_count') or len(cached_urls))
             valid_count = int(cached_inventory.get('valid_chapter_count') or 0)
             if valid_count <= 0 or valid_count > len(cached_urls):
                 valid_count = len(cached_urls)
             self.inventory_ready.emit({'raw_count': raw_count, 'valid_count': valid_count, 'chapter_urls': cached_urls})
         else:
+            # Phase 1 — scrape index, build chapters_raw.json
             ctrl.scrape_index()
-            inventory = ctrl.get_chapter_inventory()
-            self.inventory_ready.emit({**inventory, 'chapter_urls': list(getattr(ctrl, 'chapter_urls', []))})
+            # Read inventory from chapters_raw.json written by scrape_index
+            work_dir = getattr(self.project_manager, 'get_work_dir', lambda: None)()
+            chapter_urls: list[str] = []
+            if work_dir is not None:
+                chapters_raw_path = work_dir / 'chapters_raw.json'
+                if chapters_raw_path.exists():
+                    try:
+                        chapters_data = _json.loads(chapters_raw_path.read_text(encoding='utf-8'))
+                        chapter_urls = [c.get('source', '') for c in chapters_data if c.get('source')]
+                    except Exception:
+                        pass
+            count = len(chapter_urls)
+            self.inventory_ready.emit({'raw_count': count, 'valid_count': count, 'chapter_urls': chapter_urls})
+
         if self._abort_if_cancelled():
             return
-        ctrl.set_chapter_range(self._start, self._end)
+
+        # Phase 2 — scrape chapter text
         ctrl.scrape_chapters()
-        ctrl.clean_chapters()
-        ctrl.plan_clean_review()
-        ctrl.llm_semantic_analysis()
-        ctrl.normalize_llm_output()
+        if self._abort_if_cancelled():
+            return
+
+        # Phase 3 — deterministic Pass-1 extraction
+        ctrl.pass1_extraction()
+        if self._abort_if_cancelled():
+            return
+
+        # Phase 4 — LLM-based Pass-2 classification
+        ctrl.pass2_classification()
         self.finished_ok.emit(self.RUN_TO_REVIEW, 'Processing complete. Review detected characters in the Review tab before audio.')
 
     def _run_continue_audio(self, ctrl):
-        ctrl.set_chapter_range(self._start, self._end)
+        # Phase 5 — rebuild final chapters from reviewed characters
         ctrl.smart_review_dialogue()
+        # Phase 6 — TTS audio generation
         ctrl.tts_generate()
+        # Phase 7 — EPUB build
         ctrl.epub_build()
 
     def run(self):
@@ -267,16 +290,15 @@ class PipelinePage(BasePage):
     def _on_recheck_dialogue(self) -> None:
         if not self._require_project():
             return
-        chapter_id = self._current_review_chapter_id
-        self.log.log('Running dialogue recheck with your manual corrections…', level='INFO')
-        controller = self.project_manager.create_pipeline_controller()
-        selected = self.project_manager.get_selected_range() if hasattr(self.project_manager, 'get_selected_range') else {'start': 1, 'end': 0}
-        controller.set_chapter_range(selected.get('start', 1), selected.get('end', 0))
-        hints = list(self._current_review_segments)
-        result = controller.recheck_dialogue_with_manual_context(chapter_id, hints)
-        if hasattr(self, '_on_review_chapter_changed'):
-            self._on_review_chapter_changed(self._review_chapter_combo.currentIndex())
+        chapter_id = self._current_review_chapter_id or 'current chapter'
         self.log.log(
-            f"Dialogue recheck complete for {result['chapter_id']}: {result['segment_count']} segments, {result['character_count']} characters.",
-            level='SUCCESS',
+            f'Re-running Pass-2 classification and chapter rebuild for {chapter_id}…',
+            level='INFO',
         )
+        controller = self.project_manager.create_pipeline_controller()
+        # Re-run LLM classification then rebuild final chapters from reviewed characters.
+        controller.pass2_classification()
+        controller.smart_review_dialogue()
+        if hasattr(self, '_on_review_chapter_changed') and hasattr(self, '_review_chapter_combo'):
+            self._on_review_chapter_changed(self._review_chapter_combo.currentIndex())
+        self.log.log('Dialogue recheck complete.', level='SUCCESS')
