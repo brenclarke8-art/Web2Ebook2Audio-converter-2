@@ -202,6 +202,34 @@ class SettingsPage(BasePage):
         self._backend_url_input.setPlaceholderText(_DEFAULT_TTS_SERVICE_URL)
         backend_form.addRow("Service URL:", self._backend_url_input)
 
+        # Kokoro model file (.onnx) — optional override, auto-discovered when blank
+        model_path_row = QHBoxLayout()
+        self._kokoro_model_path_input = QLineEdit(
+            str(self.settings.get("kokoro_model_path", ""))
+        )
+        self._kokoro_model_path_input.setPlaceholderText(
+            "auto (<repo>/.ebook_audio_studio/models/kokoro-v1.0.onnx)"
+        )
+        model_path_row.addWidget(self._kokoro_model_path_input)
+        browse_model = QPushButton("Browse…")
+        browse_model.clicked.connect(self._browse_kokoro_model)
+        model_path_row.addWidget(browse_model)
+        backend_form.addRow("Model file (.onnx):", model_path_row)
+
+        # Kokoro voices file (.bin) — optional override, auto-discovered when blank
+        voices_path_row = QHBoxLayout()
+        self._kokoro_voices_path_input = QLineEdit(
+            str(self.settings.get("kokoro_voices_path", ""))
+        )
+        self._kokoro_voices_path_input.setPlaceholderText(
+            "auto (<repo>/.ebook_audio_studio/models/voices-v1.0.bin)"
+        )
+        voices_path_row.addWidget(self._kokoro_voices_path_input)
+        browse_voices = QPushButton("Browse…")
+        browse_voices.clicked.connect(self._browse_kokoro_voices)
+        voices_path_row.addWidget(browse_voices)
+        backend_form.addRow("Voices file (.bin):", voices_path_row)
+
         backend_vbox.addLayout(backend_form)
 
         # Service status row
@@ -391,6 +419,20 @@ class SettingsPage(BasePage):
         if path:
             self._output_dir_input.setText(path)
 
+    def _browse_kokoro_model(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Kokoro Model File", "", "ONNX files (*.onnx);;All files (*)"
+        )
+        if path:
+            self._kokoro_model_path_input.setText(path)
+
+    def _browse_kokoro_voices(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Kokoro Voices File", "", "BIN files (*.bin);;All files (*)"
+        )
+        if path:
+            self._kokoro_voices_path_input.setText(path)
+
     # ------------------------------------------------------------------
     # Handlers
     # ------------------------------------------------------------------
@@ -398,6 +440,8 @@ class SettingsPage(BasePage):
     def _on_save(self) -> None:
         self.settings.set("output_dir", self._output_dir_input.text().strip())
         self.settings.set("tts_backend_url", self._backend_url_input.text().strip())
+        self.settings.set("kokoro_model_path", self._kokoro_model_path_input.text().strip())
+        self.settings.set("kokoro_voices_path", self._kokoro_voices_path_input.text().strip())
         dialogue_llm_url = self._dialogue_llm_url_input.text().strip()
         dialogue_llm_model = self._dialogue_llm_model_input.text().strip()
         dialogue_llm_formatter_model = dialogue_llm_model
