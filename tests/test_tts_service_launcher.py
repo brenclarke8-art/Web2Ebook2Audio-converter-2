@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ebook_app.services.tts_service_launcher import (
+from ebook_app.tts.tts_service_launcher import (
     build_tts_service_launch_spec,
     resolve_tts_service_python,
 )

@@ -53,12 +53,12 @@ for name in [
 qtwidgets.QMessageBox = _DummyMessageBox
 sys.modules["PySide6.QtWidgets"] = qtwidgets
 
-base_page = ModuleType("ebook_app.ui.pages._base_page")
+base_page = ModuleType("ebook_app.app.ui.base_view")
 base_page.BasePage = type("BasePage", (), {})
-sys.modules["ebook_app.ui.pages._base_page"] = base_page
+sys.modules["ebook_app.app.ui.base_view"] = base_page
 
-import ebook_app.ui.pages.pipeline_page as pipeline_page_module
-from ebook_app.ui.pages.pipeline_page import PipelinePage, QMessageBox, _PipelineWorker
+import ebook_app.app.ui.pipeline_view as pipeline_page_module
+from ebook_app.app.ui.pipeline_view import PipelinePage, QMessageBox, _PipelineWorker
 
 
 class _DeletedWorker:

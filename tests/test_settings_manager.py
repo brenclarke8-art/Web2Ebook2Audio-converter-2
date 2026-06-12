@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from ebook_app.core import settings_manager as settings_module
-from ebook_app.core.settings_manager import SettingsManager
+from ebook_app.app.state.settings_manager import SettingsManager
 
 
 def test_load_synchronizes_legacy_and_new_dialogue_model_keys(monkeypatch, tmp_path):

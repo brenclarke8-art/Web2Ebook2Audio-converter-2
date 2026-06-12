@@ -1,0 +1,6 @@
+{
+  "__comment": "Map character names to Kokoro voice IDs. Example: 'Alice': 'af_sarah'",
+  "narrator": "af_heart",
+  "default_male": "am_michael",
+  "default_female": "af_sarah"
+}

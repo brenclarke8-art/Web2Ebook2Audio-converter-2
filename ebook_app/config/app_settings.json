@@ -1,0 +1,17 @@
+{
+  "__comment": "Default application settings. Runtime values are stored in .ebook_audio_studio/settings.json",
+  "theme": "dark",
+  "window_width": 1280,
+  "window_height": 800,
+  "output_dir": "output",
+  "tts_backend_url": "http://127.0.0.1:5005",
+  "tts_autostart_service": false,
+  "tts_voice": "af_heart",
+  "tts_speed": 1.0,
+  "dialogue_llm_url": "http://127.0.0.1:11434/api/generate",
+  "dialogue_llm_model": "qwen2.5-coder:7b",
+  "dialogue_llm_timeout": 300,
+  "dialogue_llm_retries": 1,
+  "emotion_tagging_enabled": false,
+  "translation_enabled": false
+}

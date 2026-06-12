@@ -1,4 +1,4 @@
-from ebook_app.services.llm_client import OllamaChatClient
+from ebook_app.text.identify.speaker_llm import OllamaChatClient
 
 
 class _Response:

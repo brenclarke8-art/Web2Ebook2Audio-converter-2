@@ -1,0 +1,53 @@
+/* ebook_app/epub/css/default.css */
+/* Default stylesheet for generated EPUB3 books */
+
+body {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1em;
+  line-height: 1.6;
+  margin: 1em 2em;
+  color: #1a1a1a;
+}
+
+h1, h2, h3 {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-weight: bold;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+p {
+  margin: 0.5em 0;
+  text-indent: 1.5em;
+}
+
+p:first-of-type,
+p.no-indent {
+  text-indent: 0;
+}
+
+/* Dialogue */
+p.seg-dialogue {
+  margin-left: 1em;
+  font-style: normal;
+}
+
+/* Internal thought */
+p.seg-thought {
+  font-style: italic;
+  color: #444;
+}
+
+/* Narrator / narration */
+p.narration {
+  text-indent: 1.5em;
+}
+
+/* Chapter title */
+.chapter-title {
+  font-size: 1.4em;
+  font-weight: bold;
+  text-align: center;
+  margin: 2em 0 1em;
+  text-indent: 0;
+}

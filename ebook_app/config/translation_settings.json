@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "provider": "llm",
+  "source_language": "auto",
+  "target_language": "en",
+  "llm_url": "http://127.0.0.1:11434/api/generate",
+  "llm_model": "qwen2.5-coder:7b",
+  "profile": ""
+}

@@ -1,0 +1,14 @@
+{
+  "__comment": "CSS selector rules per domain. Key = hostname, value = selector config.",
+  "example.com": {
+    "content_selectors": [
+      ".chapter-content",
+      "#chapter-body"
+    ],
+    "exclude_selectors": [
+      ".ads",
+      ".navigation"
+    ],
+    "next_page_selector": "a.next-chapter"
+  }
+}

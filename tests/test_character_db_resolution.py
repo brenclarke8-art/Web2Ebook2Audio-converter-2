@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ebook_app.models.character_db import Character, CharacterDatabase
+from ebook_app.app.state.character_db import Character, CharacterDatabase
 
 
 def test_character_database_resolves_normalized_and_alias_names(tmp_path):

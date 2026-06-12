@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ebook_app.models.dialogue_parser import DetectedCharacter, ParseResult, Segment
+from ebook_app.text.identify.speaker_llm import DetectedCharacter, ParseResult, Segment
 from ebook_app.pipeline_controller import PipelineController
 
 
@@ -80,7 +80,7 @@ def test_llm_semantic_analysis_persists_single_raw_llm_file(tmp_path, monkeypatc
             ],
         )
 
-    monkeypatch.setattr("ebook_app.models.dialogue_parser.DialogueParser.parse", _fake_parse)
+    monkeypatch.setattr("ebook_app.text.identify.speaker_llm.DialogueParser.parse", _fake_parse)
     controller.llm_semantic_analysis()
 
     raw_path = work_dir / "ch1_llm_raw.json"
