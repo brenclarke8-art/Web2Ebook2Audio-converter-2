@@ -225,7 +225,8 @@ class PipelineController:
                 continue
 
             try:
-                raw_text = scraper.scrape_single_chapter(url)
+                results = scraper.scrape_chapters([url])
+                raw_text = results[0].get("content", "") if results else ""
             except Exception:
                 logger.error("Failed to scrape %s", url, exc_info=True)
                 raw_text = ""

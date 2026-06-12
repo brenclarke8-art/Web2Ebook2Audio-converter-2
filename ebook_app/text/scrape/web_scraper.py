@@ -65,6 +65,14 @@ class HttpWebScraper:
         queue = [index_url]
         page_num = 0
 
+        # If the index URL itself looks like a chapter page (e.g. /chapter.php?...&ch=N),
+        # include it as the first chapter so the caller always gets the URL they provided.
+        index_path_lower = parsed.path.lower()
+        if "chapter" in index_path_lower:
+            canonical_index = self._canonicalize(index_url)
+            seen_chapters.add(canonical_index)
+            chapter_urls.append(index_url)
+
         while queue and page_num < effective_max:
             current = queue.pop(0)
             canonical = self._canonicalize(current)
