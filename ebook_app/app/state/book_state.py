@@ -357,6 +357,8 @@ class ProjectManager(QObject):
             book_author=self._project_data.get("author", ""),
             llm_base_url=self.settings.get("dialogue_llm_url", ""),
             llm_model=self.settings.get("dialogue_llm_model", ""),
+            index_url=self._project_data.get("index_url", "")
+                      or self.settings.get("index_url", ""),
         )
         ctrl = PipelineController(ps)
         if on_progress:

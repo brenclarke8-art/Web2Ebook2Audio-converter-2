@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -367,6 +368,110 @@ class SettingsPage(BasePage):
 
         inner.addWidget(ms_group)
 
+        # ── Scraper ────────────────────────────────────────────────────
+        scraper_group = QGroupBox("Scraper")
+        scraper_form = QFormLayout(scraper_group)
+
+        self._scraper_method_combo = QComboBox()
+        self._scraper_method_combo.addItems(["browser", "http"])
+        self._scraper_method_combo.setCurrentText(
+            str(self.settings.get("scraper_method", "browser"))
+        )
+        self._scraper_method_combo.setToolTip(
+            "browser — use a headless Chromium/Firefox via Playwright (handles JS-heavy sites).\n"
+            "http — plain HTTP requests via requests library (faster, no JS support)."
+        )
+        scraper_form.addRow("Scraper method:", self._scraper_method_combo)
+
+        self._scraper_use_gui_cb = QCheckBox("Show browser window (disable headless)")
+        self._scraper_use_gui_cb.setChecked(
+            bool(self.settings.get("scraper_use_browser_gui", False))
+        )
+        scraper_form.addRow("", self._scraper_use_gui_cb)
+
+        self._scraper_manual_nav_cb = QCheckBox("Enable manual navigation mode")
+        self._scraper_manual_nav_cb.setToolTip(
+            "When enabled, the browser window opens and waits for you to navigate "
+            "manually (e.g. to log in) before continuing the scrape."
+        )
+        self._scraper_manual_nav_cb.setChecked(
+            bool(self.settings.get("scraper_manual_navigation", False))
+        )
+        scraper_form.addRow("", self._scraper_manual_nav_cb)
+
+        self._scraper_manual_nav_timeout_spin = QSpinBox()
+        self._scraper_manual_nav_timeout_spin.setRange(10, 3600)
+        self._scraper_manual_nav_timeout_spin.setSuffix(" s")
+        self._scraper_manual_nav_timeout_spin.setValue(
+            int(self.settings.get("scraper_manual_navigation_timeout_sec", 120))
+        )
+        scraper_form.addRow("Manual nav timeout:", self._scraper_manual_nav_timeout_spin)
+
+        self._scraper_max_index_pages_spin = QSpinBox()
+        self._scraper_max_index_pages_spin.setRange(1, 9999)
+        self._scraper_max_index_pages_spin.setValue(
+            int(self.settings.get("scraper_max_index_pages", 50))
+        )
+        self._scraper_max_index_pages_spin.setToolTip(
+            "Maximum number of index/listing pages to follow when building the chapter list."
+        )
+        scraper_form.addRow("Max index pages:", self._scraper_max_index_pages_spin)
+
+        self._scraper_browser_timeout_spin = QSpinBox()
+        self._scraper_browser_timeout_spin.setRange(5, 300)
+        self._scraper_browser_timeout_spin.setSuffix(" s")
+        self._scraper_browser_timeout_spin.setValue(
+            int(self.settings.get("scraper_browser_timeout_sec", 30))
+        )
+        scraper_form.addRow("Browser page timeout:", self._scraper_browser_timeout_spin)
+
+        self._scraper_delay_spin = QSpinBox()
+        self._scraper_delay_spin.setRange(0, 30000)
+        self._scraper_delay_spin.setSuffix(" ms")
+        self._scraper_delay_spin.setValue(
+            int(self.settings.get("scraper_delay_ms", 500))
+        )
+        self._scraper_delay_spin.setToolTip(
+            "Polite delay between consecutive chapter requests (milliseconds)."
+        )
+        scraper_form.addRow("Request delay:", self._scraper_delay_spin)
+
+        self._scraper_wait_js_cb = QCheckBox("Wait for JavaScript to render")
+        self._scraper_wait_js_cb.setChecked(
+            bool(self.settings.get("scraper_wait_for_js", True))
+        )
+        scraper_form.addRow("", self._scraper_wait_js_cb)
+
+        self._scraper_remove_overlays_cb = QCheckBox("Auto-remove cookie/ad overlays")
+        self._scraper_remove_overlays_cb.setChecked(
+            bool(self.settings.get("scraper_remove_overlays", True))
+        )
+        scraper_form.addRow("", self._scraper_remove_overlays_cb)
+
+        self._scraper_css_selectors_edit = QLineEdit(
+            str(self.settings.get("scraper_css_selectors", ""))
+        )
+        self._scraper_css_selectors_edit.setPlaceholderText(
+            "e.g. div.chapter-content, article.entry-content (comma-separated)"
+        )
+        self._scraper_css_selectors_edit.setToolTip(
+            "CSS selectors for the main chapter content block. Leave blank to use auto-detection."
+        )
+        scraper_form.addRow("Content CSS selectors:", self._scraper_css_selectors_edit)
+
+        self._scraper_exclude_selectors_edit = QLineEdit(
+            str(self.settings.get("scraper_exclude_selectors", ""))
+        )
+        self._scraper_exclude_selectors_edit.setPlaceholderText(
+            "e.g. .ads, nav, footer (comma-separated)"
+        )
+        self._scraper_exclude_selectors_edit.setToolTip(
+            "CSS selectors for page elements to strip before content extraction."
+        )
+        scraper_form.addRow("Exclude CSS selectors:", self._scraper_exclude_selectors_edit)
+
+        inner.addWidget(scraper_group)
+
         # ── Experimental Features ──────────────────────────────────────
         exp_group = QGroupBox("⚠️ Experimental Features")
         exp_group.setToolTip(
@@ -456,6 +561,18 @@ class SettingsPage(BasePage):
         self.settings.set("tts_speed", self._tts_speed_spin.value())
         self.settings.set("character_confidence_threshold", self._char_confidence_spin.value())
         self.settings.set("story_context_enabled", self._story_context_checkbox.isChecked())
+        # Scraper settings
+        self.settings.set("scraper_method", self._scraper_method_combo.currentText())
+        self.settings.set("scraper_use_browser_gui", self._scraper_use_gui_cb.isChecked())
+        self.settings.set("scraper_manual_navigation", self._scraper_manual_nav_cb.isChecked())
+        self.settings.set("scraper_manual_navigation_timeout_sec", self._scraper_manual_nav_timeout_spin.value())
+        self.settings.set("scraper_max_index_pages", self._scraper_max_index_pages_spin.value())
+        self.settings.set("scraper_browser_timeout_sec", self._scraper_browser_timeout_spin.value())
+        self.settings.set("scraper_delay_ms", self._scraper_delay_spin.value())
+        self.settings.set("scraper_wait_for_js", self._scraper_wait_js_cb.isChecked())
+        self.settings.set("scraper_remove_overlays", self._scraper_remove_overlays_cb.isChecked())
+        self.settings.set("scraper_css_selectors", self._scraper_css_selectors_edit.text().strip())
+        self.settings.set("scraper_exclude_selectors", self._scraper_exclude_selectors_edit.text().strip())
         self.settings.save()
         self.log.log("Settings saved.", level="SUCCESS")
 

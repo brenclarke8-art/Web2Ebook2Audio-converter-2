@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ebook_app.core import settings_manager as settings_module
+from ebook_app.app.state import settings_manager as settings_module
 from ebook_app.app.state.settings_manager import SettingsManager
 
 

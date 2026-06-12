@@ -35,6 +35,7 @@ class PipelineSettings:
         default_female_voice: str = "af_female",
         llm_base_url: str = "",
         llm_model: str = "",
+        index_url: str = "",
     ) -> None:
         self.work_dir = work_dir
         self.output_dir = output_dir
@@ -46,6 +47,7 @@ class PipelineSettings:
         self.default_female_voice = default_female_voice
         self.llm_base_url = llm_base_url
         self.llm_model = llm_model
+        self.index_url = index_url
 
 
 class PipelineController:
@@ -158,7 +160,7 @@ class PipelineController:
 
         from ebook_app.text.scrape.browser_scraper import WebScraper
 
-        index_url = self.settings.llm_base_url or ""
+        index_url = self.settings.index_url or ""
         if not index_url:
             logger.warning("No index URL configured — cannot scrape index.")
             self._on_progress("scrape_index", 100)
