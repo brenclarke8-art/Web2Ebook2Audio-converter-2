@@ -7,12 +7,13 @@ import requests
 
 
 class TTSClient:
-    def __init__(self, base_url: str = 'http://127.0.0.1:5005'):
+    def __init__(self, base_url: str = 'http://127.0.0.1:5005', timeout: int = 10):
         self.base_url = base_url.rstrip('/')
+        self.timeout = int(timeout)
 
     def health(self) -> dict:
         try:
-            response = requests.get(f'{self.base_url}/health', timeout=10)
+            response = requests.get(f'{self.base_url}/health', timeout=self.timeout)
             response.raise_for_status()
             payload = response.json()
             if isinstance(payload, dict):
