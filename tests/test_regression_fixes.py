@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from ebook_app.core.epub.epub_builder import EPUBBuilder
+from ebook_app.epub.packaging import EPUBBuilder
 from ebook_app.app.state.character_db import Character, CharacterDatabase
 
 

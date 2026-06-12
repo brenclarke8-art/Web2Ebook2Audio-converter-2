@@ -735,3 +735,49 @@ def test_repair_failure_falls_back_safely():
     # Heuristic fallback still produces output
     assert len(result.segments) >= 1
     assert all(s.speaker != "Ghost" for s in result.segments)
+
+
+# ── Story-context injection ────────────────────────────────────────────────────
+
+
+def test_segmentation_service_receives_story_context():
+    """Story context block should be inserted into pass-1 (character detection) system prompt."""
+    calls: list[dict] = []
+
+    class _CapClient:
+        def ask_json(self, *, system, user, chapter_id):
+            calls.append({"system": system, "user": user, "chapter_id": chapter_id})
+            return {"segments": [], "characters": []}
+
+    svc = DialogueSegmentationService(client=_CapClient())
+    ctx_block = "STORY CONTEXT (from prior chapters — use for continuity only):\nAlice set off."
+    svc.parse(
+        text="Alice arrived at the castle.",
+        chapter_id="ch002",
+        story_context_block=ctx_block,
+    )
+    # Story context feeds pass 1 (character detection) only
+    pass1_call = next(c for c in calls if c["chapter_id"].endswith("_p1"))
+    assert ctx_block in pass1_call["system"]
+    assert "Alice arrived at the castle." in pass1_call["user"]
+    # Pass 2 (segment + attribute) must NOT receive the story context
+    pass2_call = next(c for c in calls if c["chapter_id"].endswith("_p2"))
+    assert ctx_block not in pass2_call["system"]
+
+
+def test_segmentation_service_no_story_context_unchanged():
+    """Without story context, the user message should not contain context headers."""
+    captured: dict = {}
+
+    class _CapClient:
+        def ask_json(self, *, system, user, chapter_id):
+            captured["user"] = user
+            return {"segments": [], "characters": []}
+
+    svc = DialogueSegmentationService(client=_CapClient())
+    svc.parse(
+        text="Bob walked through the forest.",
+        chapter_id="ch001",
+    )
+    assert "STORY CONTEXT" not in captured["user"]
+    assert "Bob walked through the forest." in captured["user"]
