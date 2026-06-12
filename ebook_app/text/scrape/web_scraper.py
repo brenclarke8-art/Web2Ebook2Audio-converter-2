@@ -131,7 +131,8 @@ class HttpWebScraper:
                         pass
 
                 title = self._detect_title(soup)
-                if "noveldex.io" in urlparse(url).netloc:
+                _netloc = urlparse(url).netloc
+                if _netloc == "noveldex.io" or _netloc.endswith(".noveldex.io"):
                     content = self._extract_content_noveldex(soup)
                 else:
                     content = self._extract_content(soup)

@@ -187,9 +187,11 @@ class WebScraper:
                     for tag in soup(["script", "style", "nav", "footer"]):
                         tag.decompose()
 
-                    content = self._extract_content(soup)
-                    if "noveldex.io" in urlparse(url).netloc:
+                    _netloc = urlparse(url).netloc
+                    if _netloc == "noveldex.io" or _netloc.endswith(".noveldex.io"):
                         content = self._extract_content_noveldex(soup)
+                    else:
+                        content = self._extract_content(soup)
 
                     results.append({
                         "url": url,
