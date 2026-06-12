@@ -1,6 +1,7 @@
 # ebook_app/text/scrape/browser_scraper.py
 from __future__ import annotations
 import logging
+import re
 import time
 from typing import List, Dict, Optional, Callable
 
@@ -187,6 +188,8 @@ class WebScraper:
                         tag.decompose()
 
                     content = self._extract_content(soup)
+                    if "noveldex.io" in urlparse(url).netloc:
+                        content = self._extract_content_noveldex(soup)
 
                     results.append({
                         "url": url,
@@ -276,6 +279,78 @@ class WebScraper:
                 chapter_urls.append(href)
 
         return chapter_urls, pagination_urls
+
+    def _extract_content_noveldex(self, soup) -> str:
+        """
+        Extract chapter content from noveldex.io pages.
+
+        noveldex.io scrambles paragraph order in the DOM and uses the CSS
+        ``order`` flexbox property (e.g. ``style="...order: 1;..."``) to set
+        the correct visual reading sequence.  This method collects every
+        text-bearing leaf element together with its ``order`` value, sorts
+        them in ascending order, and returns the reconstructed text.
+        """
+        logger.debug("Using noveldex.io CSS-order-based extraction")
+
+        container = soup.find('body') or soup
+        logger.debug("noveldex: using <body> as content container")
+
+        ordered_elements = []
+
+        def collect(elem, inherited_order: int = 0, has_explicit_order: bool = False) -> None:
+            """Walk the subtree; inherit parent order when child has none.
+
+            Only leaf elements that sit within an explicitly-ordered subtree
+            (i.e. the element itself or an ancestor has an inline ``order:``
+            CSS property) are collected.  This prevents navigation text,
+            chapter titles rendered outside the flex-ordered content area, and
+            other site chrome from polluting the extracted chapter text.
+            """
+            if not hasattr(elem, 'name') or elem.name is None:
+                return
+            if elem.name in ['script', 'style', 'nav', 'footer', 'header', 'noscript']:
+                return
+
+            # Parse inline 'order' value if present
+            style = elem.get('style', '') or ''
+            order_val = inherited_order
+            explicit_here = False
+            m = re.search(r'\border\s*:\s*(-?\d+)', style)
+            if m:
+                try:
+                    order_val = int(m.group(1))
+                    explicit_here = True
+                except ValueError:
+                    pass
+
+            is_in_ordered_subtree = has_explicit_order or explicit_here
+
+            # Leaf element: collect its text only when inside an ordered subtree
+            has_tag_children = any(
+                hasattr(child, 'name') and child.name for child in elem.children
+            )
+            if not has_tag_children:
+                text = elem.get_text(strip=True)
+                if text and is_in_ordered_subtree:
+                    ordered_elements.append({'order': order_val, 'text': text, 'tag': elem.name})
+            else:
+                for child in elem.children:
+                    collect(child, order_val, is_in_ordered_subtree)
+
+        collect(container)
+        logger.debug(f"noveldex: collected {len(ordered_elements)} leaf elements (explicitly ordered only)")
+
+        if not ordered_elements:
+            logger.debug("noveldex: no ordered elements found; falling back to regular extraction")
+            return self._extract_content(soup)
+
+        # Sort ascending by CSS order value → correct reading sequence
+        ordered_elements.sort(key=lambda x: x['order'])
+
+        texts = [item['text'] for item in ordered_elements if item['text']]
+        result = '\n\n'.join(texts).strip()
+        logger.debug(f"noveldex: extraction complete – {len(result)} characters")
+        return result
 
     def _extract_content(self, soup):
         # 1. Structural / content-density heuristic (anti-scrape bypass)
