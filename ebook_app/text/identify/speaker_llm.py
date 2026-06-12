@@ -76,15 +76,12 @@ class OllamaChatClient:
 
 
 # --- DialogueParser (migrated from models/dialogue_parser.py) ---
-from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from ebook_app.app.state.character_db
- import CharacterDatabase
+from ebook_app.app.state.character_db import CharacterDatabase
 from ebook_app.text.parse.html_cleaner import TextCleaner
 from ebook_app.text.segment.segmenter import DialogueSegmentationService
-from ebook_app.text.identify.speaker_llm import OllamaChatClient
 
 
 @dataclass

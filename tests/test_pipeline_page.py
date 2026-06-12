@@ -26,6 +26,7 @@ sys.modules.setdefault("PySide6", ModuleType("PySide6"))
 qtcore = ModuleType("PySide6.QtCore")
 qtcore.QThread = _DummyQThread
 qtcore.Signal = lambda *args, **kwargs: None
+qtcore.Qt = SimpleNamespace(Orientation=SimpleNamespace(Horizontal=1, Vertical=2))
 sys.modules["PySide6.QtCore"] = qtcore
 
 qtwidgets = ModuleType("PySide6.QtWidgets")
@@ -36,8 +37,11 @@ for name in [
     "QGroupBox",
     "QHeaderView",
     "QHBoxLayout",
+    "QInputDialog",
     "QLabel",
     "QLineEdit",
+    "QListWidget",
+    "QListWidgetItem",
     "QProgressBar",
     "QPushButton",
     "QSplitter",
@@ -56,6 +60,10 @@ sys.modules["PySide6.QtWidgets"] = qtwidgets
 base_page = ModuleType("ebook_app.app.ui.base_view")
 base_page.BasePage = type("BasePage", (), {})
 sys.modules["ebook_app.app.ui.base_view"] = base_page
+
+book_manager_mod = ModuleType("ebook_app.app.ui.book_manager")
+book_manager_mod.BookManagerWidget = type("BookManagerWidget", (_DummyWidget,), {})
+sys.modules["ebook_app.app.ui.book_manager"] = book_manager_mod
 
 import ebook_app.app.ui.pipeline_view as pipeline_page_module
 from ebook_app.app.ui.pipeline_view import PipelinePage, QMessageBox, _PipelineWorker

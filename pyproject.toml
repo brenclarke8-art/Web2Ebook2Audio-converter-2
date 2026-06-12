@@ -41,6 +41,9 @@ where = ["."]
 include = ["ebook_app", "ebook_app.*"]
 
 [tool.pytest.ini_options]
+# Only collect tests from the tests/ directory (prevents collecting UI component
+# files like ebook_app/app/ui/test_view.py that are not pytest test files).
+testpaths = ["tests"]
 # Only collect test classes that follow the Test_Foo pattern (underscore),
 # not TestFoo (camel-case, which conflicts with GUI page class names like TestPage).
 python_classes = ["Test_*"]

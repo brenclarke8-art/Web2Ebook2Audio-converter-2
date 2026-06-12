@@ -154,6 +154,12 @@ class CharacterDatabase:
     # Add / Update
     # --------------------------------------------------------
 
+    def add(self, character: Character) -> Character:
+        """Store a Character object directly (convenience wrapper for tests / batch load)."""
+        norm = normalize_character_name(character.name)
+        self._chars[norm] = character
+        return character
+
     def add_or_update(
         self,
         name: str,
@@ -216,6 +222,14 @@ class CharacterDatabase:
     # --------------------------------------------------------
     # List / Export
     # --------------------------------------------------------
+
+    def all(self) -> List[Character]:
+        """Return all characters (alias for list_characters)."""
+        return list(self._chars.values())
+
+    def resolve_name(self, name: str) -> Optional[Character]:
+        """Look up a character with normalization and alias matching (alias for get)."""
+        return self.get(name)
 
     def list_characters(self) -> List[Character]:
         return list(self._chars.values())
