@@ -39,3 +39,8 @@ ebook-audio-studio = "ebook_app.app.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ebook_app", "ebook_app.*"]
+
+[tool.pytest.ini_options]
+# Only collect test classes that follow the Test_Foo pattern (underscore),
+# not TestFoo (camel-case, which conflicts with GUI page class names like TestPage).
+python_classes = ["Test_*"]
