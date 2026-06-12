@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 from .base_scraper import BaseScraper
 from .errors import ScraperError
-from ebook_app.text.parse.html_cleaner import TextCleaner
+from ebook_app.text.parse.html_cleaner import TextCleaner, extract_main_content_by_structure
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +223,7 @@ class HttpWebScraper:
         return chapter_urls, pagination_urls
 
     def _extract_content(self, soup: BeautifulSoup) -> str:
+        # 1. Honour explicit CSS selectors when provided
         if self.css_selectors:
             parts = []
             for sel in self.css_selectors:
@@ -231,6 +232,12 @@ class HttpWebScraper:
             if parts:
                 return "\n\n".join(parts)
 
+        # 2. Structural / content-density heuristic (anti-scrape bypass)
+        structural = extract_main_content_by_structure(soup)
+        if structural:
+            return structural
+
+        # 3. Fallback: full body text
         body = soup.find("body") or soup
         return body.get_text(separator="\n", strip=True)
 

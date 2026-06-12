@@ -8,7 +8,7 @@ from urllib.parse import urlparse, urlunparse, urljoin
 
 from .base_scraper import BaseScraper
 from .errors import ScraperError
-from ebook_app.text.parse.html_cleaner import TextCleaner
+from ebook_app.text.parse.html_cleaner import TextCleaner, extract_main_content_by_structure
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +278,11 @@ class WebScraper:
         return chapter_urls, pagination_urls
 
     def _extract_content(self, soup):
+        # 1. Structural / content-density heuristic (anti-scrape bypass)
+        structural = extract_main_content_by_structure(soup)
+        if structural:
+            return structural
+        # 2. Fallback: full body text
         if soup.body:
             return soup.body.get_text(separator="\n", strip=True)
         return soup.get_text(separator="\n", strip=True)

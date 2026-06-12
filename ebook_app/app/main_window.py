@@ -15,6 +15,7 @@ from ebook_app.app.ui.pipeline_view import PipelinePage
 from ebook_app.app.ui.character_view import CharacterDBPage
 from ebook_app.app.ui.review_view import ReviewPage
 from ebook_app.app.ui.settings_view import SettingsPage
+from ebook_app.app.ui.test_view import TestPage
 
 
 class MainWindow(QMainWindow):
@@ -81,16 +82,19 @@ class MainWindow(QMainWindow):
         self.character_page = CharacterDBPage(**_page_kwargs)
         self.review_page = ReviewPage(**_page_kwargs)
         self.settings_page = SettingsPage(**_page_kwargs)
+        self.test_page = TestPage(**_page_kwargs)
 
         # Order MUST match TopNavBar indices:
         # 0 = Pipeline
         # 1 = Characters
         # 2 = Review
         # 3 = Settings
+        # 4 = Tests
         self.pages.addWidget(self.pipeline_page)     # 0
         self.pages.addWidget(self.character_page)    # 1
         self.pages.addWidget(self.review_page)       # 2
         self.pages.addWidget(self.settings_page)     # 3
+        self.pages.addWidget(self.test_page)         # 4
 
         # --------------------------------------------------------------
         # Navigation wiring

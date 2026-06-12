@@ -25,7 +25,7 @@ class TopNavBar(QWidget):
 
         # Button labels must match MainWindow page order
         self.buttons = []
-        labels = ["Pipeline", "Characters", "Review", "Settings"]
+        labels = ["Pipeline", "Characters", "Review", "Settings", "Tests"]
 
         for idx, label in enumerate(labels):
             btn = QPushButton(label)
