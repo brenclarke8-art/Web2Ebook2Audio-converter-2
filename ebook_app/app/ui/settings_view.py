@@ -37,7 +37,7 @@ class _ServiceHealthThread(QThread):
         self._url = url
 
     def run(self) -> None:
-        from ebook_app.tts.tts_service import TTSClient
+        from ebook_app.tts.tts_client import TTSClient
 
         client = TTSClient(base_url=self._url)
         self.result.emit(client.health())
@@ -53,7 +53,7 @@ class _PreviewThread(QThread):
         self._speed = speed
 
     def run(self) -> None:
-        from ebook_app.tts.tts_service import TTSClient
+        from ebook_app.tts.tts_client import TTSClient
 
         client = TTSClient(base_url=self._url)
         self.result.emit(client.preview(voice=self._voice, speed=self._speed))
@@ -595,7 +595,7 @@ class SettingsPage(BasePage):
 
     def _on_start_tts_server(self) -> None:
         from ebook_app.tts.tts_service_launcher import launch_tts_service
-        from ebook_app.tts.tts_service import TTSClient
+        from ebook_app.tts.tts_client import TTSClient
 
         url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
         existing_health = TTSClient(base_url=url, timeout=1).health()
