@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import threading
 from typing import List, Dict, Optional, Callable
 
 from urllib.parse import urlparse, urlunparse, urljoin
@@ -18,6 +19,76 @@ try:
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+
+
+class BrowserSessionManager:
+    """Shared visible browser session used by all browser scraping calls."""
+
+    _lock = threading.Lock()
+    _playwright = None
+    _browser = None
+    _page = None
+    _open_requests = 0
+    _consumed_requests = 0
+
+    @classmethod
+    def request_open(cls) -> int:
+        with cls._lock:
+            cls._open_requests += 1
+            return cls._open_requests
+
+    @classmethod
+    def _session_is_alive_locked(cls) -> bool:
+        browser = cls._browser
+        page = cls._page
+        if browser is None or page is None:
+            return False
+        try:
+            if not browser.is_connected():
+                return False
+            return not page.is_closed()
+        except Exception:
+            return False
+
+    @classmethod
+    def _cleanup_locked(cls) -> None:
+        page = cls._page
+        browser = cls._browser
+        playwright = cls._playwright
+        cls._page = None
+        cls._browser = None
+        cls._playwright = None
+        for closer in (
+            getattr(page, "close", None),
+            getattr(browser, "close", None),
+            getattr(playwright, "stop", None),
+        ):
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:
+                    pass
+
+    @classmethod
+    def get_page(cls, *, browser_channel: Optional[str] = None):
+        if not PLAYWRIGHT_AVAILABLE:
+            raise ScraperError("Playwright is not installed")
+        with cls._lock:
+            if cls._session_is_alive_locked():
+                return cls._page
+            cls._cleanup_locked()
+            if cls._open_requests <= cls._consumed_requests:
+                raise ScraperError(
+                    "Browser session is closed. Click 'Open Browser' in Pipeline, then run indexing again."
+                )
+            playwright = sync_playwright().start()
+            browser = playwright.chromium.launch(headless=False, channel=browser_channel)
+            page = browser.new_page()
+            cls._playwright = playwright
+            cls._browser = browser
+            cls._page = page
+            cls._consumed_requests = cls._open_requests
+            return page
 
 
 class WebScraper:
@@ -99,14 +170,17 @@ class WebScraper:
             seen_chapters.add(canonical_index)
             chapter_urls.append(index_url)
 
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=self.browser_headless,
-                channel=self.browser_channel,
-            )
-            page = browser.new_page()
+        page = BrowserSessionManager.get_page(browser_channel=self.browser_channel)
 
-            while queue and page_num < effective_max:
+        self._wait_for_index_confirmation(
+            page,
+            index_url=index_url,
+            progress_callback=progress_callback,
+        )
+        start_url = page.url or index_url
+        queue = [start_url]
+
+        while queue and page_num < effective_max:
                 current = queue.pop(0)
                 canonical = self._canonicalize(current)
                 if canonical in seen_index:
@@ -152,8 +226,6 @@ class WebScraper:
                 if self.request_delay > 0:
                     time.sleep(self.request_delay)
 
-            browser.close()
-
         logger.info("Browser index scrape complete: %d chapter URLs discovered.", len(chapter_urls))
         return chapter_urls
 
@@ -169,14 +241,9 @@ class WebScraper:
         results: List[Dict[str, str]] = []
         total = len(urls)
 
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=self.browser_headless,
-                channel=self.browser_channel,
-            )
-            page = browser.new_page()
+        page = BrowserSessionManager.get_page(browser_channel=self.browser_channel)
 
-            for idx, url in enumerate(urls, start=1):
+        for idx, url in enumerate(urls, start=1):
                 if progress_callback:
                     progress_callback(idx, total, url)
 
@@ -221,8 +288,6 @@ class WebScraper:
 
                 if self.request_delay > 0:
                     time.sleep(self.request_delay)
-
-            browser.close()
 
         return results
 
@@ -385,4 +450,69 @@ class WebScraper:
                 }
             }
             """
+        )
+
+    def _wait_for_index_confirmation(
+        self,
+        page,
+        *,
+        index_url: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        timeout_sec = max(10, int(self.manual_navigation_timeout_sec))
+        if progress_callback:
+            progress_callback(
+                "Opening browser. Load the correct index page, then click the embedded 'Use This Page' button."
+            )
+
+        try:
+            page.goto(index_url, timeout=self.browser_timeout * 1000)
+        except Exception as exc:
+            raise ScraperError(f"Could not open index page in browser: {exc}") from exc
+
+        confirm_js = """
+        () => {
+            if (window.__ebook_index_confirmed !== true) {
+                window.__ebook_index_confirmed = false;
+            }
+            const existing = document.getElementById('__ebook_index_confirm_btn');
+            if (existing) return;
+            const button = document.createElement('button');
+            button.id = '__ebook_index_confirm_btn';
+            button.textContent = 'Use This Page';
+            Object.assign(button.style, {
+                position: 'fixed',
+                top: '12px',
+                right: '12px',
+                zIndex: '2147483647',
+                padding: '10px 14px',
+                background: '#2d7ef7',
+                color: '#ffffff',
+                fontSize: '14px',
+                border: '0',
+                borderRadius: '6px',
+                cursor: 'pointer'
+            });
+            button.addEventListener('click', () => {
+                window.__ebook_index_confirmed = true;
+                button.textContent = 'Page Confirmed';
+                button.style.background = '#2ea043';
+            });
+            document.body.appendChild(button);
+        }
+        """
+
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            try:
+                page.evaluate(confirm_js)
+                confirmed = page.evaluate("() => window.__ebook_index_confirmed === true")
+                if confirmed:
+                    return
+            except Exception:
+                pass
+            time.sleep(0.4)
+
+        raise ScraperError(
+            "Timed out waiting for browser page confirmation. Open Browser again and click 'Use This Page'."
         )

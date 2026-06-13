@@ -145,6 +145,43 @@ def test_on_worker_finished_clears_worker_reference(monkeypatch) -> None:
     ]
 
 
+def test_on_open_browser_arms_browser_session(monkeypatch) -> None:
+    events: list[str] = []
+
+    class _FakeBrowserSessionManager:
+        @staticmethod
+        def request_open() -> int:
+            events.append("armed")
+            return 1
+
+    class _FakeLabel:
+        def __init__(self) -> None:
+            self.text = ""
+            self.style = ""
+
+        def setStyleSheet(self, value: str) -> None:
+            self.style = value
+
+        def setText(self, value: str) -> None:
+            self.text = value
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ebook_app.text.scrape.browser_scraper",
+        SimpleNamespace(BrowserSessionManager=_FakeBrowserSessionManager),
+    )
+
+    log = _LogCapture()
+    label = _FakeLabel()
+    page = SimpleNamespace(_status_label=label, log=log)
+
+    PipelinePage._on_open_browser(page)
+
+    assert events == ["armed"]
+    assert "Browser session is armed" in label.text
+    assert ("Browser session armed. Start indexing and click 'Use This Page' in the opened browser.", "INFO") in log.messages
+
+
 def test_run_to_review_reuses_cached_index_inventory(tmp_path) -> None:
     worker = _PipelineWorker(
         project_manager=SimpleNamespace(
