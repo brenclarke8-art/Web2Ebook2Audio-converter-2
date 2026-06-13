@@ -485,7 +485,11 @@ class PipelineController:
             if self._cancelled("pass2_classification"):
                 return
             try:
-                classified = self.pass2_classifier.classify_segments(segments, chapter_id=chapter_id)
+                classified = self.pass2_classifier.classify_segments(
+                    segments,
+                    chapter_id=chapter_id,
+                    should_cancel=lambda: self._cancelled("pass2_classification"),
+                )
             except Exception:
                 logger.error("Pass‑2 batched classification failed for %s", chapter_id, exc_info=True)
                 classified = [
@@ -505,6 +509,8 @@ class PipelineController:
                     }
                     for seg in segments
                 ]
+            if self._cancelled("pass2_classification"):
+                return
 
 
 

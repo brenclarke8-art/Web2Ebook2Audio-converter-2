@@ -309,6 +309,7 @@ class SettingsPage(BasePage):
         self._llm_api_key_input = QLineEdit(str(self.settings.get("llm_api_key", "")))
         self._llm_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._llm_api_key_input.setPlaceholderText("Optional for local Ollama")
+        self._llm_api_key_input.setToolTip("Stored in settings.json as plain text.")
         llm_form.addRow("API key:", self._llm_api_key_input)
 
         self._dialogue_llm_model_input = QComboBox()

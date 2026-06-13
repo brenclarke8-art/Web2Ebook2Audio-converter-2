@@ -47,6 +47,7 @@ class LLMClient:
             headers: dict[str, str] = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["X-API-Key"] = self.api_key
+                headers["Authorization"] = "Bearer " + self.api_key
             payload = {
                 "model": self.model,
                 "messages": [
@@ -109,12 +110,19 @@ class Pass2Classifier:
     def classify_segment(self, segment: Dict[str, Any]) -> Dict[str, Any]:
         return self.classify_segments([segment])[0]
 
-    def classify_segments(self, segments: List[Dict[str, Any]], chapter_id: str = "") -> List[Dict[str, Any]]:
+    def classify_segments(
+        self,
+        segments: List[Dict[str, Any]],
+        chapter_id: str = "",
+        should_cancel=None,
+    ) -> List[Dict[str, Any]]:
         if not segments:
             return []
 
         output: List[Dict[str, Any]] = []
         for start in range(0, len(segments), self.batch_size):
+            if callable(should_cancel) and should_cancel():
+                break
             batch = segments[start : start + self.batch_size]
             output.extend(self._classify_batch(batch=batch, chapter_id=chapter_id, offset=start))
         return output
@@ -148,7 +156,9 @@ class Pass2Classifier:
             "You are a semantic classifier for novel text. "
             "Return ONLY JSON array with one object per input id. "
             "Each object must include keys: id, type, speaker, gender, "
-            "speaker_confidence, gender_confidence, character_confidence."
+            "speaker_confidence, gender_confidence, character_confidence. "
+            "Allowed type values: dialogue, thought, narration. "
+            "Confidence values must be numbers between 0.0 and 1.0."
         )
         user = json.dumps(entries, ensure_ascii=False)
         raw = self.llm_client.generate_json(system=system, user=user)
