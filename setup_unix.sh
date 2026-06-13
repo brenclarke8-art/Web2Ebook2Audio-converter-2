@@ -33,6 +33,8 @@ echo "==> Upgrading pip in GUI venv"
 "$GUI_VENV/bin/python" -m pip install --upgrade pip
 echo "==> Installing GUI dependencies (editable)"
 "$GUI_VENV/bin/python" -m pip install -e "$REPO_ROOT"
+echo "==> Installing dev dependencies (pytest) in GUI venv"
+"$GUI_VENV/bin/python" -m pip install -e "$REPO_ROOT[dev]"
 
 if [[ "$INSTALL_BROWSER" == "1" ]]; then
   echo "==> Installing browser scraping extras in GUI venv"

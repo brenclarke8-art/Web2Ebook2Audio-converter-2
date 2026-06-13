@@ -35,6 +35,9 @@ Run-Step "Upgrading pip in GUI venv" {
 Run-Step "Installing GUI dependencies (editable)" {
     & "$guiVenv\Scripts\python.exe" -m pip install -e $repoRoot
 }
+Run-Step "Installing dev dependencies (pytest) in GUI venv" {
+    & "$guiVenv\Scripts\python.exe" -m pip install -e "${repoRoot}[dev]"
+}
 
 if ($InstallBrowser) {
     Run-Step "Installing browser scraping extras in GUI venv" {

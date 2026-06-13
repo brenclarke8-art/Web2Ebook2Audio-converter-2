@@ -32,6 +32,10 @@ browser = [
 full = [
     "ebook-audio-studio[browser,local-tts]",
 ]
+# Development tools (testing).
+dev = [
+    "pytest>=7.0",
+]
 
 [project.scripts]
 ebook-audio-studio = "ebook_app.app.main:main"
