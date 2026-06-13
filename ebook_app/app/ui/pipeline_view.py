@@ -97,6 +97,25 @@ class _PipelineWorker(QThread):
         # Phase 7 — EPUB build
         ctrl.epub_build()
 
+    def _run_check_index(self, ctrl):
+        ctrl.scrape_index()
+        work_dir = self.project_manager.get_work_dir() if self.project_manager else None
+        chapter_urls: list[str] = []
+        if work_dir is not None:
+            chapters_raw_path = work_dir / 'chapters_raw.json'
+            if chapters_raw_path.exists():
+                try:
+                    chapters_data = json.loads(chapters_raw_path.read_text(encoding='utf-8'))
+                    chapter_urls = [c.get('source', '') for c in chapters_data if c.get('source')]
+                except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+                    self.log_message.emit(
+                        f"Failed to load indexed chapters from {chapters_raw_path}: {exc}",
+                        "WARNING",
+                    )
+        count = len(chapter_urls)
+        self.inventory_ready.emit({'raw_count': count, 'valid_count': count, 'chapter_urls': chapter_urls})
+        self.finished_ok.emit(self.CHECK_INDEX, f'Indexing complete. Found {count} chapters.')
+
     def run(self):
         try:
             ctrl = self.project_manager.create_pipeline_controller()
@@ -105,6 +124,8 @@ class _PipelineWorker(QThread):
             elif self.mode == self.CONTINUE_AUDIO:
                 self._run_continue_audio(ctrl)
                 self.finished_ok.emit(self.CONTINUE_AUDIO, 'Audio generation complete.')
+            elif self.mode == self.CHECK_INDEX:
+                self._run_check_index(ctrl)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -164,6 +185,13 @@ class PipelinePage(BasePage):
         self._save_url_btn.clicked.connect(self._on_save_index_url)
         index_row.addWidget(self._save_url_btn)
         proj_form.addRow("Index URL:", index_row)
+
+        actions_row = QHBoxLayout()
+        self._index_chapters_btn = QPushButton("Index Chapters")
+        self._index_chapters_btn.clicked.connect(self._on_index_chapters)
+        actions_row.addWidget(self._index_chapters_btn)
+        actions_row.addStretch()
+        proj_form.addRow("Actions:", actions_row)
 
         right_vbox.addWidget(proj_group)
 
@@ -263,7 +291,7 @@ class PipelinePage(BasePage):
 
     def _set_project_controls_enabled(self, enabled: bool) -> None:
         for w in (
-            self._index_url_edit, self._save_url_btn,
+            self._index_url_edit, self._save_url_btn, self._index_chapters_btn,
             self._start_ch_spin, self._end_ch_spin,
             self._run_btn, self._continue_btn,
         ):
@@ -330,6 +358,7 @@ class PipelinePage(BasePage):
     # ------------------------------------------------------------------
 
     def _set_buttons_enabled(self, enabled: bool) -> None:
+        self._index_chapters_btn.setEnabled(enabled)
         self._run_btn.setEnabled(enabled)
         self._continue_btn.setEnabled(enabled)
         self._stop_btn.setEnabled(not enabled)
@@ -400,6 +429,30 @@ class PipelinePage(BasePage):
         self._worker.start()
         self.log.log("Pipeline started: Continue Audio + Export.", level="INFO")
 
+    def _on_index_chapters(self) -> None:
+        if self._is_busy():
+            QMessageBox.warning(self, "Busy", "A pipeline task is already running.")
+            return
+        if not self.project_manager or not self.project_manager.current_book_id:
+            QMessageBox.warning(self, "No Project", "Please open or create a project first.")
+            return
+
+        self._on_save_index_url()
+        self._set_buttons_enabled(False)
+        self._status_label.setText("⏳ Scraping chapter index…")
+        self._worker = _PipelineWorker(
+            project_manager=self.project_manager,
+            settings=self.settings,
+            mode=_PipelineWorker.CHECK_INDEX,
+        )
+        self._worker.inventory_ready.connect(self._on_inventory_ready)
+        self._worker.finished_ok.connect(self._on_worker_finished)
+        self._worker.failed.connect(self._on_worker_failed)
+        self._worker.cancelled.connect(self._on_worker_cancelled)
+        self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
+        self._worker.start()
+        self.log.log("Pipeline started: Index Chapters.", level="INFO")
+
     def _on_stop_pipeline(self) -> None:
         if not self._is_busy():
             return
@@ -423,7 +476,9 @@ class PipelinePage(BasePage):
     def _on_worker_finished(self, mode: str, message: str) -> None:
         worker = self._worker
         self._worker = None
-        if self.project_manager and worker is not None:
+        # Index-only runs do not process chapter content, so they should not
+        # overwrite last_processed_chapter progress.
+        if self.project_manager and worker is not None and mode != _PipelineWorker.CHECK_INDEX:
             self.project_manager.set_last_processed_chapter(getattr(worker, '_end', 0))
         self._set_buttons_enabled(True)
         self._load_active_project_state()
@@ -609,4 +664,3 @@ class PipelinePage(BasePage):
         This is a no-op placeholder; the full pipeline UI overrides this to
         repopulate combo boxes when the character database changes.
         """
-
