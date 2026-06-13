@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ logger = logging.getLogger("tts_service")
 
 try:
     from kokoro_onnx import Kokoro
-except Exception:  # pragma: no cover - import availability depends on runtime env
+except ImportError:  # pragma: no cover - import availability depends on runtime env
     Kokoro = None
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -166,9 +167,11 @@ def synthesize(req: SynthesizeRequest) -> dict[str, Any]:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     filename = Path(req.output_filename).name or "output.wav"
+    filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+    filename = filename.strip("._-") or "output.wav"
     if not filename.lower().endswith(".wav"):
         filename = f"{filename}.wav"
-    output_path = (OUTPUT_DIR / filename).resolve()
+    output_path = OUTPUT_DIR / filename
 
     try:
         sf.write(str(output_path), audio, sample_rate)
