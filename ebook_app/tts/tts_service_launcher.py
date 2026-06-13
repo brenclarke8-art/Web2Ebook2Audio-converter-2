@@ -21,7 +21,7 @@ class TTSServiceLaunchSpec:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def resolve_tts_service_python(
