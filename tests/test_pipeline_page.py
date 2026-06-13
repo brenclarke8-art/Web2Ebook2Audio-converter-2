@@ -21,6 +21,10 @@ class _DummyMessageBox:
     def information(*args, **kwargs) -> None:
         pass
 
+    @staticmethod
+    def warning(*args, **kwargs) -> None:
+        pass
+
 
 sys.modules.setdefault("PySide6", ModuleType("PySide6"))
 qtcore = ModuleType("PySide6.QtCore")
@@ -439,6 +443,96 @@ def test_run_continue_audio_finalizes_review_before_audio(tmp_path) -> None:
     worker._run_continue_audio(ctrl)
 
     assert calls == ["smart_review_dialogue", "tts_generate", "epub_build"]
+
+
+def test_run_check_index_emits_inventory_from_scraped_index(tmp_path) -> None:
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir()
+    (work_dir / "chapters_raw.json").write_text(
+        json.dumps(
+            [
+                {"title": "Ch 1", "source": "https://example.com/ch1"},
+                {"title": "Ch 2", "source": "https://example.com/ch2"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    worker = _PipelineWorker(
+        project_manager=SimpleNamespace(get_work_dir=lambda: work_dir),
+        settings=SimpleNamespace(),
+        mode=_PipelineWorker.CHECK_INDEX,
+    )
+    worker.inventory_ready = _SignalCapture()
+    worker.finished_ok = _SignalCapture()
+
+    calls: list[str] = []
+    ctrl = SimpleNamespace(scrape_index=lambda: calls.append("scrape_index"))
+
+    worker._run_check_index(ctrl)
+
+    assert calls == ["scrape_index"]
+    assert worker.inventory_ready.calls == [
+        (
+            {
+                "raw_count": 2,
+                "valid_count": 2,
+                "chapter_urls": ["https://example.com/ch1", "https://example.com/ch2"],
+            },
+        )
+    ]
+    assert worker.finished_ok.calls == [
+        (_PipelineWorker.CHECK_INDEX, "Indexing complete. Found 2 chapters.")
+    ]
+
+
+def test_on_index_chapters_starts_check_index_worker(monkeypatch) -> None:
+    created_workers: list[object] = []
+    starts: list[str] = []
+
+    class _FakeSignal:
+        def connect(self, _callback) -> None:
+            pass
+
+    class _FakeWorker:
+        CHECK_INDEX = "check_index"
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.inventory_ready = _FakeSignal()
+            self.finished_ok = _FakeSignal()
+            self.failed = _FakeSignal()
+            self.cancelled = _FakeSignal()
+            self.log_message = _FakeSignal()
+            created_workers.append(self)
+
+        def start(self) -> None:
+            starts.append("started")
+
+    monkeypatch.setattr(pipeline_page_module, "_PipelineWorker", _FakeWorker)
+
+    states: list[bool] = []
+    page = SimpleNamespace(
+        project_manager=SimpleNamespace(current_book_id="book-1"),
+        settings=SimpleNamespace(),
+        log=_LogCapture(),
+        _is_busy=lambda: False,
+        _on_save_index_url=lambda: None,
+        _set_buttons_enabled=lambda enabled: states.append(enabled),
+        _status_label=SimpleNamespace(setText=lambda _text: None),
+        _on_inventory_ready=lambda _data: None,
+        _on_worker_finished=lambda _mode, _message: None,
+        _on_worker_failed=lambda _error: None,
+        _on_worker_cancelled=lambda _message: None,
+    )
+
+    PipelinePage._on_index_chapters(page)
+
+    assert states == [False]
+    assert starts == ["started"]
+    assert len(created_workers) == 1
+    assert created_workers[0].kwargs["mode"] == _FakeWorker.CHECK_INDEX
+    assert page.log.messages[-1] == ("Pipeline started: Index Chapters.", "INFO")
 
 
 def test_stop_pipeline_requests_worker_stop() -> None:
