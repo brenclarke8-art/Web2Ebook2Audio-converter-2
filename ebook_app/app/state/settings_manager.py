@@ -70,17 +70,19 @@ class SettingsManager(QObject):
         # LLM / Dialogue Parsing
         # ------------------------------
         "index_url": "",
-        "dialogue_llm_mode": "full",
+        "llm_provider": "ollama_local",
+        "llm_url": "http://127.0.0.1:11434/api/generate",
+        "llm_model": "qwen2.5-coder:7b",
+        "llm_api_key": "",
+        # Backward compatibility keys (kept in sync with llm_url / llm_model)
         "dialogue_llm_url": "http://127.0.0.1:11434/api/generate",
-        # Legacy single-model setting kept for backward compatibility.
         "dialogue_llm_model": "qwen2.5-coder:7b",
-        # Single-model architecture: keep compatibility keys in sync.
-        "dialogue_llm_semantic_model": "qwen2.5-coder:7b",
-        "dialogue_llm_formatter_model": "qwen2.5-coder:7b",
         "dialogue_llm_timeout": 300,
         "dialogue_llm_retries": 1,
         "dialogue_llm_strict_quotes": False,
         "llm_preflight_check": True,
+        "phase1_llm_assist_enabled": False,
+        "phase2_batch_size": 20,
 
         # ------------------------------
         # Character Confidence
@@ -129,16 +131,6 @@ class SettingsManager(QObject):
         "character_conf_threshold": 0.8,
 
         # ------------------------------
-        # Experimental Features
-        # ------------------------------
-
-        # Experimental: chapter-to-chapter rolling story context
-        # When enabled, a short story-state summary is generated after each
-        # chapter and injected into the next chapter's LLM prompt to improve
-        # continuity.  Stored in pipeline_work/story_context.json.
-        "story_context_enabled": False,
-
-        # ------------------------------
         # LLM Chunking
         # ------------------------------
         "llm_chunk_size": 6000,
@@ -176,25 +168,32 @@ class SettingsManager(QObject):
                 self.data[key] = value
                 changed = True
 
-        canonical_dialogue_model = self._canonical_dialogue_model()
-        if self.data.get("dialogue_llm_model") != canonical_dialogue_model:
-            self.data["dialogue_llm_model"] = canonical_dialogue_model
+        canonical_llm_url = self._canonical_llm_url()
+        canonical_llm_model = self._canonical_llm_model()
+        if self.data.get("llm_url") != canonical_llm_url:
+            self.data["llm_url"] = canonical_llm_url
             changed = True
-        if self.data.get("dialogue_llm_semantic_model") != canonical_dialogue_model:
-            self.data["dialogue_llm_semantic_model"] = canonical_dialogue_model
+        if self.data.get("dialogue_llm_url") != canonical_llm_url:
+            self.data["dialogue_llm_url"] = canonical_llm_url
             changed = True
-        if self.data.get("dialogue_llm_formatter_model") != canonical_dialogue_model:
-            self.data["dialogue_llm_formatter_model"] = canonical_dialogue_model
+        if self.data.get("llm_model") != canonical_llm_model:
+            self.data["llm_model"] = canonical_llm_model
+            changed = True
+        if self.data.get("dialogue_llm_model") != canonical_llm_model:
+            self.data["dialogue_llm_model"] = canonical_llm_model
             changed = True
 
         for legacy_key in (
             "tts_backend_mode",
             "llm_api_url",
-            "llm_api_key",
             "ollama_url",
             "ollama_model",
             "audio_output_mode",
             "multispeaker_enabled",
+            "dialogue_llm_mode",
+            "dialogue_llm_semantic_model",
+            "dialogue_llm_formatter_model",
+            "story_context_enabled",
         ):
             if legacy_key in self.data:
                 self.data.pop(legacy_key, None)
@@ -204,12 +203,17 @@ class SettingsManager(QObject):
         if changed:
             self.save()
 
-    def _canonical_dialogue_model(self) -> str:
-        semantic_model = str(self.data.get("dialogue_llm_semantic_model", "") or "").strip()
+    def _canonical_llm_url(self) -> str:
+        llm_url = str(self.data.get("llm_url", "") or "").strip()
+        legacy_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
+        default_url = str(self.DEFAULTS.get("llm_url", "http://127.0.0.1:11434/api/generate")).strip()
+        return llm_url or legacy_url or default_url
+
+    def _canonical_llm_model(self) -> str:
+        llm_model = str(self.data.get("llm_model", "") or "").strip()
         legacy_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
-        formatter_model = str(self.data.get("dialogue_llm_formatter_model", "") or "").strip()
-        default_model = str(self.DEFAULTS.get("dialogue_llm_semantic_model", "qwen2.5-coder:7b")).strip()
-        return semantic_model or legacy_model or formatter_model or default_model
+        default_model = str(self.DEFAULTS.get("llm_model", "qwen2.5-coder:7b")).strip()
+        return llm_model or legacy_model or default_model
 
     def save(self):
         try:

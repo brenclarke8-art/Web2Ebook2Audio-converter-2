@@ -16,13 +16,18 @@ class DummySettings:
             "kokoro_voices_path": "",
             "tts_speed": 1.0,
             "tts_voice": "af_heart",
+            "llm_provider": "ollama_local",
+            "llm_url": "http://127.0.0.1:11434/api/chat",
+            "llm_model": "mistral:instruct",
+            "llm_api_key": "",
             "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
             "dialogue_llm_model": "mistral:instruct",
-            "dialogue_llm_mode": "full",
             "dialogue_llm_timeout": 120,
             "dialogue_llm_retries": 1,
             "dialogue_llm_strict_quotes": False,
             "llm_preflight_check": False,
+            "phase1_llm_assist_enabled": False,
+            "phase2_batch_size": 20,
             "character_confidence_threshold": 0.8,
             "pending_character_additions": [],
             "character_db": [],
@@ -144,20 +149,19 @@ def test_run_all_executes_new_pipeline_steps_in_order(tmp_path):
     assert called == controller.STEPS
 
 
-def test_build_dialogue_parser_prefers_semantic_model_setting(tmp_path):
+def test_build_dialogue_parser_prefers_unified_model_setting(tmp_path):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))
+    settings.set("llm_model", "unified:model")
     settings.set("dialogue_llm_model", "legacy:model")
-    settings.set("dialogue_llm_semantic_model", "semantic:model")
-    settings.set("dialogue_llm_formatter_model", "formatter:model")
     controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
 
     parser = controller._build_dialogue_parser()
 
-    assert parser.model == "semantic:model"
-    assert parser.semantic_model == "semantic:model"
-    assert parser.fallback_model == "semantic:model"
-    assert parser.formatter_model == "semantic:model"
+    assert parser.model == "unified:model"
+    assert parser.semantic_model == "unified:model"
+    assert parser.fallback_model == "unified:model"
+    assert parser.formatter_model == "unified:model"
 
 
 def test_clean_chapters_removes_ui_noise_and_zero_width_chars(tmp_path):
@@ -179,6 +183,101 @@ def test_clean_chapters_removes_ui_noise_and_zero_width_chars(tmp_path):
     assert "\u200B" not in cleaned
     assert "Line one." in cleaned
     assert "Line two." in cleaned
+
+
+def test_pass2_classification_outputs_required_segment_schema(tmp_path, monkeypatch):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    settings.set("phase2_batch_size", 2)
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "chapters_raw.json").write_text(
+        json.dumps([{"title": "Chapter 1"}]),
+        encoding="utf-8",
+    )
+    (work_dir / "ch1_pass1.json").write_text(
+        json.dumps(
+            {
+                "chapter_id": "ch1",
+                "segments": [
+                    {
+                        "text": "“Hello there.”",
+                        "paragraph_id": "ch1_p000",
+                        "context_before": "Before",
+                        "context_after": "After",
+                        "is_dialogue_candidate": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        controller.pass2_classifier,
+        "classify_segments",
+        lambda segments, chapter_id="": [
+            {
+                "text": segments[0]["text"],
+                "type": "dialogue",
+                "speaker": "Alice",
+                "gender": "female",
+                "speaker_confidence": 0.9,
+                "gender_confidence": 0.8,
+                "character_confidence": 0.85,
+                "paragraph_id": "ch1_p000",
+                "voice": "af_heart",
+                "emotion": "happy",
+                "prior_segment_text": "Before",
+                "next_segment_text": "After",
+            }
+        ],
+    )
+
+    controller.pass2_classification()
+    out = json.loads((work_dir / "ch1_pass2.json").read_text(encoding="utf-8"))
+    segment = out["segments"][0]
+    assert set(segment.keys()) == {
+        "text",
+        "type",
+        "speaker",
+        "gender",
+        "speaker_confidence",
+        "gender_confidence",
+        "character_confidence",
+        "paragraph_id",
+        "voice",
+        "emotion",
+        "prior_segment_text",
+        "next_segment_text",
+    }
+
+
+def test_pass1_extraction_applies_optional_llm_assist(tmp_path, monkeypatch):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    settings.set("phase1_llm_assist_enabled", True)
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "chapters_raw.json").write_text(
+        json.dumps([{"title": "Chapter 1"}]),
+        encoding="utf-8",
+    )
+    (work_dir / "ch1_cleaned.txt").write_text("Paragraph one.\n\nParagraph two.", encoding="utf-8")
+
+    monkeypatch.setattr(
+        controller.pass2_classifier,
+        "assist_pass1_segments",
+        lambda segments, chapter_id="": [{**segment, "is_dialogue_candidate": True} for segment in segments],
+    )
+
+    controller.pass1_extraction()
+    out = json.loads((work_dir / "ch1_pass1.json").read_text(encoding="utf-8"))
+    assert out["segments"][0]["is_dialogue_candidate"] is True
 
 
 def test_tts_generate_stops_when_controller_is_cancelled(tmp_path, monkeypatch):

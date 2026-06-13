@@ -8,10 +8,16 @@
   "tts_autostart_service": false,
   "tts_voice": "af_heart",
   "tts_speed": 1.0,
+  "llm_provider": "ollama_local",
+  "llm_url": "http://127.0.0.1:11434/api/generate",
+  "llm_model": "qwen2.5-coder:7b",
+  "llm_api_key": "",
   "dialogue_llm_url": "http://127.0.0.1:11434/api/generate",
   "dialogue_llm_model": "qwen2.5-coder:7b",
   "dialogue_llm_timeout": 300,
   "dialogue_llm_retries": 1,
+  "phase1_llm_assist_enabled": false,
+  "phase2_batch_size": 20,
   "emotion_tagging_enabled": false,
   "translation_enabled": false
 }

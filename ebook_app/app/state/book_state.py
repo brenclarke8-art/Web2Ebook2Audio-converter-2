@@ -355,8 +355,10 @@ class ProjectManager(QObject):
             output_dir=self.output_dir,
             book_title=self._project_data.get("title", ""),
             book_author=self._project_data.get("author", ""),
-            llm_base_url=self.settings.get("dialogue_llm_url", ""),
-            llm_model=self.settings.get("dialogue_llm_model", ""),
+            llm_base_url=self.settings.get("llm_url", self.settings.get("dialogue_llm_url", "")),
+            llm_model=self.settings.get("llm_model", self.settings.get("dialogue_llm_model", "")),
+            llm_provider=self.settings.get("llm_provider", "ollama_local"),
+            llm_api_key=self.settings.get("llm_api_key", ""),
             index_url=self._project_data.get("index_url", "")
                       or self.settings.get("index_url", ""),
         )
