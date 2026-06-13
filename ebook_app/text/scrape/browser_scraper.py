@@ -88,6 +88,17 @@ class WebScraper:
         queue = [index_url]
         page_num = 0
 
+        # If the index URL itself looks like a specific chapter page (not a TOC/list page),
+        # include it as the first chapter so the caller always gets the URL they provided.
+        # Heuristic: path contains "chapter" AND the URL has either a query string
+        # (e.g. /chapter.php?ch=488) or ends with a numeric segment (e.g. /chapters/1).
+        index_path_lower = parsed.path.lower()
+        _ends_with_digits = bool(re.search(r"/\d+/?$", parsed.path))
+        if "chapter" in index_path_lower and (parsed.query or _ends_with_digits):
+            canonical_index = self._canonicalize(index_url)
+            seen_chapters.add(canonical_index)
+            chapter_urls.append(index_url)
+
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
                 headless=self.browser_headless,

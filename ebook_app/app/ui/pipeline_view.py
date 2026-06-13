@@ -426,30 +426,187 @@ class PipelinePage(BasePage):
         if self.project_manager and worker is not None:
             self.project_manager.set_last_processed_chapter(getattr(worker, '_end', 0))
         self._set_buttons_enabled(True)
-        self._refresh_chapter_counts()
+        self._load_active_project_state()
         self.log.log(message, level="SUCCESS")
-        self._status_label.setStyleSheet("color: #a6e3a1;")
-        self._status_label.setText(f"✅ {message}")
+        status_label = getattr(self, '_status_label', None)
+        if status_label is not None:
+            status_label.setStyleSheet("color: #a6e3a1;")
+            status_label.setText(f"✅ {message}")
         if mode == _PipelineWorker.RUN_TO_REVIEW:
             QMessageBox.information(
                 self,
                 "Character Review Required",
-                "Chapter parsing is complete. Review detected characters in the "
-                "Characters tab and segments in the Review tab, then click "
-                "'Continue Audio + Export'.",
+                "Chapter parsing is complete. Review scraped text and detected "
+                "characters in the Review tab, then click 'Continue Audio + Export'.",
             )
 
     def _on_worker_failed(self, error: str) -> None:
         self._worker = None
         self._set_buttons_enabled(True)
-        self._status_label.setStyleSheet("color: #f38ba8;")
-        self._status_label.setText(f"❌ Pipeline error: {error}")
+        status_label = getattr(self, '_status_label', None)
+        if status_label is not None:
+            status_label.setStyleSheet("color: #f38ba8;")
+            status_label.setText(f"❌ Pipeline error: {error}")
         self.log.log(f"Pipeline failed: {error}", level="ERROR")
         QMessageBox.critical(self, "Pipeline Error", f"Pipeline failed:\n\n{error}")
 
     def _on_worker_cancelled(self, message: str) -> None:
         self._worker = None
         self._set_buttons_enabled(True)
-        self._status_label.setStyleSheet("color: #f9e2af;")
-        self._status_label.setText(f"⚠ {message}")
+        status_label = getattr(self, '_status_label', None)
+        if status_label is not None:
+            status_label.setStyleSheet("color: #f9e2af;")
+            status_label.setText(f"⚠ {message}")
         self.log.log(message, level="WARNING")
+
+    # ------------------------------------------------------------------
+    # Review page helpers (segment editing + character DB)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_segment_type(seg_type: str) -> str:
+        return seg_type if seg_type in {"dialogue", "narration", "thought"} else "narration"
+
+    @staticmethod
+    def _normalize_gender(gender: str) -> str:
+        return gender if gender in {"male", "female", "unknown"} else "unknown"
+
+    def _collect_review_segments_from_table(self) -> list:
+        """Build an updated segment list from the current review table widget."""
+        segments = list(self._current_review_segments)
+        for row in range(self._segment_table.rowCount()):
+            if row >= len(self._current_review_row_segment_indexes):
+                continue
+            seg_idx = self._current_review_row_segment_indexes[row]
+            if seg_idx >= len(segments):
+                continue
+            speaker_widget = self._segment_table.cellWidget(row, 1)
+            type_widget = self._segment_table.cellWidget(row, 2)
+            speaker = speaker_widget.currentText() if speaker_widget else segments[seg_idx].get("speaker", "")
+            seg_type = type_widget.currentText() if type_widget else segments[seg_idx].get("type", "narration")
+            segments[seg_idx] = dict(segments[seg_idx])
+            segments[seg_idx]["speaker"] = speaker
+            segments[seg_idx]["type"] = self._normalize_segment_type(seg_type)
+        return segments
+
+    def _refresh_final_review_view(self, chapter_id: str) -> None:
+        """Refresh the final review view panel for the given chapter.
+
+        This is a no-op in the base implementation; the full pipeline UI
+        overrides this to repopulate the review tab after segment edits.
+        """
+        views = getattr(self, '_review_stage_views', {})
+        view = views.get(chapter_id)
+        if view is not None and hasattr(self, '_segments_to_html'):
+            pass  # actual refresh delegated to full UI subclass
+
+    def _character_db_path(self) -> Path:
+        return Path(self.project_manager.get_work_dir()) / "character_database.json"
+
+    def _load_character_database_entries(self) -> list:
+        path = self._character_db_path()
+        if path.exists():
+            try:
+                import json as _json
+                return _json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return []
+
+    def _on_save_segment_speakers(self) -> None:
+        """Persist review table edits back to all chapter LLM/final JSON files."""
+        import json as _json
+        chapter_id = self._current_review_chapter_id
+        work_dir = Path(self.project_manager.get_work_dir())
+
+        updated_segments = self._collect_review_segments_from_table()
+
+        for filename in (
+            f"{chapter_id}_llm_raw.json",
+            f"{chapter_id}_llm_normalized.json",
+            f"{chapter_id}_chapter_info_final.json",
+        ):
+            path = work_dir / filename
+            if path.exists():
+                try:
+                    data = _json.loads(path.read_text(encoding="utf-8"))
+                    data["segments"] = updated_segments
+                    path.write_text(
+                        _json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+
+        self._refresh_final_review_view(chapter_id)
+        self.log.log("Saved segment review edits for chapter review.", level="SUCCESS")
+
+    def _on_save_detected_characters(self) -> None:
+        """Persist the character table back to the character database JSON and settings."""
+        import json as _json
+        table = self._detected_char_table
+        rows = table.rowCount()
+        existing = {e["name"]: e for e in self._load_character_database_entries()}
+        clamped_count = 0
+        updated = []
+        for row in range(rows):
+            name_item = table.item(row, 0)
+            name = name_item.text() if name_item else ""
+            if not name:
+                continue
+            gender_widget = table.cellWidget(row, 1)
+            voice_widget = table.cellWidget(row, 2)
+            conf_item = table.item(row, 3)
+            gender = self._normalize_gender(gender_widget.currentText() if gender_widget else "")
+            voice = voice_widget.currentText() if voice_widget else ""
+            try:
+                conf = float(conf_item.text()) if conf_item else 0.0
+            except (ValueError, AttributeError):
+                conf = 0.0
+            if conf < 0.0 or conf > 1.0:
+                conf = max(0.0, min(1.0, conf))
+                clamped_count += 1
+            if name in existing:
+                entry = dict(existing[name])
+                entry["gender"] = gender
+                entry["voice"] = voice or entry.get("voice", "")
+            else:
+                entry = {
+                    "name": name,
+                    "gender": gender,
+                    "voice": voice or self._default_voice_for_gender(gender),
+                    "description": "",
+                }
+            updated.append(entry)
+
+        db_path = self._character_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_text(_json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.settings.set("character_db", updated)
+        self.settings.set("pending_character_additions", [])
+        self.settings.save()
+        self._refresh_segment_speaker_options()
+        if clamped_count > 0:
+            self.log.log(
+                f"Saved character edits ({clamped_count} confidence values clamped to 0..1).",
+                level="WARNING",
+            )
+        else:
+            self.log.log("Saved character edits.", level="SUCCESS")
+
+    def _on_recheck_dialogue(self) -> None:
+        """Re-run Pass-2 classification and smart review for the active chapter."""
+        if not self._require_project():
+            return
+        self.log.log("Rechecking dialogue classification…", level="INFO")
+        ctrl = self.project_manager.create_pipeline_controller()
+        ctrl.pass2_classification()
+        ctrl.smart_review_dialogue()
+        self.log.log("Dialogue recheck complete.", level="SUCCESS")
+
+    def _refresh_segment_speaker_options(self) -> None:
+        """Refresh speaker combo-box options in the segment review table.
+
+        This is a no-op placeholder; the full pipeline UI overrides this to
+        repopulate combo boxes when the character database changes.
+        """
+

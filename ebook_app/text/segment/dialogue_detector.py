@@ -8,8 +8,8 @@ from .segment_models import Segment
 
 
 # Common dialogue markers
-_DIALOGUE_OPEN = re.compile(r'^\s*[""'「『【（《<]')
-_DIALOGUE_LINE = re.compile(r'[""'「』】）》>]')
+_DIALOGUE_OPEN = re.compile(r"""^\s*[""'「『【（《<]""")
+_DIALOGUE_LINE = re.compile(r"""[""'「』】）》>]""")
 
 
 class DialogueDetector:
