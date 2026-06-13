@@ -64,6 +64,8 @@ class PipelineSettings:
         default_female_voice: str = "af_female",
         llm_base_url: str = "",
         llm_model: str = "",
+        llm_provider: str = "ollama_local",
+        llm_api_key: str = "",
         index_url: str = "",
     ) -> None:
         self.work_dir = work_dir
@@ -76,6 +78,8 @@ class PipelineSettings:
         self.default_female_voice = default_female_voice
         self.llm_base_url = llm_base_url
         self.llm_model = llm_model
+        self.llm_provider = llm_provider
+        self.llm_api_key = llm_api_key
         self.index_url = index_url
 
 
@@ -141,13 +145,18 @@ class PipelineController:
         self.chapter_rebuilder = ChapterRebuilder(self.voice_router)
 
         # LLM client + Pass‑2 classifier
-        llm_url = _gs(settings, "llm_base_url", "dialogue_llm_url", default="")
+        llm_url = _gs(settings, "llm_url", "llm_base_url", "dialogue_llm_url", default="")
         llm_model = _gs(settings, "llm_model", "dialogue_llm_model", default="")
+        llm_provider = _gs(settings, "llm_provider", default="ollama_local")
+        llm_api_key = _gs(settings, "llm_api_key", default="")
+        phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
         self.llm_client = LLMClient(
             base_url=llm_url,
             model=llm_model,
+            provider=llm_provider,
+            api_key=llm_api_key,
         )
-        self.pass2_classifier = Pass2Classifier(self.llm_client)
+        self.pass2_classifier = Pass2Classifier(self.llm_client, batch_size=phase2_batch_size)
 
         # Cancellation + progress callbacks
         self._cancel_flags: Dict[str, bool] = {}
@@ -399,6 +408,7 @@ class PipelineController:
             return
 
         extractor = Pass1Extractor()
+        llm_assist_enabled = bool(_gs(self.settings, "phase1_llm_assist_enabled", default=False))
 
         for idx in range(total):
             if self._cancelled("pass1_extraction"):
@@ -413,6 +423,11 @@ class PipelineController:
 
             text = cleaned_path.read_text(encoding="utf-8")
             segments = extractor.extract(text=text, chapter_id=chapter_id)
+            if llm_assist_enabled and segments:
+                try:
+                    segments = self.pass2_classifier.assist_pass1_segments(segments, chapter_id=chapter_id)
+                except Exception:
+                    logger.error("Phase-1 LLM assist failed for %s", chapter_id, exc_info=True)
 
             out_path = self._chapter_pass1_path(chapter_id)
             self._save_json(out_path, {"chapter_id": chapter_id, "segments": segments})
@@ -467,30 +482,35 @@ class PipelineController:
                 logger.warning("No Pass‑1 segments in %s — skipping.", pass1_path)
                 continue
 
-            classified = []
-            for seg_idx, seg in enumerate(segments):
-                if self._cancelled("pass2_classification"):
-                    return
-
-                try:
-                    result = self.pass2_classifier.classify_segment(seg)
-                    merged = {**seg, **result}
-                except Exception:
-                    logger.error(
-                        "Pass‑2 classification failed for %s segment %d",
-                        chapter_id,
-                        seg_idx,
-                        exc_info=True,
-                    )
-                    merged = {
-                        **seg,
+            if self._cancelled("pass2_classification"):
+                return
+            try:
+                classified = self.pass2_classifier.classify_segments(
+                    segments,
+                    chapter_id=chapter_id,
+                    should_cancel=lambda: self._cancelled("pass2_classification"),
+                )
+            except Exception:
+                logger.error("Pass‑2 batched classification failed for %s", chapter_id, exc_info=True)
+                classified = [
+                    {
+                        "text": str(seg.get("text", "")),
                         "type": "narration",
-                        "speaker": "unknown",
+                        "speaker": "narrator",
                         "gender": "unknown",
-                        "confidence": 0.0,
+                        "speaker_confidence": 0.0,
+                        "gender_confidence": 0.0,
+                        "character_confidence": 0.0,
+                        "paragraph_id": str(seg.get("paragraph_id", "")),
+                        "voice": str(seg.get("voice", "")),
+                        "emotion": str(seg.get("emotion", "neutral") or "neutral"),
+                        "prior_segment_text": str(seg.get("context_before", "")),
+                        "next_segment_text": str(seg.get("context_after", "")),
                     }
-
-                classified.append(merged)
+                    for seg in segments
+                ]
+            if self._cancelled("pass2_classification"):
+                return
 
 
 
@@ -577,16 +597,15 @@ class PipelineController:
 
         url = _gs(
             self.settings,
+            "llm_url",
             "dialogue_llm_url",
             "dialogue_llm_base_url",
             "llm_base_url",
             default="http://127.0.0.1:11434/api/chat",
         )
-        semantic_model = _gs(self.settings, "dialogue_llm_semantic_model", default="") or None
-        base_model = _gs(self.settings, "dialogue_llm_model", "llm_model", default="") or None
+        base_model = _gs(self.settings, "llm_model", "dialogue_llm_model", default="") or None
         return DialogueParser(
             ollama_url=url,
-            semantic_model=semantic_model,
             model=base_model,
         )
 

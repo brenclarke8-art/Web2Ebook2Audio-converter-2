@@ -62,10 +62,12 @@ class _PreviewThread(QThread):
 class _LlmHealthThread(QThread):
     result = Signal(dict)
 
-    def __init__(self, llm_url: str, model: str, parent=None):
+    def __init__(self, provider: str, llm_url: str, model: str, api_key: str = "", parent=None):
         super().__init__(parent)
+        self._provider = provider.strip()
         self._llm_url = llm_url.strip()
         self._model = model.strip()
+        self._api_key = api_key.strip()
 
     @staticmethod
     def _normalize_model_name(model_name: str) -> str:
@@ -82,8 +84,25 @@ class _LlmHealthThread(QThread):
                 self.result.emit(
                     {
                         "status": "unreachable",
-                        "detail": "Invalid Ollama URL.",
+                        "detail": "Invalid LLM URL.",
                         "llm_url": self._llm_url,
+                    }
+                )
+                return
+
+            provider = self._provider.lower()
+            if provider == "external_cloud":
+                self.result.emit(
+                    {
+                        "status": "ok",
+                        "detail": "",
+                        "llm_url": self._llm_url,
+                        "model": self._model,
+                        "model_configured": bool(self._model),
+                        "model_found": bool(self._model),
+                        "available_models": [self._model] if self._model else [],
+                        "provider": provider,
+                        "api_key_configured": bool(self._api_key),
                     }
                 )
                 return
@@ -112,6 +131,8 @@ class _LlmHealthThread(QThread):
                     "model": self._model,
                     "model_configured": model_configured,
                     "model_found": model_found,
+                    "available_models": sorted(model_names),
+                    "provider": provider,
                 }
             )
         except (requests.RequestException, ValueError, TypeError) as exc:
@@ -271,32 +292,44 @@ class SettingsPage(BasePage):
         llm_group = QGroupBox("Dialogue LLM Connection")
         llm_form = QFormLayout(llm_group)
 
+        self._llm_provider_combo = QComboBox()
+        self._llm_provider_combo.addItem("Local Ollama", userData="ollama_local")
+        self._llm_provider_combo.addItem("External Cloud API", userData="external_cloud")
+        provider = str(self.settings.get("llm_provider", "ollama_local"))
+        provider_idx = self._llm_provider_combo.findData(provider)
+        self._llm_provider_combo.setCurrentIndex(provider_idx if provider_idx >= 0 else 0)
+        llm_form.addRow("LLM provider:", self._llm_provider_combo)
+
         self._dialogue_llm_url_input = QLineEdit(
-            str(self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/generate"))
+            str(self.settings.get("llm_url", self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/generate")))
         )
         self._dialogue_llm_url_input.setPlaceholderText("http://127.0.0.1:11434/api/generate")
-        llm_form.addRow("Dialogue LLM URL:", self._dialogue_llm_url_input)
+        llm_form.addRow("LLM URL:", self._dialogue_llm_url_input)
 
-        self._dialogue_llm_model_input = QLineEdit(
-            str(self.settings.get("dialogue_llm_semantic_model", "qwen2.5-coder:7b"))
-        )
-        self._dialogue_llm_model_input.setPlaceholderText("qwen2.5-coder:7b")
-        llm_form.addRow("Dialogue model:", self._dialogue_llm_model_input)
+        self._llm_api_key_input = QLineEdit(str(self.settings.get("llm_api_key", "")))
+        self._llm_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._llm_api_key_input.setPlaceholderText("Optional for local Ollama")
+        self._llm_api_key_input.setToolTip("Stored in settings.json as plain text.")
+        llm_form.addRow("API key:", self._llm_api_key_input)
 
-        self._dialogue_llm_formatter_model_input = QLineEdit(
-            str(self.settings.get("dialogue_llm_formatter_model", "qwen2.5-coder:7b"))
-        )
-        self._dialogue_llm_formatter_model_input.setPlaceholderText("qwen2.5-coder:7b")
-        self._dialogue_llm_formatter_model_input.setEnabled(False)
-        llm_form.addRow("Formatter/repair model (auto):", self._dialogue_llm_formatter_model_input)
+        self._dialogue_llm_model_input = QComboBox()
+        self._dialogue_llm_model_input.setEditable(True)
+        configured_model = str(self.settings.get("llm_model", self.settings.get("dialogue_llm_model", "qwen2.5-coder:7b")))
+        if configured_model:
+            self._dialogue_llm_model_input.addItem(configured_model)
+        self._dialogue_llm_model_input.setCurrentText(configured_model)
+        llm_form.addRow("LLM model:", self._dialogue_llm_model_input)
 
         llm_status_row = QHBoxLayout()
         self._llm_status_label = QLabel()
-        self._llm_status_label.setText("ℹ️ Local LLM connection not checked yet.")
+        self._llm_status_label.setText("ℹ️ LLM connection not checked yet.")
         self._llm_status_label.setStyleSheet("color: steelblue;")
         llm_status_row.addWidget(self._llm_status_label)
         llm_status_row.addStretch()
-        self._check_llm_btn = QPushButton("Check Local LLM")
+        self._refresh_llm_models_btn = QPushButton("Refresh Models")
+        self._refresh_llm_models_btn.clicked.connect(self._on_check_llm_connection)
+        llm_status_row.addWidget(self._refresh_llm_models_btn)
+        self._check_llm_btn = QPushButton("Check LLM")
         self._check_llm_btn.clicked.connect(self._on_check_llm_connection)
         llm_status_row.addWidget(self._check_llm_btn)
         llm_form.addRow("", llm_status_row)
@@ -308,6 +341,8 @@ class SettingsPage(BasePage):
         llm_form.addRow("", self._llm_troubleshoot_label)
 
         inner.addWidget(llm_group)
+        self._llm_provider_combo.currentIndexChanged.connect(self._on_llm_provider_changed)
+        self._on_llm_provider_changed()
 
         # ── Voice Routing ──────────────────────────────────────────────
         ms_group = QGroupBox("Voice Routing")
@@ -472,38 +507,15 @@ class SettingsPage(BasePage):
 
         inner.addWidget(scraper_group)
 
-        # ── Experimental Features ──────────────────────────────────────
-        exp_group = QGroupBox("⚠️ Experimental Features")
-        exp_group.setToolTip(
-            "Experimental features may change behavior or produce inconsistent results."
+        self._phase1_llm_assist_cb = QCheckBox("Enable LLM assist during Phase-1 extraction")
+        self._phase1_llm_assist_cb.setChecked(
+            bool(self.settings.get("phase1_llm_assist_enabled", False))
         )
-        exp_vbox = QVBoxLayout(exp_group)
-
-        exp_note = QLabel(
-            "<i>These options are experimental and may produce inconsistent results. "
-            "Enable only if you understand the limitations.</i>"
+        self._phase1_llm_assist_cb.setToolTip(
+            "When enabled, Pass-1 extraction asks the selected LLM for assistive "
+            "dialogue/thought hints before Phase-2 classification."
         )
-        exp_note.setWordWrap(True)
-        exp_vbox.addWidget(exp_note)
-
-        self._story_context_checkbox = QCheckBox(
-            "Enable chapter-to-chapter story context (experimental)"
-        )
-        self._story_context_checkbox.setToolTip(
-            "After each chapter, ask the LLM to produce a short rolling story-state summary "
-            "(max one paragraph). That summary is injected into the next chapter's prompt so "
-            "the model can maintain continuity across chapters.\n\n"
-            "The context is stored in pipeline_work/story_context.json alongside the book "
-            "project so generation can resume with continuity even after closing and "
-            "reopening the project.\n\n"
-            "Active characters are auto-extracted from each chapter."
-        )
-        self._story_context_checkbox.setChecked(
-            bool(self.settings.get("story_context_enabled", False))
-        )
-        exp_vbox.addWidget(self._story_context_checkbox)
-
-        inner.addWidget(exp_group)
+        inner.addWidget(self._phase1_llm_assist_cb)
 
         # ── Save ───────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -548,19 +560,20 @@ class SettingsPage(BasePage):
         self.settings.set("kokoro_model_path", self._kokoro_model_path_input.text().strip())
         self.settings.set("kokoro_voices_path", self._kokoro_voices_path_input.text().strip())
         dialogue_llm_url = self._dialogue_llm_url_input.text().strip()
-        dialogue_llm_model = self._dialogue_llm_model_input.text().strip()
-        dialogue_llm_formatter_model = dialogue_llm_model
-        self._dialogue_llm_formatter_model_input.setText(dialogue_llm_formatter_model)
-        self.settings.set("dialogue_llm_url", dialogue_llm_url)
+        dialogue_llm_model = self._dialogue_llm_model_input.currentText().strip()
+        llm_provider = str(self._llm_provider_combo.currentData() or "ollama_local")
+        self.settings.set("llm_provider", llm_provider)
+        self.settings.set("llm_url", dialogue_llm_url)
+        self.settings.set("llm_model", dialogue_llm_model)
+        self.settings.set("llm_api_key", self._llm_api_key_input.text().strip())
+        self.settings.set("dialogue_llm_url", dialogue_llm_url)  # backward compat
         self.settings.set("dialogue_llm_model", dialogue_llm_model)  # backward compat
-        self.settings.set("dialogue_llm_semantic_model", dialogue_llm_model)
-        self.settings.set("dialogue_llm_formatter_model", dialogue_llm_formatter_model)
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
         self.settings.set("tts_speed", self._tts_speed_spin.value())
         self.settings.set("character_confidence_threshold", self._char_confidence_spin.value())
-        self.settings.set("story_context_enabled", self._story_context_checkbox.isChecked())
+        self.settings.set("phase1_llm_assist_enabled", self._phase1_llm_assist_cb.isChecked())
         # Scraper settings
         self.settings.set("scraper_method", self._scraper_method_combo.currentText())
         self.settings.set("scraper_use_browser_gui", self._scraper_use_gui_cb.isChecked())
@@ -683,6 +696,14 @@ class SettingsPage(BasePage):
             )
             self._svc_status_label.setStyleSheet("color: orange;")
 
+    def _on_llm_provider_changed(self, *_args) -> None:
+        provider = str(self._llm_provider_combo.currentData() or "ollama_local")
+        is_local = provider == "ollama_local"
+        self._refresh_llm_models_btn.setEnabled(is_local)
+        self._llm_api_key_input.setPlaceholderText(
+            "Optional for local Ollama" if is_local else "Required for external cloud APIs"
+        )
+
     def _on_check_llm_connection(self) -> None:
         if self._llm_health_thread and self._llm_health_thread.isRunning():
             return
@@ -693,35 +714,52 @@ class SettingsPage(BasePage):
                 # Signal may already be disconnected if the prior thread was cleaned up.
                 pass
             self._llm_health_thread.deleteLater()
+        llm_provider = str(self._llm_provider_combo.currentData() or "ollama_local")
         llm_url = self._dialogue_llm_url_input.text().strip()
-        model = self._dialogue_llm_model_input.text().strip()
-        self._llm_status_label.setText("⏳ Checking local LLM connection…")
+        model = self._dialogue_llm_model_input.currentText().strip()
+        api_key = self._llm_api_key_input.text().strip()
+        self._llm_status_label.setText("⏳ Checking LLM connection…")
         self._llm_status_label.setStyleSheet("")
         self._llm_troubleshoot_label.hide()
-        self._llm_health_thread = _LlmHealthThread(llm_url, model, parent=self)
+        self._llm_health_thread = _LlmHealthThread(llm_provider, llm_url, model, api_key, parent=self)
         self._llm_health_thread.result.connect(self._on_llm_health_result)
         self._llm_health_thread.start()
 
     def _on_llm_health_result(self, result: dict) -> None:
         if result.get("status") == "ok":
+            provider = result.get("provider", "ollama_local")
+            available_models = result.get("available_models", []) or []
+            if available_models:
+                current_text = self._dialogue_llm_model_input.currentText().strip()
+                self._dialogue_llm_model_input.blockSignals(True)
+                self._dialogue_llm_model_input.clear()
+                self._dialogue_llm_model_input.addItems(sorted({str(m).strip() for m in available_models if str(m).strip()}))
+                if current_text:
+                    if self._dialogue_llm_model_input.findText(current_text) < 0:
+                        self._dialogue_llm_model_input.addItem(current_text)
+                    self._dialogue_llm_model_input.setCurrentText(current_text)
+                self._dialogue_llm_model_input.blockSignals(False)
             if not result.get("model_configured", False):
                 self._llm_status_label.setText(
-                    "⚠ Local LLM reachable, but no model is configured in Settings."
+                    "⚠ LLM reachable, but no model is configured in Settings."
                 )
                 self._llm_status_label.setStyleSheet("color: orange;")
             elif result.get("model_found", False):
-                self._llm_status_label.setText("✅ Local LLM reachable and selected model is available.")
+                if provider == "external_cloud":
+                    self._llm_status_label.setText("✅ External cloud API settings look valid.")
+                else:
+                    self._llm_status_label.setText("✅ Local LLM reachable and selected model is available.")
                 self._llm_status_label.setStyleSheet("color: green;")
             else:
                 model = result.get("model", "").strip() or _EMPTY_MODEL_LABEL
                 self._llm_status_label.setText(
-                    f"⚠ Local LLM reachable, but model '{model}' was not found."
+                    f"⚠ LLM reachable, but model '{model}' was not found."
                 )
                 self._llm_status_label.setStyleSheet("color: orange;")
             self._llm_troubleshoot_label.hide()
             return
 
-        self._llm_status_label.setText("🔴 Could not connect to local LLM.")
+        self._llm_status_label.setText("🔴 Could not connect to configured LLM.")
         self._llm_status_label.setStyleSheet("color: red;")
         self._llm_troubleshoot_label.setText(
             self._build_llm_troubleshoot_text(
@@ -737,9 +775,9 @@ class SettingsPage(BasePage):
         detail_line = f"Details: {detail}" if detail else "Details: Connection failed."
         return (
             f"Troubleshooting for {target}:\n"
-            "1) Confirm your local LLM service is running (for Ollama: `ollama serve`).\n"
+            "1) Confirm your configured provider/service is running and reachable.\n"
             "2) Check that the URL is correct and reachable from this machine.\n"
-            "3) Verify the selected model is installed (for Ollama: `ollama list`).\n"
+            "3) Verify the selected model is available to that provider.\n"
             "4) If it still fails, check firewall/proxy settings and retry.\n"
             f"{detail_line}"
         )

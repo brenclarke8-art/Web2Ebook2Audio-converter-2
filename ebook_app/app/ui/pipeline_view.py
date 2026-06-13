@@ -187,6 +187,9 @@ class PipelinePage(BasePage):
         proj_form.addRow("Index URL:", index_row)
 
         actions_row = QHBoxLayout()
+        self._open_browser_btn = QPushButton("Open Browser")
+        self._open_browser_btn.clicked.connect(self._on_open_browser)
+        actions_row.addWidget(self._open_browser_btn)
         self._index_chapters_btn = QPushButton("Index Chapters")
         self._index_chapters_btn.clicked.connect(self._on_index_chapters)
         actions_row.addWidget(self._index_chapters_btn)
@@ -291,7 +294,7 @@ class PipelinePage(BasePage):
 
     def _set_project_controls_enabled(self, enabled: bool) -> None:
         for w in (
-            self._index_url_edit, self._save_url_btn, self._index_chapters_btn,
+            self._index_url_edit, self._save_url_btn, self._open_browser_btn, self._index_chapters_btn,
             self._start_ch_spin, self._end_ch_spin,
             self._run_btn, self._continue_btn,
         ):
@@ -352,6 +355,23 @@ class PipelinePage(BasePage):
         self.project_manager.set_index_url(url)
         self.settings.set("index_url", url)
         self.log.log(f"Index URL saved: {url}", level="SUCCESS")
+
+    def _on_open_browser(self) -> None:
+        try:
+            from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
+
+            BrowserSessionManager.request_open()
+            self._status_label.setStyleSheet("color: steelblue;")
+            self._status_label.setText(
+                "🌐 Browser session is armed. Start indexing/run pipeline, then confirm the page in browser."
+            )
+            self.log.log(
+                "Browser session armed. Start indexing and click 'Use This Page' in the opened browser.",
+                level="INFO",
+            )
+        except Exception as exc:
+            self.log.log(f"Failed to arm browser session: {exc}", level="ERROR")
+            QMessageBox.critical(self, "Browser Error", f"Could not prepare browser session:\n\n{exc}")
 
     # ------------------------------------------------------------------
     # Pipeline run helpers
