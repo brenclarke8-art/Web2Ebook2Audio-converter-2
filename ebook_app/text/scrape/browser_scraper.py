@@ -14,6 +14,45 @@ from ebook_app.text.parse.html_cleaner import TextCleaner, extract_main_content_
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# JavaScript injected into the browser page to strip anti-copy overlays,
+# re-enable text selection, and remove transparent blocking layers.
+# ---------------------------------------------------------------------------
+_OVERLAY_REMOVAL_JS = """
+() => {
+    // Re-enable text selection globally
+    const styleEl = document.createElement('style');
+    styleEl.id = '__ebook_selection_fix';
+    if (!document.getElementById('__ebook_selection_fix')) {
+        styleEl.textContent = '* { user-select: text !important; -webkit-user-select: text !important; }';
+        document.head.appendChild(styleEl);
+    }
+    // Remove high-z-index overlays and transparent blocking layers
+    document.querySelectorAll('*').forEach(el => {
+        const st = window.getComputedStyle(el);
+        const zIndex = parseInt(st.zIndex, 10);
+        const pos = st.position;
+        const opacity = parseFloat(st.opacity);
+        const bg = st.backgroundColor;
+        const isFixed = pos === 'fixed' || pos === 'absolute';
+        const isHighZ = !isNaN(zIndex) && zIndex > 1000;
+        const isTransparentOverlay = isFixed && (opacity < 0.05 || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent');
+        if (isHighZ && isTransparentOverlay) {
+            el.remove();
+        }
+        // Also remove common modal/overlay class names with high z-index
+        const cls = (el.className || '').toString().toLowerCase();
+        if (isHighZ && (cls.includes('overlay') || cls.includes('modal') || cls.includes('popup') || cls.includes('blocker'))) {
+            el.remove();
+        }
+    });
+    // Remove elements that block pointer events over the content area
+    document.querySelectorAll('[style*="pointer-events"]').forEach(el => {
+        el.style.pointerEvents = 'auto';
+    });
+}
+"""
+
 try:
     from playwright.sync_api import sync_playwright
     PLAYWRIGHT_AVAILABLE = True
@@ -146,6 +185,7 @@ class WebScraper:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         request_delay: float = 0.5,
+        cloudflare_wait: int = 10,
     ):
         self.wait_for_js = wait_for_js
         self.remove_overlays = remove_overlays
@@ -158,6 +198,7 @@ class WebScraper:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.request_delay = request_delay
+        self.cloudflare_wait = cloudflare_wait
 
         self._pagination_keywords = {
             "next", "siguiente", "suivant", "continue",
@@ -229,6 +270,21 @@ class WebScraper:
                     if self.wait_for_js:
                         page.wait_for_load_state("networkidle")
 
+                    # Handle Cloudflare / anti-scraping challenge pages
+                    if self._is_challenge_page(page):
+                        logger.info(
+                            "Challenge page detected on index %s — waiting up to %ds for resolution.",
+                            current, self.cloudflare_wait,
+                        )
+                        if not self._wait_for_challenge(page, self.cloudflare_wait):
+                            logger.warning("Challenge not resolved for index page %s — skipping.", current)
+                            continue
+                        if self.wait_for_js:
+                            try:
+                                page.wait_for_load_state("networkidle", timeout=self.browser_timeout * 1000)
+                            except Exception:
+                                pass
+
                     if self.remove_overlays:
                         self._remove_overlays(page)
 
@@ -284,6 +340,44 @@ class WebScraper:
 
                     if self.wait_for_js:
                         page.wait_for_load_state("networkidle")
+
+                    # Handle Cloudflare / anti-scraping challenge pages
+                    if self._is_challenge_page(page):
+                        logger.info(
+                            "Challenge page detected for chapter %s — waiting up to %ds.",
+                            url, self.cloudflare_wait,
+                        )
+                        if progress_callback:
+                            progress_callback(idx, total, f"⚠ Anti-scraping challenge — waiting {self.cloudflare_wait}s… {url}")
+                        resolved = self._wait_for_challenge(page, self.cloudflare_wait)
+                        if not resolved:
+                            # Retry once
+                            logger.warning("Challenge not resolved for %s, retrying navigation.", url)
+                            try:
+                                page.goto(url, timeout=self.browser_timeout * 1000)
+                                if self.wait_for_js:
+                                    page.wait_for_load_state("networkidle")
+                            except Exception:
+                                pass
+                        elif self.wait_for_js:
+                            try:
+                                page.wait_for_load_state("networkidle", timeout=self.browser_timeout * 1000)
+                            except Exception:
+                                pass
+
+                    # Detect unexpected redirect away from the target domain
+                    final_url = page.url
+                    if self._is_redirected_away(url, final_url):
+                        logger.warning(
+                            "Redirected away from %s → %s; attempting to navigate back.",
+                            url, final_url,
+                        )
+                        try:
+                            page.goto(url, timeout=self.browser_timeout * 1000)
+                            if self.wait_for_js:
+                                page.wait_for_load_state("networkidle")
+                        except Exception:
+                            pass
 
                     if self.remove_overlays:
                         self._remove_overlays(page)
@@ -473,16 +567,69 @@ class WebScraper:
         return soup.get_text(separator="\n", strip=True)
 
     def _remove_overlays(self, page):
-        page.evaluate(
-            """
-            () => {
-                const selectors = ['div[style*="z-index"]', '.overlay', '.modal'];
-                for (const sel of selectors) {
-                    document.querySelectorAll(sel).forEach(el => el.remove());
-                }
-            }
-            """
-        )
+        try:
+            page.evaluate(_OVERLAY_REMOVAL_JS)
+        except Exception as exc:
+            logger.debug("Overlay removal failed (non-fatal): %s", exc)
+
+    @staticmethod
+    def _is_challenge_page(page) -> bool:
+        """Return True if the browser is showing an anti-scraping/Cloudflare challenge."""
+        try:
+            url = (page.url or "").lower()
+            title = ""
+            try:
+                title = (page.title() or "").lower()
+            except Exception:
+                pass
+            indicators = [
+                "challenge",
+                "cloudflare",
+                "checking your browser",
+                "ddos-guard",
+                "just a moment",
+                "cf-challenge",
+                "attention required",
+                "ray id",
+                "security check",
+            ]
+            return any(ind in url or ind in title for ind in indicators)
+        except Exception:
+            return False
+
+    def _wait_for_challenge(self, page, wait_sec: int) -> bool:
+        """
+        Wait up to *wait_sec* seconds for an anti-scraping challenge to resolve.
+
+        Returns True if the challenge page is no longer showing, False if timed out.
+        The user can solve the challenge manually in the visible browser window.
+        """
+        deadline = time.time() + max(1, wait_sec)
+        while time.time() < deadline:
+            if not self._is_challenge_page(page):
+                logger.info("Challenge resolved.")
+                return True
+            time.sleep(1.0)
+        return False
+
+    @staticmethod
+    def _is_redirected_away(original_url: str, current_url: str) -> bool:
+        """
+        Return True if *current_url* is on a completely different host than
+        *original_url*, indicating an unexpected redirect (e.g. to a login page
+        or anti-bot service on a different domain).
+        """
+        try:
+            orig_host = urlparse(original_url).netloc.lower()
+            curr_host = urlparse(current_url).netloc.lower()
+            if not orig_host or not curr_host:
+                return False
+            # Allow same root domain (e.g. subdomain differences)
+            orig_root = ".".join(orig_host.rsplit(".", 2)[-2:])
+            curr_root = ".".join(curr_host.rsplit(".", 2)[-2:])
+            return orig_root != curr_root
+        except Exception:
+            return False
 
     def _wait_for_index_confirmation(
         self,
