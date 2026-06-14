@@ -620,14 +620,19 @@ class WebScraper:
         or anti-bot service on a different domain).
         """
         try:
-            orig_host = urlparse(original_url).netloc.lower()
-            curr_host = urlparse(current_url).netloc.lower()
+            orig_host = urlparse(original_url).netloc.lower().split(":")[0]  # strip port
+            curr_host = urlparse(current_url).netloc.lower().split(":")[0]
             if not orig_host or not curr_host:
                 return False
-            # Allow same root domain (e.g. subdomain differences)
-            orig_root = ".".join(orig_host.rsplit(".", 2)[-2:])
-            curr_root = ".".join(curr_host.rsplit(".", 2)[-2:])
-            return orig_root != curr_root
+            orig_parts = orig_host.rsplit(".", 2)
+            curr_parts = curr_host.rsplit(".", 2)
+            # Only compare root domains when each host has at least two labels
+            if len(orig_parts) >= 2 and len(curr_parts) >= 2:
+                orig_root = ".".join(orig_parts[-2:])
+                curr_root = ".".join(curr_parts[-2:])
+                return orig_root != curr_root
+            # Fall back to exact host comparison for single-label or unusual hosts
+            return orig_host != curr_host
         except Exception:
             return False
 

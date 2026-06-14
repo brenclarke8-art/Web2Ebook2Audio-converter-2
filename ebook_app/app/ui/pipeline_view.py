@@ -255,8 +255,9 @@ class PipelinePage(BasePage):
         pipe_vbox = QVBoxLayout(pipe_group)
 
         phase1_note = QLabel(
-            "<b>Step 1:</b> Click <i>Open Browser</i> — the browser will open on your index page. "
-            "Navigate or log in as needed, then click <i>Scrape Index</i> to collect chapter links.<br>"
+            "<b>Step 1:</b> Enter the index URL above, then click <i>Open Browser</i> — "
+            "the browser will open on that page. Navigate or log in as needed, then click "
+            "<i>Scrape Index</i> to collect chapter links.<br>"
             "<b>Step 2:</b> Set the chapter range below, then click <i>Begin Scrape</i> to start. "
             "The browser will open on the first chapter and scrape each one in turn."
         )
