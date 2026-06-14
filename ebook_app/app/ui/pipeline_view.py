@@ -410,6 +410,7 @@ class PipelinePage(BasePage):
         self._browser_launch_worker = _BrowserLaunchWorker()
         self._browser_launch_worker.launched.connect(self._on_browser_launched)
         self._browser_launch_worker.launch_failed.connect(self._on_browser_launch_failed)
+        self._browser_launch_worker.finished.connect(self._browser_launch_worker.deleteLater)
         self._browser_launch_worker.start()
 
     def _on_browser_launched(self) -> None:
