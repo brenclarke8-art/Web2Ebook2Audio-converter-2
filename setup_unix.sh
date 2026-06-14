@@ -3,7 +3,6 @@ set -euo pipefail
 
 GUI_PYTHON="${GUI_PYTHON:-python3.10}"
 TTS_PYTHON="${TTS_PYTHON:-python3.14}"
-INSTALL_BROWSER="${INSTALL_BROWSER:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
@@ -35,13 +34,8 @@ echo "==> Installing GUI dependencies (editable)"
 "$GUI_VENV/bin/python" -m pip install -e "$REPO_ROOT"
 echo "==> Installing dev dependencies (pytest) in GUI venv"
 "$GUI_VENV/bin/python" -m pip install -e "$REPO_ROOT[dev]"
-
-if [[ "$INSTALL_BROWSER" == "1" ]]; then
-  echo "==> Installing browser scraping extras in GUI venv"
-  "$GUI_VENV/bin/python" -m pip install -e "$REPO_ROOT[browser]"
-  echo "==> Installing Playwright Chromium in GUI venv"
-  "$GUI_VENV/bin/python" -m playwright install chromium
-fi
+echo "==> Installing Playwright Chromium in GUI venv"
+"$GUI_VENV/bin/python" -m playwright install chromium
 
 echo "==> Creating TTS venv with $TTS_PYTHON"
 "$TTS_PYTHON" -m venv "$TTS_VENV"

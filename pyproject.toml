@@ -16,6 +16,7 @@ dependencies = [
     "deep-translator>=1.11.4",
     "numpy>=1.26.0",
     "soundfile>=0.12.1",
+    "playwright>=1.44.0",
 ]
 
 [project.optional-dependencies]
@@ -24,13 +25,9 @@ local-tts = [
     "kokoro-onnx>=0.4.4,<1.0.0",
     "onnxruntime>=1.17.0",
 ]
-# Install when scraping JS-heavy sites with a browser.
-browser = [
-    "playwright>=1.44.0",
-]
-# Full install: GUI + local TTS engine + browser scraping in a single environment.
+# Full install: GUI + local TTS engine in a single environment.
 full = [
-    "ebook-audio-studio[browser,local-tts]",
+    "ebook-audio-studio[local-tts]",
 ]
 # Development tools (testing).
 dev = [
