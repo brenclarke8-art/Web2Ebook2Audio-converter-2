@@ -99,10 +99,10 @@ same venv layout and startup commands documented below.
 .\setup_windows.ps1
 ```
 
-Optional flags:
+Optional flags to override Python versions:
 
 ```powershell
-.\setup_windows.ps1 -GuiPython 3.10 -TtsPython 3.14 -InstallBrowser
+.\setup_windows.ps1 -GuiPython 3.10 -TtsPython 3.14
 ```
 
 **macOS/Linux:**
@@ -115,7 +115,7 @@ chmod +x ./setup_unix.sh
 Optional environment overrides:
 
 ```bash
-GUI_PYTHON=python3.10 TTS_PYTHON=python3.14 INSTALL_BROWSER=1 ./setup_unix.sh
+GUI_PYTHON=python3.10 TTS_PYTHON=python3.14 ./setup_unix.sh
 ```
 
 If you prefer manual setup, use the steps below.
@@ -212,13 +212,14 @@ Download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from
 - Place them in `<repo>/.ebook_audio_studio/models/` (auto-discovered), or
 - Set custom paths via **Settings → TTS Backend → Model file (.onnx)** and **Settings → TTS Backend → Voices file (.bin)**
 
-#### Optional: Browser scraping support (Playwright)
+#### Browser scraping support (Playwright)
 
-If the target site requires JavaScript rendering, either use the setup helper
-with browser support enabled or install Playwright in the GUI environment:
+Playwright and Chromium are installed automatically by the setup helpers and
+are included in the default `requirements.txt`. If you set up the GUI venv
+manually, run:
 
 ```bash
-python -m pip install -e ".[browser]"
+python -m pip install playwright
 python -m playwright install chromium
 ```
 

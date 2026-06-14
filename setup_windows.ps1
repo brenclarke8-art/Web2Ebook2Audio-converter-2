@@ -1,7 +1,6 @@
 param(
     [string]$GuiPython = "3.10",
-    [string]$TtsPython = "3.14",
-    [switch]$InstallBrowser
+    [string]$TtsPython = "3.14"
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,14 +37,8 @@ Run-Step "Installing GUI dependencies (editable)" {
 Run-Step "Installing dev dependencies (pytest) in GUI venv" {
     & "$guiVenv\Scripts\python.exe" -m pip install -e "${repoRoot}[dev]"
 }
-
-if ($InstallBrowser) {
-    Run-Step "Installing browser scraping extras in GUI venv" {
-        & "$guiVenv\Scripts\python.exe" -m pip install -e "${repoRoot}[browser]"
-    }
-    Run-Step "Installing Playwright Chromium in GUI venv" {
-        & "$guiVenv\Scripts\python.exe" -m playwright install chromium
-    }
+Run-Step "Installing Playwright Chromium in GUI venv" {
+    & "$guiVenv\Scripts\python.exe" -m playwright install chromium
 }
 
 Run-Step "Creating TTS venv with Python $TtsPython" {
