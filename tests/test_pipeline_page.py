@@ -25,6 +25,9 @@ class _DummyMessageBox:
     def warning(*args, **kwargs) -> None:
         pass
 
+    @staticmethod
+    def critical(*args, **kwargs) -> None:
+        pass
 
 sys.modules.setdefault("PySide6", ModuleType("PySide6"))
 qtcore = ModuleType("PySide6.QtCore")
@@ -138,9 +141,9 @@ def test_on_worker_finished_clears_worker_reference(monkeypatch) -> None:
     assert log.messages == [("Done", "SUCCESS")]
     assert dialogs == [
         (
-            "Character Review Required",
-            "Chapter parsing is complete. Review scraped text and detected "
-            "characters in the Review tab, then click 'Continue Audio + Export'.",
+            "Ready for Review",
+            "Scraping and chapter parsing are complete. Review scraped text and detected "
+            "characters in the Review tab, then click 'Generate Audio + Epub' when ready.",
         )
     ]
 
@@ -168,18 +171,52 @@ def test_on_open_browser_arms_browser_session(monkeypatch) -> None:
     monkeypatch.setitem(
         sys.modules,
         "ebook_app.text.scrape.browser_scraper",
-        SimpleNamespace(BrowserSessionManager=_FakeBrowserSessionManager),
+        SimpleNamespace(
+            BrowserSessionManager=_FakeBrowserSessionManager,
+            PLAYWRIGHT_AVAILABLE=True,
+        ),
     )
+
+    started: list[str] = []
+
+    class _FakeLaunchWorker:
+        def __init__(self, initial_url: str = "", parent=None):
+            self.initial_url = initial_url
+            self.launched = SimpleNamespace(connect=lambda *a, **kw: None)
+            self.launch_failed = SimpleNamespace(connect=lambda *a, **kw: None)
+            self.finished = SimpleNamespace(connect=lambda *a, **kw: None)
+
+        def isRunning(self) -> bool:
+            return False
+
+        def start(self) -> None:
+            started.append(self.initial_url)
 
     log = _LogCapture()
     label = _FakeLabel()
-    page = SimpleNamespace(_status_label=label, log=log)
+    index_edit = SimpleNamespace(text=lambda: "https://example.com/index")
+    page = SimpleNamespace(
+        _status_label=label,
+        log=log,
+        _browser_launch_worker=None,
+        _index_url_edit=index_edit,
+        _open_browser_btn=SimpleNamespace(setEnabled=lambda _: None),
+        _on_browser_launched=lambda: None,
+        _on_browser_launch_failed=lambda _: None,
+        _on_browser_worker_done=lambda: None,
+    )
 
-    PipelinePage._on_open_browser(page)
+    import ebook_app.app.ui.pipeline_view as pv
+    original_worker = pv._BrowserLaunchWorker
+    pv._BrowserLaunchWorker = _FakeLaunchWorker
+    try:
+        PipelinePage._on_open_browser(page)
+    finally:
+        pv._BrowserLaunchWorker = original_worker
 
     assert events == ["armed"]
-    assert "Browser session is armed" in label.text
-    assert ("Browser session armed. Start indexing and click 'Use This Page' in the opened browser.", "INFO") in log.messages
+    assert "Opening browser" in label.text or "🌐" in label.text
+    assert started == ["https://example.com/index"]
 
 
 def test_run_to_review_reuses_cached_index_inventory(tmp_path) -> None:
@@ -569,7 +606,7 @@ def test_on_index_chapters_starts_check_index_worker(monkeypatch) -> None:
     assert starts == ["started"]
     assert len(created_workers) == 1
     assert created_workers[0].kwargs["mode"] == _FakeWorker.CHECK_INDEX
-    assert page.log.messages[-1] == ("Pipeline started: Index Chapters.", "INFO")
+    assert page.log.messages[-1] == ("Scraping index page for chapter URLs…", "INFO")
 
 
 def test_stop_pipeline_requests_worker_stop() -> None:

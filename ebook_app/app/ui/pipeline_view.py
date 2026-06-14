@@ -21,10 +21,19 @@ class _BrowserLaunchWorker(QThread):
     launched = Signal()
     launch_failed = Signal(str)
 
+    def __init__(self, initial_url: str = "", parent=None):
+        super().__init__(parent)
+        self._initial_url = initial_url
+
     def run(self) -> None:
         try:
             from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
-            BrowserSessionManager.get_page()
+            page = BrowserSessionManager.get_page()
+            if self._initial_url:
+                try:
+                    page.goto(self._initial_url, timeout=30000)
+                except Exception as nav_exc:
+                    logger.warning("Could not navigate to initial URL %s: %s", self._initial_url, nav_exc)
             self.launched.emit()
         except Exception as exc:
             self.launch_failed.emit(str(exc))
@@ -206,7 +215,7 @@ class PipelinePage(BasePage):
         self._open_browser_btn = QPushButton("Open Browser")
         self._open_browser_btn.clicked.connect(self._on_open_browser)
         actions_row.addWidget(self._open_browser_btn)
-        self._index_chapters_btn = QPushButton("Index Chapters")
+        self._index_chapters_btn = QPushButton("Scrape Index")
         self._index_chapters_btn.clicked.connect(self._on_index_chapters)
         actions_row.addWidget(self._index_chapters_btn)
         actions_row.addStretch()
@@ -246,34 +255,20 @@ class PipelinePage(BasePage):
         pipe_vbox = QVBoxLayout(pipe_group)
 
         phase1_note = QLabel(
-            "<b>Phase 1–4:</b> Scrape chapters, run Pass-1 extraction, and "
-            "classify dialogue with the LLM.  When complete, review characters "
-            "in the <i>Characters</i> tab and segments in the <i>Review</i> tab."
+            "<b>Step 1:</b> Enter the index URL above, click <i>Open Browser</i>, then "
+            "click <i>Scrape Index</i> to collect chapter links.<br>"
+            "<b>Step 2:</b> Set the chapter range, then click <i>Scrape to Review</i> to "
+            "scrape the selected chapters and process them through to the review stage."
         )
         phase1_note.setWordWrap(True)
         pipe_vbox.addWidget(phase1_note)
 
         run_row = QHBoxLayout()
-        self._run_btn = QPushButton("▶  Run to Character Review  (Phases 1–4)")
+        self._run_btn = QPushButton("▶  Scrape to Review")
         self._run_btn.setStyleSheet("padding:8px 16px; font-weight:bold;")
         self._run_btn.clicked.connect(self._on_run_to_review)
         run_row.addWidget(self._run_btn)
         pipe_vbox.addLayout(run_row)
-
-        phase5_note = QLabel(
-            "<b>Phase 5–7:</b> Rebuild chapters using reviewed characters, "
-            "generate TTS audio, and package the EPUB.  Run after approving "
-            "character assignments in the Review tab."
-        )
-        phase5_note.setWordWrap(True)
-        pipe_vbox.addWidget(phase5_note)
-
-        cont_row = QHBoxLayout()
-        self._continue_btn = QPushButton("▶  Continue: Audio + Export  (Phases 5–7)")
-        self._continue_btn.setStyleSheet("padding:8px 16px; font-weight:bold;")
-        self._continue_btn.clicked.connect(self._on_continue_audio)
-        cont_row.addWidget(self._continue_btn)
-        pipe_vbox.addLayout(cont_row)
 
         stop_row = QHBoxLayout()
         self._stop_btn = QPushButton("⛔  Stop Pipeline")
@@ -312,7 +307,7 @@ class PipelinePage(BasePage):
         for w in (
             self._index_url_edit, self._save_url_btn, self._open_browser_btn, self._index_chapters_btn,
             self._start_ch_spin, self._end_ch_spin,
-            self._run_btn, self._continue_btn,
+            self._run_btn,
         ):
             w.setEnabled(enabled)
 
@@ -407,7 +402,8 @@ class PipelinePage(BasePage):
         self.log.log("Launching browser window…", level="INFO")
         self._open_browser_btn.setEnabled(False)
 
-        self._browser_launch_worker = _BrowserLaunchWorker()
+        index_url = self._index_url_edit.text().strip()
+        self._browser_launch_worker = _BrowserLaunchWorker(initial_url=index_url)
         self._browser_launch_worker.launched.connect(self._on_browser_launched)
         self._browser_launch_worker.launch_failed.connect(self._on_browser_launch_failed)
         self._browser_launch_worker.finished.connect(self._on_browser_worker_done)
@@ -422,10 +418,12 @@ class PipelinePage(BasePage):
         self._open_browser_btn.setEnabled(True)
         self._status_label.setStyleSheet("color: steelblue;")
         self._status_label.setText(
-            "🌐 Browser is open. Navigate to the index page, then start indexing."
+            "🌐 Browser is open on the index page. "
+            "Navigate / log in if needed, then click 'Scrape Index' to collect chapter links."
         )
         self.log.log(
-            "Browser opened. Navigate to the correct index page, then click 'Index Chapters' or 'Run Pipeline'.",
+            "Browser opened on index page. Navigate to the correct index page if needed, "
+            "then click 'Scrape Index' to confirm and collect chapter URLs.",
             level="SUCCESS",
         )
 
@@ -443,7 +441,6 @@ class PipelinePage(BasePage):
     def _set_buttons_enabled(self, enabled: bool) -> None:
         self._index_chapters_btn.setEnabled(enabled)
         self._run_btn.setEnabled(enabled)
-        self._continue_btn.setEnabled(enabled)
         self._stop_btn.setEnabled(not enabled)
 
     def _is_busy(self) -> bool:
@@ -469,7 +466,7 @@ class PipelinePage(BasePage):
         self.project_manager.set_selected_range(start_ch, end_ch)
 
         self._set_buttons_enabled(False)
-        self._status_label.setText("⏳ Running phases 1–4 (scrape + LLM classification)…")
+        self._status_label.setText("⏳ Running: scraping chapters + LLM classification…")
         self._worker = _PipelineWorker(
             project_manager=self.project_manager,
             settings=self.settings,
@@ -483,7 +480,7 @@ class PipelinePage(BasePage):
         self._worker.cancelled.connect(self._on_worker_cancelled)
         self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
         self._worker.start()
-        self.log.log("Pipeline started: Run to Character Review.", level="INFO")
+        self.log.log("Begin Scrape: scraping chapters + classification.", level="INFO")
 
     def _on_continue_audio(self) -> None:
         if self._is_busy():
@@ -534,7 +531,7 @@ class PipelinePage(BasePage):
         self._worker.cancelled.connect(self._on_worker_cancelled)
         self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
         self._worker.start()
-        self.log.log("Pipeline started: Index Chapters.", level="INFO")
+        self.log.log("Scraping index page for chapter URLs…", level="INFO")
 
     def _on_stop_pipeline(self) -> None:
         if not self._is_busy():
@@ -573,9 +570,9 @@ class PipelinePage(BasePage):
         if mode == _PipelineWorker.RUN_TO_REVIEW:
             QMessageBox.information(
                 self,
-                "Character Review Required",
-                "Chapter parsing is complete. Review scraped text and detected "
-                "characters in the Review tab, then click 'Continue Audio + Export'.",
+                "Ready for Review",
+                "Scraping and chapter parsing are complete. Review scraped text and detected "
+                "characters in the Review tab, then click 'Generate Audio + Epub' when ready.",
             )
 
     def _on_worker_failed(self, error: str) -> None:

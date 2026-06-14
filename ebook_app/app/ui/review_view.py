@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
@@ -44,6 +44,7 @@ class ReviewPage(BasePage):
         self.current_chapter_id: str | None = None
         self.pass2_segments: list[dict] = []
         self.final_segments: list[dict] = []
+        self._worker = None
         super().__init__(settings=settings, log=log, project_manager=project_manager, parent=parent)
 
     # ------------------------------------------------------------------
@@ -154,6 +155,51 @@ class ReviewPage(BasePage):
 
         self._tabs.addTab(tab4, "Pass-2 / Final Segments")
 
+        # ── Generate Output section ────────────────────────────────────
+        gen_group = QGroupBox("Generate Output")
+        gen_vbox = QVBoxLayout(gen_group)
+
+        gen_note = QLabel(
+            "<b>Rerun Chapters:</b> Re-scrape and reprocess the selected chapters "
+            "through to the review stage (character database edits are preserved).<br>"
+            "<b>Generate Audio + Epub:</b> Run once satisfied with the review — "
+            "rebuilds chapters from reviewed data, generates TTS audio, and exports the EPUB."
+        )
+        gen_note.setWordWrap(True)
+        gen_vbox.addWidget(gen_note)
+
+        gen_btn_row = QHBoxLayout()
+        self._rerun_chapters_btn = QPushButton("🔄  Rerun Chapters (→ Review)")
+        self._rerun_chapters_btn.setStyleSheet("padding:8px 16px;")
+        self._rerun_chapters_btn.setToolTip(
+            "Re-scrape and reprocess the selected chapter range, then return to the review stage."
+        )
+        self._rerun_chapters_btn.clicked.connect(self._on_rerun_to_review)
+        gen_btn_row.addWidget(self._rerun_chapters_btn)
+
+        self._generate_btn = QPushButton("▶  Generate Audio + Epub")
+        self._generate_btn.setStyleSheet("padding:8px 16px; font-weight:bold;")
+        self._generate_btn.setToolTip(
+            "Rebuild chapters from reviewed data, generate TTS audio, and export the EPUB."
+        )
+        self._generate_btn.clicked.connect(self._on_generate_audio)
+        gen_btn_row.addWidget(self._generate_btn)
+
+        self._gen_stop_btn = QPushButton("⛔  Stop")
+        self._gen_stop_btn.setEnabled(False)
+        self._gen_stop_btn.setStyleSheet("padding:6px 14px; color:#f38ba8;")
+        self._gen_stop_btn.clicked.connect(self._on_stop_action)
+        gen_btn_row.addWidget(self._gen_stop_btn)
+        gen_btn_row.addStretch()
+        gen_vbox.addLayout(gen_btn_row)
+
+        self._gen_status_label = QLabel("")
+        self._gen_status_label.setWordWrap(True)
+        self._gen_status_label.setStyleSheet("color: steelblue;")
+        gen_vbox.addWidget(self._gen_status_label)
+
+        self._layout.addWidget(gen_group)
+
         # Wire project signals
         if self.project_manager:
             self.project_manager.project_loaded.connect(self._on_project_loaded)
@@ -170,6 +216,7 @@ class ReviewPage(BasePage):
         for w in (
             self._chapter_combo, self._reload_chapters_btn,
             self._save_segments_btn, self._rerun_llm_btn,
+            self._rerun_chapters_btn, self._generate_btn,
         ):
             w.setEnabled(enabled)
 
@@ -529,3 +576,113 @@ class ReviewPage(BasePage):
         except Exception as exc:
             self.log.log(f"LLM re-classification failed: {exc}", level="ERROR")
             QMessageBox.critical(self, "Error", f"Re-run failed:\n{exc}")
+
+    # ------------------------------------------------------------------
+    # Generate output / rerun actions
+    # ------------------------------------------------------------------
+
+    def _is_busy(self) -> bool:
+        if self._worker is None:
+            return False
+        try:
+            return bool(self._worker.isRunning())
+        except RuntimeError:
+            self._worker = None
+            return False
+
+    def _set_action_buttons_enabled(self, enabled: bool) -> None:
+        self._rerun_chapters_btn.setEnabled(enabled)
+        self._generate_btn.setEnabled(enabled)
+        self._gen_stop_btn.setEnabled(not enabled)
+
+    def _on_rerun_to_review(self) -> None:
+        if self._is_busy():
+            QMessageBox.warning(self, "Busy", "A pipeline task is already running.")
+            return
+        if not self.project_manager or not self.project_manager.current_book_id:
+            QMessageBox.warning(self, "No Project", "Please open or create a project first.")
+            return
+
+        sel = self.project_manager.get_selected_range()
+        start_ch = max(1, int(sel.get("start", 1)))
+        end_ch = max(0, int(sel.get("end", 0)))
+
+        from ebook_app.app.ui.pipeline_view import _PipelineWorker
+        self._set_action_buttons_enabled(False)
+        self._gen_status_label.setStyleSheet("color: steelblue;")
+        self._gen_status_label.setText("⏳ Rerunning: scraping chapters + LLM classification…")
+        self._worker = _PipelineWorker(
+            project_manager=self.project_manager,
+            settings=self.settings,
+            mode=_PipelineWorker.RUN_TO_REVIEW,
+            start_ch=start_ch,
+            end_ch=end_ch,
+        )
+        self._worker.finished_ok.connect(self._on_action_worker_finished)
+        self._worker.failed.connect(self._on_action_worker_failed)
+        self._worker.cancelled.connect(self._on_action_worker_cancelled)
+        self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
+        self._worker.start()
+        self.log.log("Rerun: scraping chapters + classification.", level="INFO")
+
+    def _on_generate_audio(self) -> None:
+        if self._is_busy():
+            QMessageBox.warning(self, "Busy", "A pipeline task is already running.")
+            return
+        if not self.project_manager or not self.project_manager.current_book_id:
+            QMessageBox.warning(self, "No Project", "Please open or create a project first.")
+            return
+
+        sel = self.project_manager.get_selected_range()
+        start_ch = max(1, int(sel.get("start", 1)))
+        end_ch = max(0, int(sel.get("end", 0)))
+
+        from ebook_app.app.ui.pipeline_view import _PipelineWorker
+        self._set_action_buttons_enabled(False)
+        self._gen_status_label.setStyleSheet("color: steelblue;")
+        self._gen_status_label.setText("⏳ Generating audio and EPUB…")
+        self._worker = _PipelineWorker(
+            project_manager=self.project_manager,
+            settings=self.settings,
+            mode=_PipelineWorker.CONTINUE_AUDIO,
+            start_ch=start_ch,
+            end_ch=end_ch,
+        )
+        self._worker.finished_ok.connect(self._on_action_worker_finished)
+        self._worker.failed.connect(self._on_action_worker_failed)
+        self._worker.cancelled.connect(self._on_action_worker_cancelled)
+        self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
+        self._worker.start()
+        self.log.log("Pipeline started: Generate Audio + Epub.", level="INFO")
+
+    def _on_stop_action(self) -> None:
+        if not self._is_busy():
+            return
+        self._worker.request_stop()
+        self._gen_stop_btn.setEnabled(False)
+        self.log.log("Stop requested. Current phase will halt shortly.", level="WARNING")
+
+    def _on_action_worker_finished(self, mode: str, message: str) -> None:
+        from ebook_app.app.ui.pipeline_view import _PipelineWorker
+        self._worker = None
+        self._set_action_buttons_enabled(True)
+        self._gen_status_label.setStyleSheet("color: #a6e3a1;")
+        self._gen_status_label.setText(f"✅ {message}")
+        self.log.log(message, level="SUCCESS")
+        if mode == _PipelineWorker.RUN_TO_REVIEW:
+            self._load_chapter_list()
+
+    def _on_action_worker_failed(self, error: str) -> None:
+        self._worker = None
+        self._set_action_buttons_enabled(True)
+        self._gen_status_label.setStyleSheet("color: #f38ba8;")
+        self._gen_status_label.setText(f"❌ Error: {error}")
+        self.log.log(f"Pipeline failed: {error}", level="ERROR")
+        QMessageBox.critical(self, "Pipeline Error", f"Pipeline failed:\n\n{error}")
+
+    def _on_action_worker_cancelled(self, message: str) -> None:
+        self._worker = None
+        self._set_action_buttons_enabled(True)
+        self._gen_status_label.setStyleSheet("color: #f9e2af;")
+        self._gen_status_label.setText(f"⚠ {message}")
+        self.log.log(message, level="WARNING")
