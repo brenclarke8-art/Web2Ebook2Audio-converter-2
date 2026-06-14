@@ -15,6 +15,21 @@ from ebook_app.app.ui.base_view import BasePage
 from ebook_app.app.ui.book_manager import BookManagerWidget
 
 
+class _BrowserLaunchWorker(QThread):
+    """Opens the Playwright browser in a background thread so it appears immediately."""
+
+    launched = Signal()
+    launch_failed = Signal(str)
+
+    def run(self) -> None:
+        try:
+            from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
+            BrowserSessionManager.get_page()
+            self.launched.emit()
+        except Exception as exc:
+            self.launch_failed.emit(str(exc))
+
+
 class _PipelineWorker(QThread):
     RUN_TO_REVIEW = 'run_to_review'
     CONTINUE_AUDIO = 'continue_audio'
@@ -133,6 +148,7 @@ class _PipelineWorker(QThread):
 class PipelinePage(BasePage):
     def __init__(self, *, settings, log, project_manager=None, parent=None):
         self._worker = None
+        self._browser_launch_worker = None
         super().__init__(settings=settings, log=log, project_manager=project_manager, parent=parent)
 
     # ------------------------------------------------------------------
@@ -358,20 +374,62 @@ class PipelinePage(BasePage):
 
     def _on_open_browser(self) -> None:
         try:
-            from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
+            from ebook_app.text.scrape.browser_scraper import (
+                BrowserSessionManager,
+                PLAYWRIGHT_AVAILABLE,
+            )
+        except ImportError as exc:
+            self.log.log(f"Failed to import browser scraper: {exc}", level="ERROR")
+            QMessageBox.critical(self, "Import Error", f"Could not import browser scraper:\n\n{exc}")
+            return
 
-            BrowserSessionManager.request_open()
-            self._status_label.setStyleSheet("color: steelblue;")
-            self._status_label.setText(
-                "🌐 Browser session is armed. Start indexing/run pipeline, then confirm the page in browser."
+        if not PLAYWRIGHT_AVAILABLE:
+            msg = (
+                "Playwright is not installed.\n\n"
+                "Install it with:\n"
+                "  pip install playwright\n"
+                "  playwright install chromium"
             )
             self.log.log(
-                "Browser session armed. Start indexing and click 'Use This Page' in the opened browser.",
-                level="INFO",
+                "Playwright is not installed. Run: pip install playwright && playwright install chromium",
+                level="ERROR",
             )
-        except Exception as exc:
-            self.log.log(f"Failed to arm browser session: {exc}", level="ERROR")
-            QMessageBox.critical(self, "Browser Error", f"Could not prepare browser session:\n\n{exc}")
+            QMessageBox.critical(self, "Playwright Not Installed", msg)
+            return
+
+        if self._browser_launch_worker is not None and self._browser_launch_worker.isRunning():
+            self.log.log("Browser is already launching.", level="INFO")
+            return
+
+        BrowserSessionManager.request_open()
+        self._status_label.setStyleSheet("color: steelblue;")
+        self._status_label.setText("🌐 Opening browser…")
+        self.log.log("Launching browser window…", level="INFO")
+        self._open_browser_btn.setEnabled(False)
+
+        self._browser_launch_worker = _BrowserLaunchWorker()
+        self._browser_launch_worker.launched.connect(self._on_browser_launched)
+        self._browser_launch_worker.launch_failed.connect(self._on_browser_launch_failed)
+        self._browser_launch_worker.finished.connect(self._browser_launch_worker.deleteLater)
+        self._browser_launch_worker.start()
+
+    def _on_browser_launched(self) -> None:
+        self._open_browser_btn.setEnabled(True)
+        self._status_label.setStyleSheet("color: steelblue;")
+        self._status_label.setText(
+            "🌐 Browser is open. Navigate to the index page, then start indexing."
+        )
+        self.log.log(
+            "Browser opened. Navigate to the correct index page, then click 'Index Chapters' or 'Run Pipeline'.",
+            level="SUCCESS",
+        )
+
+    def _on_browser_launch_failed(self, error: str) -> None:
+        self._open_browser_btn.setEnabled(True)
+        self._status_label.setStyleSheet("color: red;")
+        self._status_label.setText("Browser launch failed.")
+        self.log.log(f"Failed to open browser: {error}", level="ERROR")
+        QMessageBox.critical(self, "Browser Error", f"Could not open browser:\n\n{error}")
 
     # ------------------------------------------------------------------
     # Pipeline run helpers

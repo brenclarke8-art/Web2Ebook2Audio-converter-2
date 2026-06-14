@@ -5,7 +5,7 @@ from pathlib import Path
 
 import requests
 
-from ebook_app.app.state.settings_manager import APP_HOME_DIR
+from ebook_app.runtime_paths import APP_HOME_DIR
 
 MODEL_FILENAME = "kokoro-v1.0.onnx"
 VOICES_FILENAME = "voices-v1.0.bin"
