@@ -30,6 +30,7 @@ class BrowserSessionManager:
     _page = None
     _open_requests = 0
     _consumed_requests = 0
+    _owning_thread_ident: Optional[int] = None
 
     @classmethod
     def request_open(cls) -> int:
@@ -58,6 +59,7 @@ class BrowserSessionManager:
         cls._page = None
         cls._browser = None
         cls._playwright = None
+        cls._owning_thread_ident = None
         for closer in (
             getattr(page, "close", None),
             getattr(browser, "close", None),
@@ -75,20 +77,50 @@ class BrowserSessionManager:
             raise ScraperError("Playwright is not installed")
         with cls._lock:
             if cls._session_is_alive_locked():
-                return cls._page
-            cls._cleanup_locked()
-            if cls._open_requests <= cls._consumed_requests:
-                raise ScraperError(
-                    "Browser session is closed. Click 'Open Browser' in Pipeline, then run indexing again."
+                if cls._owning_thread_ident == threading.current_thread().ident:
+                    return cls._page
+                # The playwright session was created on a thread that has since exited.
+                # Playwright's sync API uses greenlets tied to the originating thread, so
+                # any call from a different thread raises "cannot switch to a different
+                # thread (which happens to have exited)".  Close the stale session and
+                # open a fresh one on the current thread without consuming a new open
+                # request (the user already authorised one browser session).
+                logger.debug(
+                    "Browser session was created on a different thread; "
+                    "reopening in the current thread."
                 )
-            playwright = sync_playwright().start()
-            browser = playwright.chromium.launch(headless=False, channel=browser_channel)
-            page = browser.new_page()
-            cls._playwright = playwright
-            cls._browser = browser
-            cls._page = page
-            cls._consumed_requests = cls._open_requests
-            return page
+                cls._cleanup_locked()
+                # Do NOT consume an extra open-request token here; the token was already
+                # consumed when the original session was opened.
+            else:
+                cls._cleanup_locked()
+                if cls._open_requests <= cls._consumed_requests:
+                    raise ScraperError(
+                        "Browser session is closed. Click 'Open Browser' in Pipeline, then run indexing again."
+                    )
+                # Consume the open-request token only when opening a genuinely new session
+                # (not when recreating an existing one due to a thread mismatch above).
+                cls._consumed_requests = cls._open_requests
+            playwright = None
+            try:
+                playwright = sync_playwright().start()
+                browser = playwright.chromium.launch(headless=False, channel=browser_channel)
+                page = browser.new_page()
+                cls._playwright = playwright
+                cls._browser = browser
+                cls._page = page
+                cls._owning_thread_ident = threading.current_thread().ident
+                return page
+            except Exception:
+                # Ensure any partially-created playwright instance is stopped so that
+                # _session_is_alive_locked() correctly returns False on the next call.
+                if playwright is not None:
+                    try:
+                        playwright.stop()
+                    except Exception:
+                        pass
+                cls._cleanup_locked()
+                raise
 
 
 class WebScraper:
