@@ -319,7 +319,10 @@ class PipelineController:
             selected_urls = self.chapter_urls[start_idx:end_idx]
         else:
             chapters_raw = self._load_json(self.work_dir / "chapters_raw.json", default=[])
-            selected_urls = [ch.get("source", "") for ch in chapters_raw if ch.get("source")]
+            all_urls = [ch.get("source", "") for ch in chapters_raw if ch.get("source")]
+            start_idx = self.selected_start_chapter - 1
+            end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(all_urls)
+            selected_urls = all_urls[start_idx:end_idx]
 
         if not selected_urls:
             logger.warning("No chapter URLs — cannot scrape chapters.")

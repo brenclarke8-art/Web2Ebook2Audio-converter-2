@@ -365,6 +365,11 @@ class ProjectManager(QObject):
         ctrl = PipelineController(ps)
         if on_progress:
             ctrl.set_progress_callback(on_progress)
+        # Apply the persisted chapter range so scraping always starts at the
+        # user-selected chapter rather than defaulting to chapter 1.
+        start = int(self._project_data.get("selected_start_chapter", 1))
+        end = int(self._project_data.get("selected_end_chapter", 0))
+        ctrl.set_chapter_range(start, end)
         return ctrl
 
     # ------------------------------------------------------------------
