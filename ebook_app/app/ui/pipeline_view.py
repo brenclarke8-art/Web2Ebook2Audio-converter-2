@@ -255,36 +255,20 @@ class PipelinePage(BasePage):
         pipe_vbox = QVBoxLayout(pipe_group)
 
         phase1_note = QLabel(
-            "<b>Step 1:</b> Enter the index URL above, then click <i>Open Browser</i> — "
-            "the browser will open on that page. Navigate or log in as needed, then click "
-            "<i>Scrape Index</i> to collect chapter links.<br>"
-            "<b>Step 2:</b> Set the chapter range below, then click <i>Begin Scrape</i> to start. "
-            "The browser will open on the first chapter and scrape each one in turn."
+            "<b>Step 1:</b> Enter the index URL above, click <i>Open Browser</i>, then "
+            "click <i>Scrape Index</i> to collect chapter links.<br>"
+            "<b>Step 2:</b> Set the chapter range, then click <i>Scrape to Review</i> to "
+            "scrape the selected chapters and process them through to the review stage."
         )
         phase1_note.setWordWrap(True)
         pipe_vbox.addWidget(phase1_note)
 
         run_row = QHBoxLayout()
-        self._run_btn = QPushButton("▶  Begin Scrape  (Phases 1–4)")
+        self._run_btn = QPushButton("▶  Scrape to Review")
         self._run_btn.setStyleSheet("padding:8px 16px; font-weight:bold;")
         self._run_btn.clicked.connect(self._on_run_to_review)
         run_row.addWidget(self._run_btn)
         pipe_vbox.addLayout(run_row)
-
-        phase5_note = QLabel(
-            "<b>Phase 5–7:</b> Rebuild chapters using reviewed characters, "
-            "generate TTS audio, and package the EPUB.  Run after approving "
-            "character assignments in the Review tab."
-        )
-        phase5_note.setWordWrap(True)
-        pipe_vbox.addWidget(phase5_note)
-
-        cont_row = QHBoxLayout()
-        self._continue_btn = QPushButton("▶  Continue: Audio + Export  (Phases 5–7)")
-        self._continue_btn.setStyleSheet("padding:8px 16px; font-weight:bold;")
-        self._continue_btn.clicked.connect(self._on_continue_audio)
-        cont_row.addWidget(self._continue_btn)
-        pipe_vbox.addLayout(cont_row)
 
         stop_row = QHBoxLayout()
         self._stop_btn = QPushButton("⛔  Stop Pipeline")
@@ -323,7 +307,7 @@ class PipelinePage(BasePage):
         for w in (
             self._index_url_edit, self._save_url_btn, self._open_browser_btn, self._index_chapters_btn,
             self._start_ch_spin, self._end_ch_spin,
-            self._run_btn, self._continue_btn,
+            self._run_btn,
         ):
             w.setEnabled(enabled)
 
@@ -457,7 +441,6 @@ class PipelinePage(BasePage):
     def _set_buttons_enabled(self, enabled: bool) -> None:
         self._index_chapters_btn.setEnabled(enabled)
         self._run_btn.setEnabled(enabled)
-        self._continue_btn.setEnabled(enabled)
         self._stop_btn.setEnabled(not enabled)
 
     def _is_busy(self) -> bool:
@@ -587,9 +570,9 @@ class PipelinePage(BasePage):
         if mode == _PipelineWorker.RUN_TO_REVIEW:
             QMessageBox.information(
                 self,
-                "Character Review Required",
+                "Ready for Review",
                 "Scraping and chapter parsing are complete. Review scraped text and detected "
-                "characters in the Review tab, then click 'Continue: Audio + Export'.",
+                "characters in the Review tab, then click 'Generate Audio + Epub' when ready.",
             )
 
     def _on_worker_failed(self, error: str) -> None:

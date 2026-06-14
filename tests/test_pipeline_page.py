@@ -141,9 +141,9 @@ def test_on_worker_finished_clears_worker_reference(monkeypatch) -> None:
     assert log.messages == [("Done", "SUCCESS")]
     assert dialogs == [
         (
-            "Character Review Required",
+            "Ready for Review",
             "Scraping and chapter parsing are complete. Review scraped text and detected "
-            "characters in the Review tab, then click 'Continue: Audio + Export'.",
+            "characters in the Review tab, then click 'Generate Audio + Epub' when ready.",
         )
     ]
 
