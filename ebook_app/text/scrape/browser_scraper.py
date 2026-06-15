@@ -567,8 +567,8 @@ class WebScraper:
             return structural
         # 2. Fallback: full body text
         if soup.body:
-            return soup.body.get_text(separator="\n", strip=True)
-        return soup.get_text(separator="\n", strip=True)
+            return soup.body.get_text(separator="\n\n", strip=True)
+        return soup.get_text(separator="\n\n", strip=True)
 
     def _remove_overlays(self, page):
         try:

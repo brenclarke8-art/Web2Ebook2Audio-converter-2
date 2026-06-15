@@ -80,7 +80,7 @@ def extract_main_content_by_structure(soup) -> Optional[str]:
     for candidate_tag in ("article", "main"):
         el = soup_copy.find(candidate_tag)
         if el:
-            text = el.get_text(separator="\n", strip=True)
+            text = el.get_text(separator="\n\n", strip=True)
             if len(text) > 50:
                 return text
 
@@ -96,7 +96,7 @@ def extract_main_content_by_structure(soup) -> Optional[str]:
             best_el = el
 
     if best_el is not None and best_score > 100:
-        return best_el.get_text(separator="\n", strip=True)
+        return best_el.get_text(separator="\n\n", strip=True)
 
     return None
 
@@ -132,6 +132,16 @@ class TextCleaner:
     }
     MIN_CONTROL_MATCHES = 4
 
+    # Patterns for site navigation / UI chrome lines that are always stripped,
+    # regardless of how many appear.  Each pattern is matched against the
+    # stripped, lower-cased version of a single line.
+    SITE_NAVIGATION_PATTERNS = [
+        re.compile(r"^[←→↑↓‹›«»]\s"),              # lines starting with a nav arrow
+        re.compile(r"\bback to novel\b", re.IGNORECASE),
+        re.compile(r"^reader mode\b", re.IGNORECASE),  # "Reader mode with saved preferences…"
+        re.compile(r"^chapter\s+\d+\s*$", re.IGNORECASE),  # bare "Chapter 487" navigation
+    ]
+
     @staticmethod
     def remove_zero_width_chars(text: str) -> str:
         for char in TextCleaner.ZERO_WIDTH_CHARS:
@@ -156,9 +166,21 @@ class TextCleaner:
         return "\n".join(kept)
 
     @staticmethod
+    def remove_site_navigation(text: str) -> str:
+        """Strip site navigation / UI chrome lines (back links, reader-mode hints, etc.)."""
+        lines = text.split("\n")
+        kept = [
+            line for line in lines
+            if not any(pat.search(line.strip()) for pat in TextCleaner.SITE_NAVIGATION_PATTERNS)
+        ]
+        return "\n".join(kept)
+
+    @staticmethod
     def clean_text(text: str) -> str:
         return TextCleaner.normalize_whitespace(
             TextCleaner.remove_reader_controls(
-                TextCleaner.remove_zero_width_chars(text)
+                TextCleaner.remove_site_navigation(
+                    TextCleaner.remove_zero_width_chars(text)
+                )
             )
         )
