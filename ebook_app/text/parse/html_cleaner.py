@@ -139,7 +139,6 @@ class TextCleaner:
         re.compile(r"^[←→↑↓‹›«»]\s"),              # lines starting with a nav arrow
         re.compile(r"\bback to novel\b", re.IGNORECASE),
         re.compile(r"^reader mode\b", re.IGNORECASE),  # "Reader mode with saved preferences…"
-        re.compile(r"^reader mode with saved preferences", re.IGNORECASE),
         re.compile(r"^chapter\s+\d+\s*$", re.IGNORECASE),  # bare "Chapter 487" navigation
     ]
 
