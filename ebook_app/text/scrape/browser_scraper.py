@@ -288,6 +288,8 @@ class WebScraper:
                     if self.remove_overlays:
                         self._remove_overlays(page)
 
+                    self._scroll_to_bottom(page)
+
                     soup_html = page.content()
                 except Exception as exc:
                     logger.warning("Failed to fetch index page %s: %s", current, exc)
@@ -381,6 +383,8 @@ class WebScraper:
 
                     if self.remove_overlays:
                         self._remove_overlays(page)
+
+                    self._scroll_to_bottom(page)
 
                     title = page.title()
                     html = page.content()
@@ -571,6 +575,35 @@ class WebScraper:
             page.evaluate(_OVERLAY_REMOVAL_JS)
         except Exception as exc:
             logger.debug("Overlay removal failed (non-fatal): %s", exc)
+
+    def _scroll_to_bottom(self, page) -> None:
+        try:
+            page.evaluate(
+                """
+                async () => {
+                    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+                    let previousHeight = -1;
+                    for (let i = 0; i < 30; i += 1) {
+                        const currentHeight = Math.max(
+                            document.body ? document.body.scrollHeight : 0,
+                            document.documentElement ? document.documentElement.scrollHeight : 0,
+                        );
+                        window.scrollTo(0, currentHeight);
+                        await sleep(150);
+                        const nextHeight = Math.max(
+                            document.body ? document.body.scrollHeight : 0,
+                            document.documentElement ? document.documentElement.scrollHeight : 0,
+                        );
+                        if (nextHeight <= previousHeight) {
+                            break;
+                        }
+                        previousHeight = nextHeight;
+                    }
+                }
+                """
+            )
+        except Exception as exc:
+            logger.debug("Auto-scroll to bottom failed (non-fatal): %s", exc)
 
     @staticmethod
     def _is_challenge_page(page) -> bool:
