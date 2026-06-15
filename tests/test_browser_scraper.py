@@ -6,6 +6,7 @@ class _FakePage:
         self.url = ""
 
     def goto(self, url: str, timeout: int | None = None) -> None:
+        """Match Playwright's goto signature; timeout is intentionally ignored."""
         self.url = url
 
     def content(self) -> str:

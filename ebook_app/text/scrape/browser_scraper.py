@@ -577,30 +577,31 @@ class WebScraper:
             logger.debug("Overlay removal failed (non-fatal): %s", exc)
 
     def _scroll_to_bottom(self, page) -> None:
+        max_scroll_attempts = 15
+        pause_between_scroll_ms = 150
         try:
             page.evaluate(
                 """
-                async () => {
+                async ([maxScrollAttempts, pauseBetweenScrollMs]) => {
                     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-                    let previousHeight = -1;
-                    for (let i = 0; i < 30; i += 1) {
-                        const currentHeight = Math.max(
-                            document.body ? document.body.scrollHeight : 0,
-                            document.documentElement ? document.documentElement.scrollHeight : 0,
-                        );
+                    const getHeight = () => Math.max(
+                        document.body ? document.body.scrollHeight : 0,
+                        document.documentElement ? document.documentElement.scrollHeight : 0,
+                    );
+                    let lastHeight = 0;
+                    for (let i = 0; i < maxScrollAttempts; i++) {
+                        const currentHeight = getHeight();
                         window.scrollTo(0, currentHeight);
-                        await sleep(150);
-                        const nextHeight = Math.max(
-                            document.body ? document.body.scrollHeight : 0,
-                            document.documentElement ? document.documentElement.scrollHeight : 0,
-                        );
-                        if (nextHeight <= previousHeight) {
+                        await sleep(pauseBetweenScrollMs);
+                        const nextHeight = getHeight();
+                        if (nextHeight <= lastHeight) {
                             break;
                         }
-                        previousHeight = nextHeight;
+                        lastHeight = nextHeight;
                     }
                 }
-                """
+                """,
+                [max_scroll_attempts, pause_between_scroll_ms],
             )
         except Exception as exc:
             logger.debug("Auto-scroll to bottom failed (non-fatal): %s", exc)
