@@ -78,6 +78,9 @@ class _PipelineWorker(QThread):
             valid_count = int(cached_inventory.get('valid_chapter_count') or 0)
             if valid_count <= 0 or valid_count > len(cached_urls):
                 valid_count = len(cached_urls)
+            # Populate the controller's URL list so that scrape_chapters() can
+            # apply the user-selected chapter range to the cached index.
+            ctrl.chapter_urls = list(cached_urls)
             self.inventory_ready.emit({'raw_count': raw_count, 'valid_count': valid_count, 'chapter_urls': cached_urls})
         else:
             # Phase 1 — scrape index, build chapters_raw.json

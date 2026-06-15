@@ -135,6 +135,48 @@ def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
     assert (tmp_path / "pipeline_work" / "ch4_raw.txt").read_text(encoding="utf-8") == "content for 4"
 
 
+def test_scrape_chapters_fallback_applies_selected_range(tmp_path, monkeypatch):
+    """scrape_chapters falls back to chapters_raw.json and must still honour the range."""
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    work_dir = tmp_path / "pipeline_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    controller = PipelineController(settings=settings, work_dir=work_dir)
+    # chapter_urls is intentionally empty to trigger the fallback branch
+    controller.chapter_urls = []
+    controller.set_chapter_range(2, 4)
+
+    chapters_raw = [
+        {"title": f"Chapter {i + 1}", "source": f"https://example.com/book/chapter-{i + 1}"}
+        for i in range(5)
+    ]
+    (work_dir / "chapters_raw.json").write_text(
+        json.dumps(chapters_raw), encoding="utf-8"
+    )
+
+    captured = {}
+
+    class _FakeScraper:
+        def scrape_chapters(self, selected_urls):
+            captured["urls"] = selected_urls
+            return [
+                {"url": url, "title": "title", "content": f"content {idx + 2}"}
+                for idx, url in enumerate(selected_urls)
+            ]
+
+    monkeypatch.setattr("ebook_app.pipeline.controller.WebScraper", _FakeScraper)
+
+    controller.scrape_chapters()
+
+    assert captured["urls"] == [
+        "https://example.com/book/chapter-2",
+        "https://example.com/book/chapter-3",
+        "https://example.com/book/chapter-4",
+    ]
+    assert len(controller.chapters) == 3
+
+
 def test_run_all_executes_new_pipeline_steps_in_order(tmp_path):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))
