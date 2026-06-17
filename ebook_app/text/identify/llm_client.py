@@ -1,3 +1,4 @@
+# ebook_app/text/identify/llm_client.py
 from __future__ import annotations
 
 import json
@@ -19,6 +20,7 @@ class LLMClient:
     - Adds tolerant JSON extraction.
     - Adds optional per-chapter JSONL logging via llm_log_path.
     - Keeps original return semantics: returns {} on failure.
+    - Performs a safe 404 -> /api/chat fallback when appropriate to avoid repeated 404 spam.
     """
 
     base_url: str
@@ -39,14 +41,53 @@ class LLMClient:
         """
         Send a request to the configured provider and return parsed JSON (dict or list).
         On failure, returns {} (keeps original behavior).
+
+        This method includes a safe fallback: if the initial request returns HTTP 404
+        for an Ollama /api/generate endpoint, it will attempt the corresponding /api/chat
+        endpoint once before giving up. This prevents repeated 404 spam when the server
+        exposes only /api/chat.
         """
         payload, headers, url = self._build_request(system=system, user=user)
         last_error = None
 
+        # Track whether we've already attempted the chat fallback for this call
+        attempted_chat_fallback = False
+
         for attempt in range(self.retries + 1):
+            resp = None
             try:
                 resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
+
+                # If server explicitly returns 404 for /api/generate, try /api/chat once
+                if resp.status_code == 404 and url.endswith("/api/generate") and not attempted_chat_fallback:
+                    attempted_chat_fallback = True
+                    # construct chat URL
+                    chat_url = url[:-len("/api/generate")] + "/api/chat"
+                    # Build a chat-style payload if original payload was generate-style
+                    # If payload already contains "messages", reuse it; otherwise convert prompt -> messages
+                    if "messages" not in payload and "prompt" in payload:
+                        prompt_text = payload.get("prompt", "")
+                        # Keep system/user separation if possible
+                        messages = [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ]
+                        payload = {
+                            "model": self.model,
+                            "messages": messages,
+                            "stream": False,
+                            "format": "json",
+                            "options": {"temperature": 0.0, "num_ctx": min(int(self.max_context_tokens), 8192)},
+                        }
+                    # switch URL and retry immediately (do not count this as a separate attempt)
+                    url = chat_url
+                    # small backoff before retrying
+                    time.sleep(0.1)
+                    continue
+
+                # If other non-2xx status, raise to trigger retry/backoff
                 resp.raise_for_status()
+
                 parsed = self._parse_response(resp.json())
                 # Log success (best-effort)
                 self._log({"attempt": attempt, "request": payload, "response_raw": resp.text, "response_parsed": parsed})
@@ -55,7 +96,7 @@ class LLMClient:
                 last_error = exc
                 # Log failure (best-effort)
                 try:
-                    body_text = resp.text if "resp" in locals() and resp is not None else None
+                    body_text = resp.text if resp is not None else None
                 except Exception:
                     body_text = None
                 self._log({"attempt": attempt, "request": payload, "response_body": body_text, "error": str(exc)})
@@ -129,6 +170,7 @@ class LLMClient:
             return payload, headers, url
 
         # If base looks like a host (e.g., http://127.0.0.1:11434) prefer /api/chat
+        # This avoids hitting /api/generate by default when the server exposes only /api/chat.
         if base.endswith(":11434") or base.endswith("11434"):
             url = base + "/api/chat"
             payload = {
