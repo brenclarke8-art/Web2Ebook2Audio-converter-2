@@ -1,4 +1,3 @@
-# ebook_app/text/emotion/emotion_tagger.py
 """Emotion tagger — annotates segments with emotion labels."""
 from __future__ import annotations
 import logging
@@ -28,6 +27,7 @@ class EmotionTagger:
         self.profiles = profiles or BUILTIN_EMOTIONS
         self._llm: Optional[EmotionLlm] = None
         if use_llm:
+            # pass a small default log path so EmotionLlm/LLMClient can write logs if configured elsewhere
             self._llm = EmotionLlm(llm_url=llm_url, model=llm_model)
         # Pre-compile keyword patterns per emotion profile for efficiency
         self._patterns: Dict[str, List[re.Pattern]] = {
@@ -38,11 +38,15 @@ class EmotionTagger:
 
     def tag_segment(self, segment: Dict[str, Any]) -> Dict[str, Any]:
         """Add an "emotion" key to *segment* dict. Returns the updated dict."""
-        text = segment.get("text", "").lower()
-        emotion = self._keyword_match(text)
+        text = segment.get("text", "") or ""
+        emotion = self._keyword_match(text.lower())
         if not emotion and self._llm:
-            results = self._llm.classify_batch([segment.get("text", "")])
-            emotion = results[0] if results else "neutral"
+            try:
+                results = self._llm.classify_batch([segment.get("text", "")])
+                emotion = results[0] if results else "neutral"
+            except Exception as exc:
+                logger.debug("EmotionTagger LLM classify failed: %s", exc)
+                emotion = "neutral"
         segment["emotion"] = emotion or "neutral"
         return segment
 
@@ -51,7 +55,7 @@ class EmotionTagger:
         if self.use_llm and self._llm:
             untagged_idx = []
             for i, seg in enumerate(segments):
-                emotion = self._keyword_match(seg.get("text", "").lower())
+                emotion = self._keyword_match((seg.get("text", "") or "").lower())
                 if emotion:
                     seg["emotion"] = emotion
                 else:
@@ -59,7 +63,11 @@ class EmotionTagger:
                     untagged_idx.append(i)
             if untagged_idx:
                 texts = [segments[i].get("text", "") for i in untagged_idx]
-                labels = self._llm.classify_batch(texts)
+                try:
+                    labels = self._llm.classify_batch(texts)
+                except Exception as exc:
+                    logger.debug("EmotionTagger LLM batch classify failed: %s", exc)
+                    labels = ["neutral"] * len(texts)
                 for i, label in zip(untagged_idx, labels):
                     segments[i]["emotion"] = label
             return segments

@@ -26,6 +26,7 @@ class Translator:
         llm_model: str = "qwen2.5-coder:7b",
         api_key: Optional[str] = None,
         timeout: int = 120,
+        llm_log_path: Optional[str] = None,
     ):
         self.provider = provider
         self.target_language = target_language
@@ -34,10 +35,12 @@ class Translator:
         self.llm_model = llm_model
         self.api_key = api_key
         self.timeout = timeout
+        # optional path where LLM client can write per-chapter logs (best-effort)
+        self.llm_log_path = llm_log_path
 
     def translate(self, text: str) -> str:
         """Translate *text* and return the translated string."""
-        if not text.strip():
+        if not text or not text.strip():
             return text
         if self.provider == "llm":
             return self._translate_llm(text)
@@ -46,21 +49,64 @@ class Translator:
         raise ValueError(f"Unknown translation provider: {self.provider!r}")
 
     def _translate_llm(self, text: str) -> str:
-        from ebook_app.text.identify.speaker_llm import OllamaChatClient
-        from ebook_app.text.translate.prompt_templates import TRANSLATION_SYSTEM_PROMPT
-        client = OllamaChatClient(
+        """
+        Use the repo's LLM client to perform translation.
+
+        This uses the unified LLM client (llm_client.LLMClient) when available.
+        It preserves the previous behavior: if the LLM returns a dict with a
+        'translation' key, return that; otherwise return the stringified result.
+        """
+        try:
+            # Prefer the unified LLMClient if present
+            from ebook_app.text.identify.llm_client import LLMClient
+        except Exception:
+            # Fallback to the older speaker_llm OllamaChatClient if the unified client isn't available
+            try:
+                from ebook_app.text.identify.speaker_llm import OllamaChatClient as LegacyOllamaClient
+            except Exception:
+                raise RuntimeError("No LLM client available for translation")
+
+            client = LegacyOllamaClient(base_url=self.llm_url, model=self.llm_model, timeout=self.timeout, llm_log_path=self.llm_log_path)
+            system = self._build_translation_system_prompt()
+            result = client.ask_json_any(system=system, user=text, chapter_id="translation")
+            if isinstance(result, dict):
+                return result.get("translation", text)
+            return str(result)
+
+        # If we have LLMClient
+        client = LLMClient(
             base_url=self.llm_url,
             model=self.llm_model,
             timeout=self.timeout,
+            retries=1,
+            provider="ollama_local",
+            api_key=self.api_key or "",
+            llm_log_path=self.llm_log_path,
         )
-        system = TRANSLATION_SYSTEM_PROMPT.format(
-            target_language=self.target_language,
-            source_language=self.source_language,
-        )
-        result = client.ask_json_any(system=system, user=text, chapter_id="translation")
+        system = self._build_translation_system_prompt()
+        try:
+            result = client.generate_json(system=system, user=text)
+        except Exception:
+            # Preserve previous behavior: on error, return original text
+            logger.exception("LLM translation failed; returning original text")
+            return text
+
         if isinstance(result, dict):
             return result.get("translation", text)
         return str(result)
+
+    def _build_translation_system_prompt(self) -> str:
+        # Import here to avoid circular imports at module load time
+        try:
+            from ebook_app.text.translate.prompt_templates import TRANSLATION_SYSTEM_PROMPT
+        except Exception:
+            # Minimal fallback prompt if the template isn't available
+            TRANSLATION_SYSTEM_PROMPT = "Translate the following text from {source_language} to {target_language}. Return JSON: {\"translation\": \"...\"}."
+
+        return TRANSLATION_SYSTEM_PROMPT.format(
+            target_language=self.target_language,
+            source_language=self.source_language,
+        )
 
     def _translate_cloud(self, text: str) -> str:
         try:
