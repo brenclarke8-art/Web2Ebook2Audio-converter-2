@@ -264,17 +264,21 @@ class ReviewPage(BasePage):
             self._chapter_combo.blockSignals(False)
             return
 
+        added_count = 0
         chapters_file = work_dir / "chapters_raw.json"
         if chapters_file.exists():
             try:
                 chapters = json.loads(chapters_file.read_text(encoding="utf-8"))
                 for idx, ch in enumerate(chapters):
-                    chapter_id = f"ch{idx + 1:03d}"
+                    chapter_id = f"ch{idx + 1}"
+                    if not self._chapter_has_scrape_output(chapter_id, ch, work_dir):
+                        continue
                     label = ch.get("title") or chapter_id
                     self._chapter_combo.addItem(f"{chapter_id} — {label}", userData=chapter_id)
+                    added_count += 1
             except Exception as exc:
                 self.log.log(f"Failed to load chapter list: {exc}", level="WARNING")
-        else:
+        if added_count == 0:
             # No scraped chapters yet — fall back to scanning for cleaned text files
             cleaned_files = sorted(work_dir.glob("ch*_cleaned.txt"))
             for p in cleaned_files:
@@ -286,6 +290,25 @@ class ReviewPage(BasePage):
         if self._chapter_combo.count() > 0:
             self._chapter_combo.setCurrentIndex(0)
             self._on_chapter_combo_changed(0)
+
+    @staticmethod
+    def _chapter_has_scrape_output(chapter_id: str, chapter: dict, work_dir: Path) -> bool:
+        if (chapter.get("content") or chapter.get("raw_text") or "").strip():
+            return True
+        for suffix in (
+            "_raw.txt",
+            "_scraped.txt",
+            "_cleaned.txt",
+            "_pass1.json",
+            "_pass2.json",
+            "_llm_raw.json",
+            "_llm_normalized.json",
+            "_final.json",
+            "_chapter_info_final.json",
+        ):
+            if (work_dir / f"{chapter_id}{suffix}").exists():
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Chapter data loading
@@ -337,12 +360,15 @@ class ReviewPage(BasePage):
             except Exception:
                 pass
 
-        # Fall back to a separate scraped file if it exists
-        scraped_path = work_dir / f"{chapter_id}_scraped.txt"
-        if scraped_path.exists():
-            self._scraped_view.setPlainText(scraped_path.read_text(encoding="utf-8"))
-        else:
-            self._scraped_view.setPlainText("(Scraped text not available for this chapter)")
+        # Fall back to separate scraped/raw files written during phase 2.
+        for scraped_path in (
+            work_dir / f"{chapter_id}_raw.txt",
+            work_dir / f"{chapter_id}_scraped.txt",
+        ):
+            if scraped_path.exists():
+                self._scraped_view.setPlainText(scraped_path.read_text(encoding="utf-8"))
+                return
+        self._scraped_view.setPlainText("(Scraped text not available for this chapter)")
 
     def _load_cleaned_text(self, chapter_id: str, work_dir: Path) -> None:
         self._cleaned_view.clear()
