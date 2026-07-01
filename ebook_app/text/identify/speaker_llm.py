@@ -154,7 +154,10 @@ class OllamaChatClient:
         attempted_chat_fallback = False
 
         for attempt in range(self.retries + 1):
+            # Kept outside the try block so the failure path can include any partial response body.
+            response = None
             try:
+                logger.debug("LLM request chapter=%s attempt=%s url=%s payload=%s", chapter_id, attempt, url, payload)
                 post_kwargs = {"json": payload, "timeout": self.timeout}
                 try:
                     if headers:
@@ -178,6 +181,14 @@ class OllamaChatClient:
 
                 response.raise_for_status()
                 body = response.json()
+                response_body = getattr(response, "text", None)
+                logger.debug(
+                    "LLM response chapter=%s attempt=%s status=%s body=%s",
+                    chapter_id,
+                    attempt,
+                    getattr(response, "status_code", None),
+                    response_body,
+                )
 
                 if isinstance(body, dict):
                     if "response" in body:
@@ -193,10 +204,15 @@ class OllamaChatClient:
                     raw_candidate = body
 
                 parsed = self._parse_json_text(raw_candidate)
+                logger.debug("LLM parsed response chapter=%s attempt=%s parsed=%s", chapter_id, attempt, parsed)
                 self._log({
                     "chapter_id": chapter_id,
                     "attempt": attempt,
+                    "url": url,
+                    "model": self.model,
+                    "status_code": getattr(response, "status_code", None),
                     "request": payload,
+                    "response_body": response_body,
                     "response_raw": raw_candidate,
                     "parsed": parsed,
                 })
@@ -204,10 +220,24 @@ class OllamaChatClient:
 
             except Exception as exc:
                 last_error = exc
+                response_body = None
+                if response is not None:
+                    response_body = getattr(response, "text", None)
+                logger.debug(
+                    "LLM request failed chapter=%s attempt=%s url=%s error=%s",
+                    chapter_id,
+                    attempt,
+                    url,
+                    exc,
+                    exc_info=True,
+                )
                 self._log({
                     "chapter_id": chapter_id,
                     "attempt": attempt,
+                    "url": url,
+                    "model": self.model,
                     "request": payload,
+                    "response_body": response_body,
                     "error": str(exc),
                 })
                 time.sleep(0.2 * (attempt + 1))
