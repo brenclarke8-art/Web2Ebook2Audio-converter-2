@@ -98,6 +98,19 @@ class OllamaChatClient:
 
         raise ValueError("Unable to parse JSON from LLM response")
 
+    def _chat_payload(self, system: str, user: str) -> dict:
+        """Build a /api/chat-style payload."""
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
+        }
+
     # -------------------------
     # Internal payload builder
     # -------------------------
@@ -106,17 +119,7 @@ class OllamaChatClient:
         headers = {"Content-Type": "application/json"}
 
         if url.endswith("/api/chat"):
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
-            }
-            return payload, url, headers
+            return self._chat_payload(system, user), url, headers
 
         if url.endswith("/api/generate"):
             prompt = f"{system.strip()}\n\n{user.strip()}\n\nRespond ONLY with valid JSON."
@@ -130,18 +133,7 @@ class OllamaChatClient:
             return payload, url, headers
 
         if url.endswith(":11434") or url.endswith("11434"):
-            chat_url = url + "/api/chat"
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
-            }
-            return payload, chat_url, headers
+            return self._chat_payload(system, user), url + "/api/chat", headers
 
         prompt = f"{system.strip()}\n\n{user.strip()}\n\nRespond ONLY with valid JSON."
         payload = {
@@ -161,8 +153,7 @@ class OllamaChatClient:
         last_error = None
         attempted_chat_fallback = False
 
-        attempt = 0
-        while attempt < self.retries:
+        for attempt in range(self.retries + 1):
             try:
                 post_kwargs = {"json": payload, "timeout": self.timeout}
                 try:
@@ -173,7 +164,7 @@ class OllamaChatClient:
                 except TypeError:
                     response = requests.post(url, **post_kwargs)
 
-                # 404 fallback: /api/generate → /api/chat
+                # 404 fallback: /api/generate → /api/chat (counts as an attempt)
                 if (
                     response.status_code == 404
                     and url.endswith("/api/generate")
@@ -181,16 +172,7 @@ class OllamaChatClient:
                 ):
                     attempted_chat_fallback = True
                     url = url[: -len("/api/generate")] + "/api/chat"
-                    payload = {
-                        "model": self.model,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                        "stream": False,
-                        "format": "json",
-                        "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
-                    }
+                    payload = self._chat_payload(system, user)
                     time.sleep(0.1)
                     continue
 
@@ -229,8 +211,6 @@ class OllamaChatClient:
                     "error": str(exc),
                 })
                 time.sleep(0.2 * (attempt + 1))
-
-            attempt += 1
 
         raise last_error
 
