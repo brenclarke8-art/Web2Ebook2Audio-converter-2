@@ -200,9 +200,9 @@ def test_dialogue_parser_preserves_character_objects(monkeypatch):
     assert any(c.name == "Alice" for c in result.detected_characters)
 
 
-def test_dialogue_parser_migrates_chat_endpoint_to_generate():
+def test_dialogue_parser_keeps_chat_endpoint_unchanged():
     parser = DialogueParser(ollama_url="http://127.0.0.1:11434/api/chat", model="mistral")
-    assert parser.ollama_url == "http://127.0.0.1:11434/api/generate"
+    assert parser.ollama_url == "http://127.0.0.1:11434/api/chat"
 
 
 def test_dialogue_parser_keeps_generate_endpoint_unchanged():

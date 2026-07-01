@@ -71,7 +71,7 @@ class LLMClient:
                             "format": "json",
                             "options": {
                                 "temperature": 0.0,
-                                "num_ctx": min(self.max_context_tokens, 8192),
+                                "num_ctx": self.max_context_tokens,
                             },
                         }
 
@@ -133,7 +133,7 @@ class LLMClient:
                 "format": "json",
                 "options": {
                     "temperature": 0.0,
-                    "num_ctx": min(self.max_context_tokens, 8192),
+                    "num_ctx": self.max_context_tokens,
                 },
             }
             return payload, headers, base
@@ -148,7 +148,7 @@ class LLMClient:
                 "format": "json",
                 "options": {
                     "temperature": 0.0,
-                    "num_ctx": min(self.max_context_tokens, 8192),
+                    "num_ctx": self.max_context_tokens,
                 },
             }
             return payload, headers, base
@@ -166,7 +166,7 @@ class LLMClient:
                 "format": "json",
                 "options": {
                     "temperature": 0.0,
-                    "num_ctx": min(self.max_context_tokens, 8192),
+                    "num_ctx": self.max_context_tokens,
                 },
             }
             return payload, headers, url
@@ -181,7 +181,7 @@ class LLMClient:
             "format": "json",
             "options": {
                 "temperature": 0.0,
-                "num_ctx": min(self.max_context_tokens, 8192),
+                "num_ctx": self.max_context_tokens,
             },
         }
         return payload, headers, url
@@ -295,7 +295,7 @@ class OllamaChatClient:
             provider="ollama_local",
             api_key="",
             llm_log_path=llm_log_path,
-            max_context_tokens=min(int(max_context_tokens), 8192),
+            max_context_tokens=int(max_context_tokens),
         )
 
         self.llm_log_path = llm_log_path

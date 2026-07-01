@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -12,16 +13,19 @@ from ebook_app.app.state.character_db import CharacterDatabase
 from ebook_app.text.parse.html_cleaner import TextCleaner
 from ebook_app.text.segment.segmenter import DialogueSegmentationService
 
+logger = logging.getLogger(__name__)
+
 
 class OllamaChatClient:
     """
     Lightweight, tolerant Ollama client wrapper.
 
-    - Supports both /api/chat and /api/generate endpoints.
+    - Supports both /api/chat and /api/generate endpoints with 404 fallback.
     - Forces JSON output when possible (format: "json").
     - Robust JSON extraction from fenced or noisy responses.
     - Per-chapter JSONL logging when llm_log_path is provided.
     - Retries with small backoff; surfaces errors to caller on final failure.
+    - Honors max_context_tokens without hard-capping at 8192.
     """
 
     def __init__(
@@ -110,7 +114,7 @@ class OllamaChatClient:
                 ],
                 "stream": False,
                 "format": "json",
-                "options": {"temperature": 0.0, "num_ctx": min(self.max_context_tokens, 8192)},
+                "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
             }
             return payload, url, headers
 
@@ -121,7 +125,7 @@ class OllamaChatClient:
                 "prompt": prompt,
                 "stream": False,
                 "format": "json",
-                "options": {"temperature": 0.0, "num_ctx": min(self.max_context_tokens, 8192)},
+                "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
             }
             return payload, url, headers
 
@@ -135,7 +139,7 @@ class OllamaChatClient:
                 ],
                 "stream": False,
                 "format": "json",
-                "options": {"temperature": 0.0, "num_ctx": min(self.max_context_tokens, 8192)},
+                "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
             }
             return payload, chat_url, headers
 
@@ -145,7 +149,7 @@ class OllamaChatClient:
             "prompt": prompt,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0.0, "num_ctx": min(self.max_context_tokens, 8192)},
+            "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
         }
         return payload, url, headers
 
@@ -155,8 +159,10 @@ class OllamaChatClient:
     def ask_json_any(self, *, system: str, user: str, chapter_id: str) -> Any:
         payload, url, headers = self._build_payload_and_url(system, user)
         last_error = None
+        attempted_chat_fallback = False
 
-        for attempt in range(self.retries):
+        attempt = 0
+        while attempt < self.retries:
             try:
                 post_kwargs = {"json": payload, "timeout": self.timeout}
                 try:
@@ -166,6 +172,27 @@ class OllamaChatClient:
                         response = requests.post(url, **post_kwargs)
                 except TypeError:
                     response = requests.post(url, **post_kwargs)
+
+                # 404 fallback: /api/generate → /api/chat
+                if (
+                    response.status_code == 404
+                    and url.endswith("/api/generate")
+                    and not attempted_chat_fallback
+                ):
+                    attempted_chat_fallback = True
+                    url = url[: -len("/api/generate")] + "/api/chat"
+                    payload = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        "stream": False,
+                        "format": "json",
+                        "options": {"temperature": 0.0, "num_ctx": self.max_context_tokens},
+                    }
+                    time.sleep(0.1)
+                    continue
 
                 response.raise_for_status()
                 body = response.json()
@@ -184,13 +211,26 @@ class OllamaChatClient:
                     raw_candidate = body
 
                 parsed = self._parse_json_text(raw_candidate)
-                self._log({"chapter_id": chapter_id, "attempt": attempt, "parsed": parsed})
+                self._log({
+                    "chapter_id": chapter_id,
+                    "attempt": attempt,
+                    "request": payload,
+                    "response_raw": raw_candidate,
+                    "parsed": parsed,
+                })
                 return parsed
 
             except Exception as exc:
                 last_error = exc
-                self._log({"chapter_id": chapter_id, "attempt": attempt, "error": str(exc)})
+                self._log({
+                    "chapter_id": chapter_id,
+                    "attempt": attempt,
+                    "request": payload,
+                    "error": str(exc),
+                })
                 time.sleep(0.2 * (attempt + 1))
+
+            attempt += 1
 
         raise last_error
 
@@ -269,27 +309,29 @@ class DialogueParser:
     @staticmethod
     def _normalize_ollama_url(url: str) -> str:
         """
-        Test expectations:
-        - /api/chat → migrate to /api/generate
-        - bare host → append /api/generate
-        - /api/generate → keep
-        - custom endpoints → keep
+        Normalize the Ollama URL.
+
+        - Both /api/chat and /api/generate are accepted as-is (LLMClient handles both).
+        - Bare host (no path) gets /api/generate appended for backward compatibility.
+        - Any other URL is kept unchanged.
         """
         if not url:
             return "http://127.0.0.1:11434/api/generate"
 
         url = url.rstrip("/")
 
-        if url.endswith("/api/generate"):
+        # Already an explicit endpoint — keep as-is
+        if url.endswith("/api/generate") or url.endswith("/api/chat"):
             return url
 
-        if url.endswith("/api/chat"):
-            return url[:-len("/api/chat")] + "/api/generate"
+        # Bare ":11434" host — append default path
+        if url.endswith(":11434") or (
+            (url.startswith("http://") or url.startswith("https://"))
+            and "/" not in url.split("://", 1)[-1]
+        ):
+            return url + "/api/generate"
 
-        if url.startswith("http://") or url.startswith("https://"):
-            if ":" in url and not url.endswith(("/api/chat", "/api/generate")):
-                return url + "/api/generate"
-
+        # Custom endpoint — keep unchanged
         return url
 
     @staticmethod
@@ -365,6 +407,11 @@ class DialogueParser:
                 )
             return ParseResult(segments=segments, detected_characters=detected)
         except Exception as exc:
+            logger.warning(
+                "DialogueParser.parse: LLM call failed for chapter %r — falling back to narrator. Error: %s",
+                chapter_id,
+                exc,
+            )
             try:
                 if hasattr(self, "client") and getattr(self.client, "llm_log_path", None):
                     Path(self.client.llm_log_path).parent.mkdir(parents=True, exist_ok=True)
