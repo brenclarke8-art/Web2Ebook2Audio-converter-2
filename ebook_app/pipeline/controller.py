@@ -161,6 +161,7 @@ class PipelineController:
         # Cancellation + progress callbacks
         self._cancel_flags: Dict[str, bool] = {}
         self._progress_callback = None
+        self._conversation_callback = None
 
     # ------------------------------------------------------------------
     # Lifecycle: start / stop / run_all
@@ -249,6 +250,10 @@ class PipelineController:
 
     def set_progress_callback(self, cb) -> None:
         self._progress_callback = cb
+
+    def set_conversation_callback(self, cb) -> None:
+        """Set a callback(role: str, content: str) called for each LLM request/response."""
+        self._conversation_callback = cb
 
     # ------------------------------------------------------------------
     # Phase 1 — scrape_index (web scraping to get chapter list)
@@ -492,6 +497,7 @@ class PipelineController:
                     segments,
                     chapter_id=chapter_id,
                     should_cancel=lambda: self._cancelled("pass2_classification"),
+                    on_conversation=self._conversation_callback,
                 )
             except Exception:
                 logger.error("Pass‑2 batched classification failed for %s", chapter_id, exc_info=True)
