@@ -33,7 +33,8 @@ class LLMClient:
     llm_log_path: str | None = None
     # Optional: limit context tokens used in options (best-effort)
     max_context_tokens: int = 8192
-    # Optional: callback(role, content) called before each request and after each response
+    # Optional: callback(role, content) called before each request and after each response.
+    # role is 'request' (before sending) or 'response' (after receiving).
     on_conversation: Optional[Callable[[str, str], None]] = field(default=None, compare=False)
 
     # -------------------------

@@ -16,8 +16,11 @@ Steps:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Optional
+
+_log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import (
@@ -60,6 +63,9 @@ _STEP_LLM_MONITOR = 6
 _STEP_REVIEW = 7
 _STEP_TTS = 8
 _NUM_STEPS = 9
+
+# Maximum character length to display for each LLM request/response in the conversation log
+_CONVERSATION_LOG_MAX_DISPLAY_LENGTH = 500
 
 _STEP_NAMES = [
     "1. Project",
@@ -175,8 +181,7 @@ class _BrowserLaunchWorker(QThread):
                 try:
                     page.goto(self._initial_url, timeout=30000)
                 except Exception as nav_exc:
-                    import logging
-                    logging.getLogger(__name__).warning(
+                    _log.warning(
                         "Could not navigate to initial URL %s: %s", self._initial_url, nav_exc
                     )
             self.launched.emit()
@@ -606,7 +611,7 @@ class PipelinePage(BasePage):
 
         # Chapter checklist inside a scroll area
         self._chapter_list_table = QTableWidget(0, 3)
-        self._chapter_list_table.setHorizontalHeaderLabels(["", "#", "URL / Title"])
+        self._chapter_list_table.setHorizontalHeaderLabels(["☑", "#", "URL / Title"])
         header = self._chapter_list_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -1310,7 +1315,7 @@ class PipelinePage(BasePage):
             prefix = "← [RESPONSE]"
             color = "#a6e3a1"
         # Truncate long content for display
-        display = content[:500] + ("…" if len(content) > 500 else "")
+        display = content[:_CONVERSATION_LOG_MAX_DISPLAY_LENGTH] + ("…" if len(content) > _CONVERSATION_LOG_MAX_DISPLAY_LENGTH else "")
         self._conversation_log.appendPlainText(f"{prefix}\n{display}\n{'─' * 60}")
 
     def _on_step7_continue(self) -> None:
@@ -1434,6 +1439,7 @@ class PipelinePage(BasePage):
                 else:
                     btn.setEnabled(enabled)
             except RuntimeError:
+                # Qt widget was deleted (C++ object lifetime mismatch); skip safely
                 pass
 
     def _is_busy(self) -> bool:
