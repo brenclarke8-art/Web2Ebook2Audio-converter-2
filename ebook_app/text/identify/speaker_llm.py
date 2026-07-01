@@ -154,6 +154,7 @@ class OllamaChatClient:
         attempted_chat_fallback = False
 
         for attempt in range(self.retries + 1):
+            # Kept outside the try block so the failure path can include any partial response body.
             response = None
             try:
                 logger.debug("LLM request chapter=%s attempt=%s url=%s payload=%s", chapter_id, attempt, url, payload)

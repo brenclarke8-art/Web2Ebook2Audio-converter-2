@@ -47,7 +47,7 @@ def test_ask_json_uses_default_context_token_cap(monkeypatch):
     assert sent_payloads[0]["options"]["num_ctx"] == 250_000
 
 
-def test_ask_json_logs_full_debug_request_and_response(monkeypatch, tmp_path, caplog):
+def test_ask_json_debug_logging(monkeypatch, tmp_path, caplog):
     log_file = tmp_path / "llm.jsonl"
 
     class _VerboseResponse:
