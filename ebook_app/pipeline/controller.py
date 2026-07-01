@@ -624,9 +624,13 @@ class PipelineController:
         tags_url = base_url.rstrip("/") + "/api/tags"
         resp = requests.get(tags_url)
         resp.raise_for_status()
-        installed = [m.get("name", "") for m in resp.json().get("models", [])]
+        installed_names = [m.get("name", "") for m in resp.json().get("models", [])]
+        # Normalize by stripping the tag suffix (e.g. "mistral:instruct" → "mistral")
+        # to match the behaviour of the UI health check.
+        installed_normalized = {(n or "").split(":", 1)[0].strip().lower() for n in installed_names}
         model = getattr(parser, "model", "")
-        if model not in installed:
+        model_normalized = (model or "").split(":", 1)[0].strip().lower()
+        if model_normalized not in installed_normalized:
             raise RuntimeError(
                 f"Ollama model '{model}' is not installed. "
                 "Install it with: ollama pull " + model
