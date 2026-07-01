@@ -1,7 +1,49 @@
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
+from types import ModuleType
+
+
+class _DummyWidget:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+
+sys.modules.setdefault("PySide6", ModuleType("PySide6"))
+qtcore = ModuleType("PySide6.QtCore")
+qtcore.QThread = _DummyWidget
+qtcore.Signal = lambda *args, **kwargs: None
+qtcore.Qt = SimpleNamespace(
+    ItemFlag=SimpleNamespace(ItemIsEnabled=1),
+)
+sys.modules["PySide6.QtCore"] = qtcore
+
+qtwidgets = ModuleType("PySide6.QtWidgets")
+for name in [
+    "QAbstractItemView",
+    "QComboBox",
+    "QGroupBox",
+    "QHBoxLayout",
+    "QHeaderView",
+    "QLabel",
+    "QMessageBox",
+    "QPlainTextEdit",
+    "QPushButton",
+    "QSplitter",
+    "QTableWidget",
+    "QTableWidgetItem",
+    "QTabWidget",
+    "QVBoxLayout",
+    "QWidget",
+]:
+    setattr(qtwidgets, name, _DummyWidget)
+sys.modules["PySide6.QtWidgets"] = qtwidgets
+
+base_page = ModuleType("ebook_app.app.ui.base_view")
+base_page.BasePage = type("BasePage", (), {})
+sys.modules["ebook_app.app.ui.base_view"] = base_page
 
 from ebook_app.app.ui.review_view import ReviewPage
 
@@ -69,6 +111,9 @@ def test_load_chapter_list_only_shows_chapters_with_scrape_output(tmp_path) -> N
         _chapter_combo=combo,
         _work_dir=lambda: work_dir,
         _on_chapter_combo_changed=lambda index: changed_indexes.append(index),
+        _chapter_has_scrape_output=lambda chapter_id, chapter, root: ReviewPage._chapter_has_scrape_output(
+            chapter_id, chapter, root
+        ),
         log=_FakeLog(),
     )
 
