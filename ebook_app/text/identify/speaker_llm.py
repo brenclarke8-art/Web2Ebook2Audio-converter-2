@@ -154,6 +154,7 @@ class OllamaChatClient:
         attempted_chat_fallback = False
 
         for attempt in range(self.retries + 1):
+            response = None
             try:
                 logger.debug("LLM request chapter=%s attempt=%s url=%s payload=%s", chapter_id, attempt, url, payload)
                 post_kwargs = {"json": payload, "timeout": self.timeout}
@@ -219,7 +220,7 @@ class OllamaChatClient:
             except Exception as exc:
                 last_error = exc
                 response_body = None
-                if "response" in locals():
+                if response is not None:
                     response_body = getattr(response, "text", None)
                 logger.debug(
                     "LLM request failed chapter=%s attempt=%s url=%s error=%s",

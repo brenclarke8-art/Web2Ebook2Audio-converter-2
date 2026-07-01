@@ -270,7 +270,7 @@ class ReviewPage(BasePage):
             try:
                 chapters = json.loads(chapters_file.read_text(encoding="utf-8"))
                 for idx, ch in enumerate(chapters):
-                    chapter_id = f"ch{idx + 1}"
+                    chapter_id = self._resolve_review_chapter_id(idx + 1, ch, work_dir)
                     if not self._chapter_has_scrape_output(chapter_id, ch, work_dir):
                         continue
                     label = ch.get("title") or chapter_id
@@ -290,6 +290,13 @@ class ReviewPage(BasePage):
         if self._chapter_combo.count() > 0:
             self._chapter_combo.setCurrentIndex(0)
             self._on_chapter_combo_changed(0)
+
+    @staticmethod
+    def _resolve_review_chapter_id(chapter_number: int, chapter: dict, work_dir: Path) -> str:
+        for chapter_id in (f"ch{chapter_number}", f"ch{chapter_number:03d}"):
+            if ReviewPage._chapter_has_scrape_output(chapter_id, chapter, work_dir):
+                return chapter_id
+        return f"ch{chapter_number}"
 
     @staticmethod
     def _chapter_has_scrape_output(chapter_id: str, chapter: dict, work_dir: Path) -> bool:

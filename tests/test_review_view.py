@@ -111,6 +111,9 @@ def test_load_chapter_list_only_shows_chapters_with_scrape_output(tmp_path) -> N
         _chapter_combo=combo,
         _work_dir=lambda: work_dir,
         _on_chapter_combo_changed=lambda index: changed_indexes.append(index),
+        _resolve_review_chapter_id=lambda chapter_number, chapter, root: ReviewPage._resolve_review_chapter_id(
+            chapter_number, chapter, root
+        ),
         _chapter_has_scrape_output=lambda chapter_id, chapter, root: ReviewPage._chapter_has_scrape_output(
             chapter_id, chapter, root
         ),
