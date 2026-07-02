@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -20,6 +20,7 @@ class LLMClient:
     - Adds tolerant JSON extraction.
     - Adds optional per-chapter JSONL logging via llm_log_path.
     - Keeps original return semantics: returns {} on failure.
+    - Adds optional on_conversation callback for real-time monitoring.
     """
 
     base_url: str
@@ -32,6 +33,9 @@ class LLMClient:
     llm_log_path: str | None = None
     # Optional: limit context tokens used in options (best-effort)
     max_context_tokens: int = 8192
+    # Optional: callback(role, content) called before each request and after each response.
+    # role is 'request' (before sending) or 'response' (after receiving).
+    on_conversation: Optional[Callable[[str, str], None]] = field(default=None, compare=False)
 
     # -------------------------
     # Public API
@@ -44,6 +48,13 @@ class LLMClient:
         payload, headers, url = self._build_request(system=system, user=user)
         last_error = None
 
+        # Notify conversation monitor before sending
+        if callable(self.on_conversation):
+            try:
+                self.on_conversation("request", user)
+            except Exception:
+                pass
+
         for attempt in range(self.retries + 1):
             try:
                 resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
@@ -51,6 +62,12 @@ class LLMClient:
                 parsed = self._parse_response(resp.json())
                 # Log success (best-effort)
                 self._log({"attempt": attempt, "request": payload, "response_raw": resp.text, "response_parsed": parsed})
+                # Notify conversation monitor after receiving response
+                if callable(self.on_conversation):
+                    try:
+                        self.on_conversation("response", resp.text)
+                    except Exception:
+                        pass
                 return parsed
             except Exception as exc:
                 last_error = exc
@@ -282,17 +299,26 @@ class Pass2Classifier:
         segments: List[Dict[str, Any]],
         chapter_id: str = "",
         should_cancel=None,
+        on_conversation: Optional[Callable[[str, str], None]] = None,
     ) -> List[Dict[str, Any]]:
         if not segments:
             return []
 
-        output: List[Dict[str, Any]] = []
-        for start in range(0, len(segments), self.batch_size):
-            if callable(should_cancel) and should_cancel():
-                break
-            batch = segments[start : start + self.batch_size]
-            output.extend(self._classify_batch(batch=batch, chapter_id=chapter_id, offset=start))
-        return output
+        # Temporarily attach conversation callback to LLM client
+        _prev_cb = self.llm_client.on_conversation
+        if on_conversation is not None:
+            self.llm_client.on_conversation = on_conversation
+
+        try:
+            output: List[Dict[str, Any]] = []
+            for start in range(0, len(segments), self.batch_size):
+                if callable(should_cancel) and should_cancel():
+                    break
+                batch = segments[start : start + self.batch_size]
+                output.extend(self._classify_batch(batch=batch, chapter_id=chapter_id, offset=start))
+            return output
+        finally:
+            self.llm_client.on_conversation = _prev_cb
 
     def assist_pass1_segments(self, segments: List[Dict[str, Any]], chapter_id: str = "") -> List[Dict[str, Any]]:
         assisted: List[Dict[str, Any]] = []

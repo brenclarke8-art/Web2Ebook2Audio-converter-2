@@ -38,6 +38,7 @@ sys.modules["PySide6.QtCore"] = qtcore
 
 qtwidgets = ModuleType("PySide6.QtWidgets")
 for name in [
+    "QAbstractItemView",
     "QCheckBox",
     "QComboBox",
     "QFormLayout",
@@ -49,10 +50,13 @@ for name in [
     "QLineEdit",
     "QListWidget",
     "QListWidgetItem",
+    "QPlainTextEdit",
     "QProgressBar",
     "QPushButton",
+    "QScrollArea",
     "QSplitter",
     "QSpinBox",
+    "QStackedWidget",
     "QTabWidget",
     "QTableWidget",
     "QTableWidgetItem",
