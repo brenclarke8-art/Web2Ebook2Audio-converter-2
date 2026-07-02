@@ -159,8 +159,8 @@ class PipelineController:
         llm_provider = _gs(settings, "llm_provider", default="ollama_local")
         llm_api_key = _gs(settings, "llm_api_key", default="")
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
-        llm_timeout = _int_setting(_gs(settings, "llm_timeout", "dialogue_llm_timeout", default=300), 300)
-        llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=1), 1)
+        llm_timeout = _int_setting(_gs(settings, "llm_timeout", "dialogue_llm_timeout", default=None), 300)
+        llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=None), 1)
         # Write per-request LLM call logs next to the other pipeline work files.
         llm_log_path = str(self.work_dir / "llm_calls.jsonl")
         self.llm_client = LLMClient(

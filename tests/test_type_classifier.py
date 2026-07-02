@@ -3,7 +3,7 @@ from __future__ import annotations
 from ebook_app.text.identify.type_classifier import Pass2Classifier
 
 
-class _AlwaysEmptyLLMClient:
+class MockEmptyLLMClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.on_conversation = None
@@ -14,7 +14,7 @@ class _AlwaysEmptyLLMClient:
 
 
 def test_pass2_classifier_keeps_batch_whole_when_llm_response_is_empty():
-    client = _AlwaysEmptyLLMClient()
+    client = MockEmptyLLMClient()
     classifier = Pass2Classifier(client, batch_size=8)
     segments = [
         {
