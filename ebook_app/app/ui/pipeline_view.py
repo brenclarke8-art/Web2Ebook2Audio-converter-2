@@ -190,8 +190,17 @@ class _BrowserWorkerThread(QThread):
         import queue as _queue
         self._queue: _queue.Queue = _queue.Queue()
         self._active = True
+        self._busy = False  # set True when a task is executing; guarded by the task loop
 
     # ── Public helpers ─────────────────────────────────────────────────
+
+    def is_busy(self) -> bool:
+        """Return True if the thread is alive and has pending or active work.
+
+        Thread-safe: reads only atomic Python booleans and the queue's
+        ``empty()`` — suitable for a UI guard check.
+        """
+        return self.isRunning() and (self._busy or not self._queue.empty())
 
     def submit(self, fn, *, description: str = "") -> None:
         """Enqueue *fn* to run on the browser thread.  Starts thread if needed."""
@@ -293,6 +302,7 @@ class _BrowserWorkerThread(QThread):
             if item is None:
                 break
             fn, desc = item
+            self._busy = True
             try:
                 fn()
             except Exception as exc:
@@ -300,14 +310,12 @@ class _BrowserWorkerThread(QThread):
                     "_BrowserWorkerThread task '%s' raised: %s", desc, exc, exc_info=True
                 )
                 self.task_failed.emit(str(exc))
+            finally:
+                self._busy = False
 
 
 # ---------------------------------------------------------------------------
-# _PipelineWorker
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# _PipelineWorker  (non-browser operations only)
+# _PipelineWorker  (non-browser operations: RUN_TO_REVIEW, CONTINUE_AUDIO, RUN_LLM)
 # ---------------------------------------------------------------------------
 
 class _PipelineWorker(QThread):
@@ -1121,7 +1129,7 @@ class PipelinePage(BasePage):
 
         # If the browser thread is already running a task, don't re-open
         bt = self._browser_thread
-        if bt is not None and bt.isRunning() and not bt._queue.empty():
+        if bt is not None and bt.is_busy():
             self.log.log("Browser is already launching.", level="INFO")
             return
 
@@ -1568,7 +1576,7 @@ class PipelinePage(BasePage):
         browser_busy = False
         if self._browser_thread is not None:
             try:
-                browser_busy = bool(self._browser_thread.isRunning() and not self._browser_thread._queue.empty())
+                browser_busy = self._browser_thread.is_busy()
             except RuntimeError:
                 self._browser_thread = None
 
