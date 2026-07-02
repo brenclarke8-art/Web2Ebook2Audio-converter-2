@@ -30,6 +30,15 @@ def _obj_to_dict(obj: Any) -> Dict:
 
 
 logger = logging.getLogger(__name__)
+MIN_LLM_TIMEOUT_SEC = 1
+MIN_LLM_RETRIES = 0
+
+
+def _int_setting(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _gs(settings: Any, *keys: str, default: Any = "") -> Any:
@@ -150,11 +159,15 @@ class PipelineController:
         llm_provider = _gs(settings, "llm_provider", default="ollama_local")
         llm_api_key = _gs(settings, "llm_api_key", default="")
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
+        llm_timeout = _int_setting(_gs(settings, "llm_timeout", "dialogue_llm_timeout", default=None), 300)
+        llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=None), 1)
         # Write per-request LLM call logs next to the other pipeline work files.
         llm_log_path = str(self.work_dir / "llm_calls.jsonl")
         self.llm_client = LLMClient(
             base_url=llm_url,
             model=llm_model,
+            timeout=max(MIN_LLM_TIMEOUT_SEC, llm_timeout),
+            retries=max(MIN_LLM_RETRIES, llm_retries),
             provider=llm_provider,
             api_key=llm_api_key,
             llm_log_path=llm_log_path,

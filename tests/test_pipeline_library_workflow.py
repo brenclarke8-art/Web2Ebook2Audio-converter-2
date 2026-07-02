@@ -98,6 +98,18 @@ def test_scrape_index_filters_placeholder_urls(tmp_path, monkeypatch):
         assert len(json.load(f)) == 2
 
 
+def test_pipeline_controller_applies_configured_llm_timeout_and_retries(tmp_path):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    settings.set("dialogue_llm_timeout", 345)
+    settings.set("dialogue_llm_retries", 0)
+
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+
+    assert controller.llm_client.timeout == 345
+    assert controller.llm_client.retries == 0
+
+
 def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))

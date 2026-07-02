@@ -333,8 +333,9 @@ class Pass2Classifier:
 
     def _classify_batch(self, *, batch: List[Dict[str, Any]], chapter_id: str, offset: int) -> List[Dict[str, Any]]:
         """
-        Classify a batch. If the LLM returns an empty result, automatically retry by splitting
-        the batch into smaller halves to avoid silent failures on large payloads.
+        Classify a batch.
+        If the LLM returns an empty result, keep the same batch and fall back to
+        deterministic defaults for each segment instead of recursively shrinking the request.
         """
         entries = []
         for idx, segment in enumerate(batch):
@@ -360,13 +361,6 @@ class Pass2Classifier:
         user = json.dumps(entries, ensure_ascii=False)
 
         raw = self.llm_client.generate_json(system=system, user=user)
-
-        # If raw is empty, attempt to split the batch and retry (recursive)
-        if not raw and len(batch) > 1:
-            mid = len(batch) // 2
-            left = self._classify_batch(batch=batch[:mid], chapter_id=chapter_id, offset=offset)
-            right = self._classify_batch(batch=batch[mid:], chapter_id=chapter_id, offset=offset + mid)
-            return left + right
 
         by_id = self._normalize_batch_output(raw)
 
