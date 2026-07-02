@@ -150,11 +150,14 @@ class PipelineController:
         llm_provider = _gs(settings, "llm_provider", default="ollama_local")
         llm_api_key = _gs(settings, "llm_api_key", default="")
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
+        # Write per-request LLM call logs next to the other pipeline work files.
+        llm_log_path = str(self.work_dir / "llm_calls.jsonl")
         self.llm_client = LLMClient(
             base_url=llm_url,
             model=llm_model,
             provider=llm_provider,
             api_key=llm_api_key,
+            llm_log_path=llm_log_path,
         )
         self.pass2_classifier = Pass2Classifier(self.llm_client, batch_size=phase2_batch_size)
 
@@ -306,28 +309,44 @@ class PipelineController:
     # Phase 2 — scrape_chapters (per-chapter scraping + cleaning)
     # ------------------------------------------------------------------
 
-    def scrape_chapters(self) -> None:
+    def scrape_chapters(
+        self,
+        *,
+        chapter_progress_callback: Optional[Any] = None,
+    ) -> None:
         """
         Phase 2:
         - Select URLs based on chapter range + self.chapter_urls
         - Batch-scrape with WebScraper.scrape_chapters()
         - Write chN_raw.txt and chN_cleaned.txt for each chapter
         - Set self.chapters with scraped data
+
+        Args:
+            chapter_progress_callback: Optional callable(current, total, url) called
+                after each chapter is fetched. Receives 1-based current index, total
+                count, and the URL just scraped.
         """
         logger.info("[Phase 2] Scraping chapters…")
 
         from ebook_app.text.parse.html_cleaner import TextCleaner
 
+        # When chapter_urls has been set externally (e.g. from the UI's selected
+        # checkboxes) it already contains exactly the URLs to scrape — do NOT
+        # re-apply the start/end chapter range, as that would slice the list a
+        # second time and skip chapters.  When chapter_urls is empty we fall back
+        # to chapters_raw.json and apply the range there.
         if self.chapter_urls:
-            start_idx = self.selected_start_chapter - 1
-            end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(self.chapter_urls)
-            selected_urls = self.chapter_urls[start_idx:end_idx]
+            selected_urls = list(self.chapter_urls)
+            # chapter_offset: 1-based index of the first URL in the file-naming
+            # scheme so that ch<N>_raw.txt reflects the right chapter number.
+            chapter_offset = self.selected_start_chapter
         else:
             chapters_raw = self._load_json(self.work_dir / "chapters_raw.json", default=[])
             all_urls = [ch.get("source", "") for ch in chapters_raw if ch.get("source")]
             start_idx = self.selected_start_chapter - 1
             end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(all_urls)
             selected_urls = all_urls[start_idx:end_idx]
+            chapter_offset = self.selected_start_chapter
 
         if not selected_urls:
             logger.warning("No chapter URLs — cannot scrape chapters.")
@@ -335,8 +354,19 @@ class PipelineController:
 
         self.work_dir.mkdir(parents=True, exist_ok=True)
         scraper = WebScraper()
+
+        # Wrap the caller's callback so we can also emit it from inside
+        # WebScraper (which already supports a progress_callback).
+        def _progress(current: int, total: int, url: str) -> None:
+            logger.info("Scraping chapter %d/%d: %s", current, total, url)
+            if callable(chapter_progress_callback):
+                try:
+                    chapter_progress_callback(current, total, url)
+                except Exception:
+                    pass
+
         try:
-            results = scraper.scrape_chapters(selected_urls)
+            results = scraper.scrape_chapters(selected_urls, progress_callback=_progress)
         except Exception:
             logger.error("Chapter scraping failed.", exc_info=True)
             results = []
@@ -346,9 +376,9 @@ class PipelineController:
             if self._cancelled("scrape_chapters"):
                 return
 
-            chapter_id = f"ch{self.selected_start_chapter + idx}"
+            chapter_id = f"ch{chapter_offset + idx}"
             content = result.get("content", "") or ""
-            title = result.get("title", f"Chapter {self.selected_start_chapter + idx}")
+            title = result.get("title", f"Chapter {chapter_offset + idx}")
 
             raw_path = self._chapter_raw_text_path(chapter_id)
             raw_path.write_text(content, encoding="utf-8")

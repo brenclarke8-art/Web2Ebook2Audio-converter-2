@@ -160,45 +160,168 @@ class StepProgressBar(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# _BrowserLaunchWorker
+# _BrowserWorkerThread
 # ---------------------------------------------------------------------------
 
-class _BrowserLaunchWorker(QThread):
-    """Opens the Playwright browser in a background thread so it appears immediately."""
+class _BrowserWorkerThread(QThread):
+    """Single persistent thread that owns the Playwright browser session.
 
+    Playwright's synchronous API binds greenlet contexts to the thread that
+    called ``sync_playwright().start()``.  Using the resulting ``page`` from
+    any other thread raises a greenlet context error and the framework
+    responds by closing the stale session and opening a fresh browser window.
+    This class prevents that: it keeps one background thread alive for the
+    entire duration that the browser is needed and funnels every browser
+    operation (open, index scan, chapter scraping) through that same thread
+    via a task queue.
+    """
+
+    # ── Signals ────────────────────────────────────────────────────────
     launched = Signal()
     launch_failed = Signal(str)
+    log_message = Signal(str, str)            # message, level
+    chapter_progress = Signal(int, int, str)  # current, total, url
+    index_scan_complete = Signal(dict)        # {raw_count, valid_count, chapter_urls}
+    scrape_complete = Signal()
+    task_failed = Signal(str)
 
-    def __init__(self, initial_url: str = "", parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._initial_url = initial_url
+        import queue as _queue
+        self._queue: _queue.Queue = _queue.Queue()
+        self._active = True
+        self._busy = False  # set True when a task is executing; guarded by the task loop
+
+    # ── Public helpers ─────────────────────────────────────────────────
+
+    def is_busy(self) -> bool:
+        """Return True if the thread is alive and has pending or active work.
+
+        Thread-safe: reads only atomic Python booleans and the queue's
+        ``empty()`` — suitable for a UI guard check.
+        """
+        return self.isRunning() and (self._busy or not self._queue.empty())
+
+    def submit(self, fn, *, description: str = "") -> None:
+        """Enqueue *fn* to run on the browser thread.  Starts thread if needed."""
+        self._queue.put((fn, description))
+        if not self.isRunning():
+            self.start()
+
+    def request_stop(self) -> None:
+        self._active = False
+        self._queue.put(None)
+
+    # ── Convenience submitters ─────────────────────────────────────────
+
+    def open_browser(self, initial_url: str = "") -> None:
+        """Request that the Playwright browser be opened."""
+        from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
+
+        BrowserSessionManager.request_open()
+
+        def _task() -> None:
+            try:
+                from ebook_app.text.scrape.browser_scraper import BrowserSessionManager as BSM
+                page = BSM.get_page()
+                if initial_url:
+                    try:
+                        page.goto(initial_url, timeout=30_000)
+                    except Exception as nav_exc:
+                        _log.warning(
+                            "Could not navigate to initial URL %s: %s", initial_url, nav_exc
+                        )
+                self.launched.emit()
+            except Exception as exc:
+                self.launch_failed.emit(str(exc))
+
+        self.submit(_task, description="open browser")
+
+    def run_index_scan(self, ctrl) -> None:
+        """Enqueue an index-scan using *ctrl*."""
+        import json as _json
+
+        def _task() -> None:
+            try:
+                ctrl.scrape_index()
+                chapter_urls: list = []
+                try:
+                    chapters_raw_path = ctrl.work_dir / "chapters_raw.json"
+                    if chapters_raw_path.exists():
+                        chapters_data = _json.loads(
+                            chapters_raw_path.read_text(encoding="utf-8")
+                        )
+                        chapter_urls = [
+                            c.get("source", "") for c in chapters_data if c.get("source")
+                        ]
+                except Exception:
+                    pass
+                count = len(chapter_urls)
+                self.index_scan_complete.emit(
+                    {"raw_count": count, "valid_count": count, "chapter_urls": chapter_urls}
+                )
+                self.log_message.emit(
+                    f"Index scan complete — {count} chapter(s) found.", "SUCCESS"
+                )
+            except Exception as exc:
+                self.task_failed.emit(str(exc))
+
+        self.submit(_task, description="index scan")
+
+    def run_chapter_scrape(self, ctrl, selected_urls: list) -> None:
+        """Enqueue chapter scraping for *selected_urls* using *ctrl*."""
+
+        def _task() -> None:
+            try:
+                # Replace chapter_urls with the exact set chosen in the UI.
+                # Reset start/end to 1/0 so scrape_chapters() iterates over all
+                # of them without slicing again (the selection was already done).
+                ctrl.chapter_urls = list(selected_urls)
+                ctrl.selected_start_chapter = 1
+                ctrl.selected_end_chapter = 0
+
+                def _progress(current: int, total: int, url: str) -> None:
+                    self.chapter_progress.emit(current, total, url)
+                    self.log_message.emit(
+                        f"Scraping {current}/{total}: {url}", "INFO"
+                    )
+
+                ctrl.scrape_chapters(chapter_progress_callback=_progress)
+                self.scrape_complete.emit()
+                self.log_message.emit("Chapter scraping complete.", "SUCCESS")
+            except Exception as exc:
+                self.task_failed.emit(str(exc))
+
+        self.submit(_task, description="scrape chapters")
+
+    # ── Thread main loop ───────────────────────────────────────────────
 
     def run(self) -> None:
-        try:
-            from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
-            page = BrowserSessionManager.get_page()
-            if self._initial_url:
-                try:
-                    page.goto(self._initial_url, timeout=30000)
-                except Exception as nav_exc:
-                    _log.warning(
-                        "Could not navigate to initial URL %s: %s", self._initial_url, nav_exc
-                    )
-            self.launched.emit()
-        except Exception as exc:
-            self.launch_failed.emit(str(exc))
+        while self._active:
+            item = self._queue.get()
+            if item is None:
+                break
+            fn, desc = item
+            self._busy = True
+            try:
+                fn()
+            except Exception as exc:
+                _log.error(
+                    "_BrowserWorkerThread task '%s' raised: %s", desc, exc, exc_info=True
+                )
+                self.task_failed.emit(str(exc))
+            finally:
+                self._busy = False
 
 
 # ---------------------------------------------------------------------------
-# _PipelineWorker
+# _PipelineWorker  (non-browser operations: RUN_TO_REVIEW, CONTINUE_AUDIO, RUN_LLM)
 # ---------------------------------------------------------------------------
 
 class _PipelineWorker(QThread):
     # ── Modes ──────────────────────────────────────────────────────────
     RUN_TO_REVIEW = "run_to_review"
     CONTINUE_AUDIO = "continue_audio"
-    CHECK_INDEX = "check_index"
-    SCRAPE_CHAPTERS = "scrape_chapters"   # Phase 2 only
     RUN_LLM = "run_llm"                   # Phases 3+4
 
     # ── Signals ────────────────────────────────────────────────────────
@@ -208,7 +331,6 @@ class _PipelineWorker(QThread):
     failed = Signal(str)
     cancelled = Signal(str)
     conversation_message = Signal(str, str)   # role, content
-    chapter_progress = Signal(int, int, str)  # current, total, url
 
     def __init__(
         self,
@@ -218,7 +340,6 @@ class _PipelineWorker(QThread):
         mode,
         start_ch: int = 1,
         end_ch: int = 0,
-        selected_urls: Optional[List[str]] = None,
         llm_url_override: str = "",
         llm_model_override: str = "",
     ):
@@ -228,7 +349,6 @@ class _PipelineWorker(QThread):
         self.mode = mode
         self._start = start_ch
         self._end = end_ch
-        self._selected_urls = selected_urls or []
         self._llm_url_override = llm_url_override
         self._llm_model_override = llm_model_override
         self._cancel_requested = False
@@ -242,7 +362,7 @@ class _PipelineWorker(QThread):
             return True
         return False
 
-    # ── Mode: RUN_TO_REVIEW (legacy full run) ──────────────────────────
+    # ── Mode: RUN_TO_REVIEW (legacy full run — kept for compatibility) ──
     def _run_to_review(self, ctrl) -> None:
         import json as _json
 
@@ -297,38 +417,6 @@ class _PipelineWorker(QThread):
         ctrl.tts_generate()
         ctrl.epub_build()
 
-    # ── Mode: CHECK_INDEX ─────────────────────────────────────────────
-    def _run_check_index(self, ctrl) -> None:
-        ctrl.scrape_index()
-        work_dir = self.project_manager.get_work_dir() if self.project_manager else None
-        chapter_urls: list = []
-        if work_dir is not None:
-            chapters_raw_path = work_dir / "chapters_raw.json"
-            if chapters_raw_path.exists():
-                try:
-                    chapters_data = json.loads(chapters_raw_path.read_text(encoding="utf-8"))
-                    chapter_urls = [c.get("source", "") for c in chapters_data if c.get("source")]
-                except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
-                    self.log_message.emit(
-                        f"Failed to load indexed chapters from {chapters_raw_path}: {exc}",
-                        "WARNING",
-                    )
-        count = len(chapter_urls)
-        self.inventory_ready.emit(
-            {"raw_count": count, "valid_count": count, "chapter_urls": chapter_urls}
-        )
-        self.finished_ok.emit(self.CHECK_INDEX, f"Indexing complete. Found {count} chapters.")
-
-    # ── Mode: SCRAPE_CHAPTERS ─────────────────────────────────────────
-    def _run_scrape_chapters(self, ctrl) -> None:
-        if self._selected_urls:
-            ctrl.chapter_urls = list(self._selected_urls)
-        ctrl.scrape_chapters()
-        self.finished_ok.emit(
-            self.SCRAPE_CHAPTERS,
-            f"Scraping complete. {len(self._selected_urls or ctrl.chapter_urls)} chapters scraped.",
-        )
-
     # ── Mode: RUN_LLM ─────────────────────────────────────────────────
     def _run_llm(self, ctrl) -> None:
         # Apply LLM overrides for this run
@@ -359,10 +447,6 @@ class _PipelineWorker(QThread):
             elif self.mode == self.CONTINUE_AUDIO:
                 self._run_continue_audio(ctrl)
                 self.finished_ok.emit(self.CONTINUE_AUDIO, "Audio generation complete.")
-            elif self.mode == self.CHECK_INDEX:
-                self._run_check_index(ctrl)
-            elif self.mode == self.SCRAPE_CHAPTERS:
-                self._run_scrape_chapters(ctrl)
             elif self.mode == self.RUN_LLM:
                 self._run_llm(ctrl)
         except Exception as exc:
@@ -376,7 +460,9 @@ class _PipelineWorker(QThread):
 class PipelinePage(BasePage):
     def __init__(self, *, settings, log, project_manager=None, parent=None):
         self._worker = None
-        self._browser_launch_worker = None
+        # Single persistent browser thread — owns the Playwright session for the
+        # entire duration that the browser is needed (open → index scan → scraping).
+        self._browser_thread: Optional[_BrowserWorkerThread] = None
         self._step_states: list[str] = [_STATE_LOCKED] * _NUM_STEPS
         # Runtime review state (used by segment-editing helpers)
         self._current_review_chapter_id: str = ""
@@ -1005,12 +1091,23 @@ class PipelinePage(BasePage):
     # Step 2 handlers
     # ------------------------------------------------------------------
 
+    def _ensure_browser_thread(self) -> _BrowserWorkerThread:
+        """Return (creating if necessary) the persistent browser worker thread."""
+        if self._browser_thread is None or not self._browser_thread.isRunning():
+            bt = _BrowserWorkerThread(parent=self)
+            bt.launched.connect(self._on_browser_launched)
+            bt.launch_failed.connect(self._on_browser_launch_failed)
+            bt.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
+            bt.chapter_progress.connect(self._on_chapter_progress)
+            bt.index_scan_complete.connect(self._on_index_scan_complete)
+            bt.scrape_complete.connect(self._on_scrape_complete)
+            bt.task_failed.connect(self._on_browser_task_failed)
+            self._browser_thread = bt
+        return self._browser_thread
+
     def _on_open_browser(self) -> None:
         try:
-            from ebook_app.text.scrape.browser_scraper import (
-                BrowserSessionManager,
-                PLAYWRIGHT_AVAILABLE,
-            )
+            from ebook_app.text.scrape.browser_scraper import PLAYWRIGHT_AVAILABLE
         except ImportError as exc:
             self.log.log(f"Failed to import browser scraper: {exc}", level="ERROR")
             QMessageBox.critical(self, "Import Error", f"Could not import browser scraper:\n\n{exc}")
@@ -1030,25 +1127,19 @@ class PipelinePage(BasePage):
             QMessageBox.critical(self, "Playwright Not Installed", msg)
             return
 
-        if self._browser_launch_worker is not None and self._browser_launch_worker.isRunning():
+        # If the browser thread is already running a task, don't re-open
+        bt = self._browser_thread
+        if bt is not None and bt.is_busy():
             self.log.log("Browser is already launching.", level="INFO")
             return
 
-        BrowserSessionManager.request_open()
         self._status_label.setStyleSheet("color: steelblue;")
         self._status_label.setText("🌐 Opening browser…")
         self.log.log("Launching browser window…", level="INFO")
         self._open_browser_btn.setEnabled(False)
 
         index_url = self._index_url_edit.text().strip()
-        self._browser_launch_worker = _BrowserLaunchWorker(initial_url=index_url)
-        self._browser_launch_worker.launched.connect(self._on_browser_launched)
-        self._browser_launch_worker.launch_failed.connect(self._on_browser_launch_failed)
-        self._browser_launch_worker.finished.connect(self._on_browser_worker_done)
-        self._browser_launch_worker.start()
-
-    def _on_browser_worker_done(self) -> None:
-        self._browser_launch_worker = None
+        self._ensure_browser_thread().open_browser(initial_url=index_url)
 
     def _on_browser_launched(self) -> None:
         self._open_browser_btn.setEnabled(True)
@@ -1074,6 +1165,13 @@ class PipelinePage(BasePage):
         self.log.log(f"Failed to open browser: {error}", level="ERROR")
         QMessageBox.critical(self, "Browser Error", f"Could not open browser:\n\n{error}")
 
+    def _on_browser_task_failed(self, error: str) -> None:
+        self._set_buttons_enabled(True)
+        self._status_label.setStyleSheet("color: #f38ba8;")
+        self._status_label.setText(f"❌ Browser error: {error}")
+        self.log.log(f"Browser task failed: {error}", level="ERROR")
+        QMessageBox.critical(self, "Browser Error", f"Browser task failed:\n\n{error}")
+
     def _on_step2_confirm(self) -> None:
         self._advance_to(_STEP_INDEX_SCAN, _STEP_BROWSER)
 
@@ -1092,18 +1190,27 @@ class PipelinePage(BasePage):
         self._on_save_index_url()
         self._set_buttons_enabled(False)
         self._status_label.setText("⏳ Scraping chapter index…")
-        self._worker = _PipelineWorker(
-            project_manager=self.project_manager,
-            settings=self.settings,
-            mode=_PipelineWorker.CHECK_INDEX,
-        )
-        self._worker.inventory_ready.connect(self._on_inventory_ready)
-        self._worker.finished_ok.connect(self._on_worker_finished)
-        self._worker.failed.connect(self._on_worker_failed)
-        self._worker.cancelled.connect(self._on_worker_cancelled)
-        self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
-        self._worker.start()
+
+        ctrl = self.project_manager.create_pipeline_controller()
+        if ctrl is None:
+            QMessageBox.critical(self, "Error", "Could not create pipeline controller.")
+            self._set_buttons_enabled(True)
+            return
+
         self.log.log("Scraping index page for chapter URLs…", level="INFO")
+        self._ensure_browser_thread().run_index_scan(ctrl)
+
+    def _on_index_scan_complete(self, data: dict) -> None:
+        """Slot called from _BrowserWorkerThread when index scan finishes."""
+        raw = data.get("raw_count", 0)
+        valid = data.get("valid_count", 0)
+        self._on_inventory_ready(data)
+        self._set_buttons_enabled(True)
+        self._status_label.setStyleSheet("color: #a6e3a1;")
+        self._status_label.setText(f"✅ Index scan complete — {valid} chapter(s) found.")
+        if valid > 0:
+            self._step3_continue_btn.setEnabled(True)
+        self._load_active_project_state()
 
     def _on_step3_continue(self) -> None:
         self._populate_chapter_checklist()
@@ -1210,28 +1317,44 @@ class PipelinePage(BasePage):
         end_val = self._end_ch_spin.value()
         self.project_manager.set_selected_range(start, end_val)
 
+        ctrl = self.project_manager.create_pipeline_controller()
+        if ctrl is None:
+            QMessageBox.critical(self, "Error", "Could not create pipeline controller.")
+            return
+
         self._set_buttons_enabled(False)
         self._go_to_step(_STEP_SCRAPING)
         self._scrape_progress_lbl.setText(f"⏳ Scraping {len(selected_urls)} chapter(s)…")
+        self._scrape_progress_bar.setRange(0, len(selected_urls))
         self._scrape_progress_bar.setValue(0)
         # Clear previous preview tabs
         while self._scrape_preview_tabs.count():
             self._scrape_preview_tabs.removeTab(0)
 
-        self._worker = _PipelineWorker(
-            project_manager=self.project_manager,
-            settings=self.settings,
-            mode=_PipelineWorker.SCRAPE_CHAPTERS,
-            start_ch=start,
-            end_ch=end_val,
-            selected_urls=selected_urls,
-        )
-        self._worker.finished_ok.connect(self._on_worker_finished)
-        self._worker.failed.connect(self._on_worker_failed)
-        self._worker.cancelled.connect(self._on_worker_cancelled)
-        self._worker.log_message.connect(lambda msg, lvl: self.log.log(msg, level=lvl))
-        self._worker.start()
         self.log.log(f"Scraping {len(selected_urls)} selected chapters.", level="INFO")
+        # Route through the browser thread so all Playwright calls stay on one thread.
+        self._ensure_browser_thread().run_chapter_scrape(ctrl, selected_urls)
+
+    def _on_chapter_progress(self, current: int, total: int, url: str) -> None:
+        """Update step 5 progress bar/label from the browser thread."""
+        self._scrape_progress_bar.setRange(0, total)
+        self._scrape_progress_bar.setValue(current)
+        self._scrape_progress_lbl.setText(f"⏳ Scraping {current}/{total}: {url}")
+
+    def _on_scrape_complete(self) -> None:
+        """Called when _BrowserWorkerThread finishes chapter scraping."""
+        n = self._scrape_progress_bar.maximum()
+        self._scrape_progress_bar.setValue(n)
+        msg = f"Scraping complete — {n} chapter(s) scraped."
+        self._scrape_progress_lbl.setText(f"✅ {msg}")
+        self._step5_continue_btn.setEnabled(True)
+        self._mark_step_done(_STEP_CHAPTER_SELECT)
+        self._set_buttons_enabled(True)
+        self._populate_scrape_preview()
+        self._load_active_project_state()
+        self.log.log(msg, level="SUCCESS")
+        self._status_label.setStyleSheet("color: #a6e3a1;")
+        self._status_label.setText(f"✅ {msg}")
 
     # ------------------------------------------------------------------
     # Step 5 handlers
@@ -1443,20 +1566,41 @@ class PipelinePage(BasePage):
                 pass
 
     def _is_busy(self) -> bool:
-        if self._worker is None:
-            return False
-        try:
-            return bool(self._worker.isRunning())
-        except RuntimeError:
-            self._worker = None
-            return False
+        worker_running = False
+        if self._worker is not None:
+            try:
+                worker_running = bool(self._worker.isRunning())
+            except RuntimeError:
+                self._worker = None
+
+        browser_busy = False
+        if self._browser_thread is not None:
+            try:
+                browser_busy = self._browser_thread.is_busy()
+            except RuntimeError:
+                self._browser_thread = None
+
+        return worker_running or browser_busy
 
     def _on_stop_pipeline(self) -> None:
-        if not self._is_busy():
-            return
-        self._worker.request_stop()
-        self._stop_btn.setEnabled(False)
-        self.log.log("Stop requested. Current phase will halt shortly.", level="WARNING")
+        stopped_any = False
+        if self._worker is not None:
+            try:
+                if self._worker.isRunning():
+                    self._worker.request_stop()
+                    stopped_any = True
+            except RuntimeError:
+                self._worker = None
+        if self._browser_thread is not None:
+            try:
+                if self._browser_thread.isRunning():
+                    self._browser_thread.request_stop()
+                    stopped_any = True
+            except RuntimeError:
+                self._browser_thread = None
+        if stopped_any:
+            self._stop_btn.setEnabled(False)
+            self.log.log("Stop requested. Current phase will halt shortly.", level="WARNING")
 
     def _on_inventory_ready(self, data: dict) -> None:
         raw = data.get("raw_count", 0)
@@ -1475,7 +1619,7 @@ class PipelinePage(BasePage):
     def _on_worker_finished(self, mode: str, message: str) -> None:
         worker = self._worker
         self._worker = None
-        if self.project_manager and worker is not None and mode != _PipelineWorker.CHECK_INDEX:
+        if self.project_manager and worker is not None:
             self.project_manager.set_last_processed_chapter(getattr(worker, "_end", 0))
         self._set_buttons_enabled(True)
         self._load_active_project_state()
@@ -1485,18 +1629,7 @@ class PipelinePage(BasePage):
             lbl.setStyleSheet("color: #a6e3a1;")
             lbl.setText(f"✅ {message}")
 
-        if mode == _PipelineWorker.CHECK_INDEX:
-            self._step3_continue_btn.setEnabled(True)
-
-        elif mode == _PipelineWorker.SCRAPE_CHAPTERS:
-            self._populate_scrape_preview()
-            self._scrape_progress_bar.setRange(0, 100)
-            self._scrape_progress_bar.setValue(100)
-            self._scrape_progress_lbl.setText(f"✅ {message}")
-            self._step5_continue_btn.setEnabled(True)
-            self._mark_step_done(_STEP_CHAPTER_SELECT)
-
-        elif mode == _PipelineWorker.RUN_LLM:
+        if mode == _PipelineWorker.RUN_LLM:
             self._llm_progress_bar.setRange(0, 100)
             self._llm_progress_bar.setValue(100)
             self._llm_progress_lbl.setText(f"✅ {message}")
