@@ -402,15 +402,19 @@ class Pass2Classifier:
         if not raw:
             return ""
         namespace = re.sub(r"\d+$", "", raw).rstrip("_-")
-        return namespace or raw
+        return namespace
 
     def _can_positionally_remap(self, expected_ids: List[str], response_items: List[Dict[str, Any]]) -> bool:
-        expected_namespaces = {self._id_namespace(item) for item in expected_ids if self._id_namespace(item)}
-        response_namespaces = {
-            self._id_namespace(str(item.get("id", "")).strip())
-            for item in response_items
-            if self._id_namespace(str(item.get("id", "")).strip())
-        }
+        expected_namespaces = set()
+        for item in expected_ids:
+            namespace = self._id_namespace(item)
+            if namespace:
+                expected_namespaces.add(namespace)
+        response_namespaces = set()
+        for item in response_items:
+            namespace = self._id_namespace(str(item.get("id", "")).strip())
+            if namespace:
+                response_namespaces.add(namespace)
         if not expected_namespaces or not response_namespaces:
             return False
         return response_namespaces.issubset(expected_namespaces)

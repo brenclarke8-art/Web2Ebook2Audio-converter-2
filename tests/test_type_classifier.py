@@ -79,3 +79,33 @@ def test_pass2_classifier_uses_partial_match_and_falls_back_for_missing():
     assert output[0]["speaker"] == "Roman"
     assert output[1]["type"] == "narration"
     assert output[1]["speaker"] == "narrator"
+
+
+def test_pass2_classifier_does_not_remap_unrelated_id_namespace():
+    client = MockStaticLLMClient(
+        [{"id": "wrong_id_1", "type": "dialogue", "speaker": "Ghost", "gender": "male"}]
+    )
+    classifier = Pass2Classifier(client, batch_size=4)
+    segments = [
+        {"text": "line 1", "paragraph_id": "ch3_100", "context_before": "", "context_after": ""},
+    ]
+
+    output = classifier.classify_segments(segments, chapter_id="ch3")
+
+    assert output[0]["type"] == "narration"
+    assert output[0]["speaker"] == "narrator"
+
+
+def test_pass2_classifier_does_not_remap_unrelated_singleton_dict():
+    client = MockStaticLLMClient(
+        {"id": "bad_id", "type": "dialogue", "speaker": "Ghost", "gender": "male"}
+    )
+    classifier = Pass2Classifier(client, batch_size=4)
+    segments = [
+        {"text": "line 1", "paragraph_id": "ch3_100", "context_before": "", "context_after": ""},
+    ]
+
+    output = classifier.classify_segments(segments, chapter_id="ch3")
+
+    assert output[0]["type"] == "narration"
+    assert output[0]["speaker"] == "narrator"
