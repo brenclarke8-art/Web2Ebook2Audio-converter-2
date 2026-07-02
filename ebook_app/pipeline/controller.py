@@ -30,6 +30,15 @@ def _obj_to_dict(obj: Any) -> Dict:
 
 
 logger = logging.getLogger(__name__)
+MIN_LLM_TIMEOUT_SEC = 1
+MIN_LLM_RETRIES = 0
+
+
+def _int_setting(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _gs(settings: Any, *keys: str, default: Any = "") -> Any:
@@ -150,18 +159,8 @@ class PipelineController:
         llm_provider = _gs(settings, "llm_provider", default="ollama_local")
         llm_api_key = _gs(settings, "llm_api_key", default="")
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
-        llm_timeout_raw = _gs(settings, "llm_timeout", "dialogue_llm_timeout", default=300)
-        llm_retries_raw = _gs(settings, "llm_retries", "dialogue_llm_retries", default=1)
-        MIN_LLM_TIMEOUT_SEC = 1
-        MIN_LLM_RETRIES = 0
-        try:
-            llm_timeout = int(llm_timeout_raw)
-        except (TypeError, ValueError):
-            llm_timeout = 300
-        try:
-            llm_retries = int(llm_retries_raw)
-        except (TypeError, ValueError):
-            llm_retries = 1
+        llm_timeout = _int_setting(_gs(settings, "llm_timeout", "dialogue_llm_timeout", default=300), 300)
+        llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=1), 1)
         # Write per-request LLM call logs next to the other pipeline work files.
         llm_log_path = str(self.work_dir / "llm_calls.jsonl")
         self.llm_client = LLMClient(
