@@ -152,21 +152,23 @@ class PipelineController:
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
         llm_timeout_raw = _gs(settings, "llm_timeout", "dialogue_llm_timeout", default=300)
         llm_retries_raw = _gs(settings, "llm_retries", "dialogue_llm_retries", default=1)
+        MIN_LLM_TIMEOUT_SEC = 1
+        MIN_LLM_RETRIES = 0
         try:
             llm_timeout = int(llm_timeout_raw)
-        except Exception:
+        except (TypeError, ValueError):
             llm_timeout = 300
         try:
             llm_retries = int(llm_retries_raw)
-        except Exception:
+        except (TypeError, ValueError):
             llm_retries = 1
         # Write per-request LLM call logs next to the other pipeline work files.
         llm_log_path = str(self.work_dir / "llm_calls.jsonl")
         self.llm_client = LLMClient(
             base_url=llm_url,
             model=llm_model,
-            timeout=max(1, llm_timeout),
-            retries=max(0, llm_retries),
+            timeout=max(MIN_LLM_TIMEOUT_SEC, llm_timeout),
+            retries=max(MIN_LLM_RETRIES, llm_retries),
             provider=llm_provider,
             api_key=llm_api_key,
             llm_log_path=llm_log_path,
