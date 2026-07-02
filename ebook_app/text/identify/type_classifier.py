@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -362,7 +363,7 @@ class Pass2Classifier:
 
         raw = self.llm_client.generate_json(system=system, user=user)
 
-        by_id = self._normalize_batch_output(raw)
+        by_id = self._normalize_batch_output(raw, [entry["id"] for entry in entries])
 
         out: List[Dict[str, Any]] = []
         for idx, segment in enumerate(batch):
@@ -395,19 +396,51 @@ class Pass2Classifier:
             "next_segment_text": str(segment.get("context_after", "")),
         }
 
-    def _normalize_batch_output(self, raw: Any) -> Dict[str, Dict[str, Any]]:
+    @staticmethod
+    def _id_namespace(value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        namespace = re.sub(r"\d+$", "", raw).rstrip("_-")
+        return namespace or raw
+
+    def _can_positionally_remap(self, expected_ids: List[str], response_items: List[Dict[str, Any]]) -> bool:
+        expected_namespaces = {self._id_namespace(item) for item in expected_ids if self._id_namespace(item)}
+        response_namespaces = {
+            self._id_namespace(str(item.get("id", "")).strip())
+            for item in response_items
+            if self._id_namespace(str(item.get("id", "")).strip())
+        }
+        if not expected_namespaces or not response_namespaces:
+            return False
+        return response_namespaces.issubset(expected_namespaces)
+
+    def _normalize_batch_output(self, raw: Any, expected_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if isinstance(raw, dict) and isinstance(raw.get("segments"), list):
             raw = raw.get("segments")
+        elif isinstance(raw, dict):
+            raw = [raw]
         if not isinstance(raw, list):
             return {}
+
+        expected = set(expected_ids)
         normalized: Dict[str, Dict[str, Any]] = {}
+        unmatched_items: List[Dict[str, Any]] = []
+
         for item in raw:
             if not isinstance(item, dict):
                 continue
             item_id = str(item.get("id", "")).strip()
-            if not item_id:
-                continue
-            normalized[item_id] = item
+            if item_id and item_id in expected and item_id not in normalized:
+                normalized[item_id] = item
+            else:
+                unmatched_items.append(item)
+
+        unresolved_ids = [item_id for item_id in expected_ids if item_id not in normalized]
+        if unresolved_ids and unmatched_items and self._can_positionally_remap(unresolved_ids, unmatched_items):
+            for expected_id, response_item in zip(unresolved_ids, unmatched_items):
+                normalized[expected_id] = response_item
+
         return normalized
 
     def _sanitize_llm_output(
