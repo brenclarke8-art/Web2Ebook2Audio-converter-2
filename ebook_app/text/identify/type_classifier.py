@@ -312,6 +312,11 @@ class Pass2Classifier:
     STATUS_OK: str = "OK"
     STATUS_FAILED_FORMAT: str = "FAILED_FORMAT"
 
+    @classmethod
+    def _normalize_segment_mode(cls, mode: str) -> str:
+        normalized = str(mode or cls.SEGMENT_MODE_BATCH).strip().lower()
+        return cls.SEGMENT_MODE_SINGLE if normalized == cls.SEGMENT_MODE_SINGLE else cls.SEGMENT_MODE_BATCH
+
     def __init__(
         self,
         llm_client: LLMClient,
@@ -326,8 +331,7 @@ class Pass2Classifier:
         self.batch_size = max(1, int(batch_size))
         self.json_pipeline_enabled = bool(json_pipeline_enabled)
         self.json_repair_max_retries = max(0, int(json_repair_max_retries))
-        mode = str(segment_mode or self.SEGMENT_MODE_BATCH).strip().lower()
-        self.segment_mode = self.SEGMENT_MODE_SINGLE if mode == self.SEGMENT_MODE_SINGLE else self.SEGMENT_MODE_BATCH
+        self.segment_mode = self._normalize_segment_mode(segment_mode)
         self.fallback_failure_threshold = max(1, int(fallback_failure_threshold))
 
     def classify_segment(self, segment: Dict[str, Any]) -> Dict[str, Any]:
@@ -608,6 +612,7 @@ class Pass2Classifier:
             .replace("‘", "'")
             .replace("’", "'")
         )
+        # Best-effort trailing comma cleanup before strict JSON parsing.
         text = re.sub(r",\s*([}\]])", r"\1", text)
         text = self._extract_json_snippet(text).strip()
 
@@ -616,7 +621,7 @@ class Pass2Classifier:
                 maybe_obj = json.loads(text)
                 if isinstance(maybe_obj, dict):
                     return [maybe_obj], None
-            except Exception:
+            except json.JSONDecodeError:
                 pass
 
         try:
