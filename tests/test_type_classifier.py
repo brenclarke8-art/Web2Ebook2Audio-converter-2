@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from ebook_app.text.identify.type_classifier import Pass2Classifier
 
 
@@ -69,6 +71,9 @@ def test_pass2_classifier_accepts_single_object_llm_response():
     output = classifier.classify_segments(segments, chapter_id="ch1")
 
     assert len(client.calls) == 1
+    _, user_payload = client.calls[0]
+    sent_entries = json.loads(user_payload)
+    assert sent_entries[0]["id"] == "ch1_0"
     assert len(output) == 3
     assert output[0]["type"] == "dialogue"
     assert output[0]["speaker"] == "Alice"
