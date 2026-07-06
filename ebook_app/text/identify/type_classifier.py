@@ -398,8 +398,10 @@ class Pass2Classifier:
     def _normalize_batch_output(self, raw: Any) -> Dict[str, Dict[str, Any]]:
         if isinstance(raw, dict) and isinstance(raw.get("segments"), list):
             raw = raw.get("segments")
-        elif isinstance(raw, dict) and raw.get("id") is not None and str(raw.get("id")).strip():
-            raw = [raw]
+        elif isinstance(raw, dict):
+            item_id = raw.get("id")
+            if item_id is not None and str(item_id).strip():
+                raw = [raw]
         if not isinstance(raw, list):
             return {}
         normalized: Dict[str, Dict[str, Any]] = {}
