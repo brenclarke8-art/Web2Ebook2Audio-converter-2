@@ -606,7 +606,7 @@ class Pass2Classifier:
                 lines = lines[:-1]
             text = "\n".join(lines).strip()
 
-        # Normalize common “smart quote” punctuation emitted by LLMs.
+        # Normalize common “smart quotes” punctuation emitted by LLMs.
         text = (
             text.replace("“", '"')
             .replace("”", '"')
@@ -617,7 +617,7 @@ class Pass2Classifier:
         text = re.sub(r",\s*([}\]])", r"\1", text)
         text = self._extract_json_snippet(text).strip()
 
-        if text and text[0] == "{" and text[-1] == "}":
+        if text and text.startswith("{") and text.endswith("}"):
             try:
                 maybe_obj = json.loads(text)
                 if isinstance(maybe_obj, dict):
