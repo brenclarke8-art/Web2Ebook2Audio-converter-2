@@ -18,6 +18,10 @@
   "dialogue_llm_retries": 1,
   "phase1_llm_assist_enabled": false,
   "phase2_batch_size": 20,
+  "json_pipeline_enabled": true,
+  "json_repair_max_retries": 2,
+  "llm_segment_mode": "batch",
+  "llm_fallback_failure_threshold": 2,
   "emotion_tagging_enabled": false,
   "translation_enabled": false
 }
