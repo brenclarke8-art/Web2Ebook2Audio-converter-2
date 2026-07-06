@@ -613,7 +613,7 @@ class Pass2Classifier:
             .replace("‘", "'")
             .replace("’", "'")
         )
-        # Best-effort trailing comma cleanup before strict JSON parsing.
+        # Remove trailing commas from objects/arrays (invalid in strict JSON).
         text = re.sub(r",\s*([}\]])", r"\1", text)
         text = self._extract_json_snippet(text).strip()
 

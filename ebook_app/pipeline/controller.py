@@ -184,7 +184,7 @@ class PipelineController:
         llm_segment_mode_raw = os.environ.get("LLM_SEGMENT_MODE")
         if llm_segment_mode_raw is None:
             llm_segment_mode_raw = _gs(settings, "llm_segment_mode", default="batch")
-        llm_segment_mode = str(llm_segment_mode_raw or "batch").strip().lower()
+        llm_segment_mode = Pass2Classifier._normalize_segment_mode(str(llm_segment_mode_raw or "batch"))
 
         llm_fallback_failure_threshold_raw = os.environ.get("LLM_FALLBACK_FAILURE_THRESHOLD")
         if llm_fallback_failure_threshold_raw is None:
