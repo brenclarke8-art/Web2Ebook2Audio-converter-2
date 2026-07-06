@@ -387,6 +387,29 @@ Custom paths can be set in **Settings → TTS Backend → Model file (.onnx)** a
 | **Dialogue LLM model** | Ollama model for Pass-2 chapter classification | `qwen2.5-coder:7b` |
 | **Dialogue LLM timeout** | Network timeout for LLM requests (seconds) | `300` |
 | **Dialogue LLM retries** | Retry count for failed LLM requests | `1` |
+| **json_pipeline_enabled** | Enable two-stage JSON pipeline (generate/extract → validate/repair) | `true` |
+| **json_repair_max_retries** | Max model-based JSON repair attempts per response | `2` |
+| **llm_segment_mode** | Segment request mode (`batch` or `single`) | `batch` |
+| **llm_fallback_failure_threshold** | Number of batch format failures before switching to single mode | `2` |
+
+### Pass-2 JSON Handling Architecture
+
+Pass-2 classification now uses a two-stage JSON flow:
+
+1. **Generation/Extraction stage**: request classification output from the LLM.
+2. **Validation/Repair stage**: run strict parsing + schema validation, then:
+   - deterministic repair for common format issues (smart quotes, trailing commas, fenced JSON, fragment extraction),
+   - model-based repair prompt (JSON-only response) when deterministic repair is not enough,
+   - bounded repair retries before marking a segment as `FAILED_FORMAT`.
+
+When `llm_segment_mode=batch`, the classifier automatically switches to single-segment calls for remaining segments if format failures hit `llm_fallback_failure_threshold`.
+
+Environment overrides are supported:
+
+- `JSON_PIPELINE_ENABLED`
+- `JSON_REPAIR_MAX_RETRIES`
+- `LLM_SEGMENT_MODE`
+- `LLM_FALLBACK_FAILURE_THRESHOLD`
 
 ### Available Voices (Kokoro 1.0)
 
@@ -470,6 +493,17 @@ The app now runs with verbose logs by default (`DEBUG`). Override if needed:
 ```bash
 EBOOK_AUDIO_STUDIO_LOG_LEVEL=INFO ebook-audio-studio
 ```
+
+Pass-2 LLM logs include structured fields for segment IDs, mode (`batch`/`single`), repair attempts, validation errors, and final status (`OK` or `FAILED_FORMAT`) without dumping full prompts.
+
+### Persistent Malformed LLM JSON
+
+If malformed JSON keeps occurring:
+
+1. Set `llm_segment_mode` to `single` (or `LLM_SEGMENT_MODE=single`) for maximum reliability.
+2. Increase `json_repair_max_retries` gradually (default is `2`).
+3. Keep `json_pipeline_enabled=true` so deterministic + model repair remains active.
+4. Review `pipeline_work/llm_calls.jsonl` and app logs for repeated `FAILED_FORMAT` segments.
 
 ### Audio Generation is Slow
 

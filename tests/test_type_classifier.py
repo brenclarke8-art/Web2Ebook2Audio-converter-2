@@ -47,6 +47,23 @@ class _FixedLLMClient:
         return self._response
 
 
+class _SequenceLLMClient:
+    """Returns queued responses in order, then repeats the last one."""
+
+    def __init__(self, responses) -> None:
+        self._responses = list(responses)
+        self.calls: list[tuple[str, str]] = []
+        self.on_conversation = None
+
+    def generate_json(self, *, system: str, user: str):
+        self.calls.append((system, user))
+        if not self._responses:
+            return {}
+        if len(self._responses) == 1:
+            return self._responses[0]
+        return self._responses.pop(0)
+
+
 class MockEmptyLLMClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -64,7 +81,7 @@ class MockEmptyLLMClient:
 def test_pass2_classifier_keeps_batch_whole_when_llm_response_is_empty():
     """On LLM failure the batch must NOT be split; retries use the same input."""
     client = MockEmptyLLMClient()
-    classifier = Pass2Classifier(client, batch_size=8)
+    classifier = Pass2Classifier(client, batch_size=8, json_pipeline_enabled=False)
     segments = _make_segments(5)
 
     output = classifier.classify_segments(segments, chapter_id="ch1")
@@ -105,7 +122,7 @@ def test_single_object_response_is_rejected_and_falls_back():
     single_object = _valid_item("ch1_0")  # dict, not list
 
     client = _FixedLLMClient(single_object)
-    classifier = Pass2Classifier(client, batch_size=10)
+    classifier = Pass2Classifier(client, batch_size=10, json_pipeline_enabled=False)
     output = classifier.classify_segments(segments, chapter_id="ch1")
 
     assert len(client.calls) == Pass2Classifier.MAX_BATCH_RETRIES + 1
@@ -121,7 +138,7 @@ def test_wrapper_object_response_is_rejected():
     wrapper = {"results": [_valid_item(eid) for eid in expected_ids]}
 
     client = _FixedLLMClient(wrapper)
-    classifier = Pass2Classifier(client, batch_size=10)
+    classifier = Pass2Classifier(client, batch_size=10, json_pipeline_enabled=False)
     output = classifier.classify_segments(segments, chapter_id="ch1")
 
     assert len(client.calls) == Pass2Classifier.MAX_BATCH_RETRIES + 1
@@ -136,7 +153,7 @@ def test_missing_id_in_response_is_rejected():
     partial = [_valid_item("ch1_0"), _valid_item("ch1_1")]
 
     client = _FixedLLMClient(partial)
-    classifier = Pass2Classifier(client, batch_size=10)
+    classifier = Pass2Classifier(client, batch_size=10, json_pipeline_enabled=False)
     output = classifier.classify_segments(segments, chapter_id="ch1")
 
     assert len(client.calls) == Pass2Classifier.MAX_BATCH_RETRIES + 1
@@ -149,7 +166,7 @@ def test_duplicate_id_in_response_is_rejected():
     duplicate = [_valid_item("ch1_0"), _valid_item("ch1_0")]  # ch1_1 missing, ch1_0 duped
 
     client = _FixedLLMClient(duplicate)
-    classifier = Pass2Classifier(client, batch_size=10)
+    classifier = Pass2Classifier(client, batch_size=10, json_pipeline_enabled=False)
     output = classifier.classify_segments(segments, chapter_id="ch1")
 
     assert len(client.calls) == Pass2Classifier.MAX_BATCH_RETRIES + 1
@@ -163,11 +180,62 @@ def test_invalid_confidence_range_is_rejected():
     bad_confidence["speaker_confidence"] = 1.5  # out of range
 
     client = _FixedLLMClient([bad_confidence])
-    classifier = Pass2Classifier(client, batch_size=10)
+    classifier = Pass2Classifier(client, batch_size=10, json_pipeline_enabled=False)
     output = classifier.classify_segments(segments, chapter_id="ch1")
 
     assert len(client.calls) == Pass2Classifier.MAX_BATCH_RETRIES + 1
     assert output[0]["type"] == "narration"  # fallback
+    assert output[0]["llm_status"] == "FAILED_FORMAT"
+
+
+def test_malformed_json_is_repaired_deterministically():
+    segments = _make_segments(1)
+    malformed = (
+        '```json\n[{"id":"ch1_0","type":"narration","speaker":"narrator","gender":"unknown",'
+        '"speaker_confidence":0.9,"gender_confidence":0.8,"character_confidence":0.7,}]\n```'
+    )
+    client = _FixedLLMClient(malformed)
+    classifier = Pass2Classifier(client, batch_size=10)
+
+    output = classifier.classify_segments(segments, chapter_id="ch1")
+
+    assert len(client.calls) == 1
+    assert output[0]["type"] == "narration"
+    assert output[0]["llm_status"] == "OK"
+
+
+def test_model_repair_fallback_is_invoked_when_deterministic_repair_fails():
+    segments = _make_segments(1)
+    repaired = [_valid_item("ch1_0", "dialogue")]
+    client = _SequenceLLMClient(["NOT JSON", repaired])
+    classifier = Pass2Classifier(client, batch_size=10, json_repair_max_retries=1)
+
+    output = classifier.classify_segments(segments, chapter_id="ch1")
+
+    assert len(client.calls) == 2
+    assert "JSON repair assistant" in client.calls[1][0]
+    assert output[0]["type"] == "dialogue"
+    assert output[0]["llm_status"] == "OK"
+
+
+def test_switches_to_single_segment_mode_after_failure_threshold(monkeypatch):
+    monkeypatch.setattr(Pass2Classifier, "MAX_BATCH_RETRIES", 0)
+    segments = _make_segments(5)
+    client = _SequenceLLMClient([{}])
+    classifier = Pass2Classifier(
+        client,
+        batch_size=2,
+        json_repair_max_retries=0,
+        fallback_failure_threshold=1,
+        segment_mode="batch",
+    )
+
+    output = classifier.classify_segments(segments, chapter_id="ch1")
+
+    assert len(output) == 5
+    assert all(item["llm_status"] == "FAILED_FORMAT" for item in output)
+    payload_sizes = [len(json.loads(call[1])) for call in client.calls]
+    assert payload_sizes == [2, 1, 1, 1]
 
 
 def test_validate_batch_response_accepts_valid_input():

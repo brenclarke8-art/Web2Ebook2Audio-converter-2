@@ -28,6 +28,10 @@ class DummySettings:
             "llm_preflight_check": False,
             "phase1_llm_assist_enabled": False,
             "phase2_batch_size": 20,
+            "json_pipeline_enabled": True,
+            "json_repair_max_retries": 2,
+            "llm_segment_mode": "batch",
+            "llm_fallback_failure_threshold": 2,
             "character_confidence_threshold": 0.8,
             "pending_character_additions": [],
             "character_db": [],
@@ -108,6 +112,22 @@ def test_pipeline_controller_applies_configured_llm_timeout_and_retries(tmp_path
 
     assert controller.llm_client.timeout == 345
     assert controller.llm_client.retries == 0
+
+
+def test_pipeline_controller_applies_json_pipeline_settings(tmp_path):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    settings.set("json_pipeline_enabled", False)
+    settings.set("json_repair_max_retries", 1)
+    settings.set("llm_segment_mode", "single")
+    settings.set("llm_fallback_failure_threshold", 5)
+
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+
+    assert controller.pass2_classifier.json_pipeline_enabled is False
+    assert controller.pass2_classifier.json_repair_max_retries == 1
+    assert controller.pass2_classifier.segment_mode == "single"
+    assert controller.pass2_classifier.fallback_failure_threshold == 5
 
 
 def test_scrape_chapters_uses_selected_range(tmp_path, monkeypatch):

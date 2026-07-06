@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +40,14 @@ def _int_setting(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _bool_setting(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _gs(settings: Any, *keys: str, default: Any = "") -> Any:
@@ -161,6 +170,23 @@ class PipelineController:
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
         llm_timeout = _int_setting(_gs(settings, "llm_timeout", "dialogue_llm_timeout", default=None), 300)
         llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=None), 1)
+        json_pipeline_enabled = _bool_setting(
+            os.environ.get("JSON_PIPELINE_ENABLED"),
+            _bool_setting(_gs(settings, "json_pipeline_enabled", default=True), True),
+        )
+        json_repair_max_retries = _int_setting(
+            os.environ.get("JSON_REPAIR_MAX_RETRIES"),
+            _int_setting(_gs(settings, "json_repair_max_retries", default=2), 2),
+        )
+        llm_segment_mode = (
+            str(os.environ.get("LLM_SEGMENT_MODE", "")).strip().lower()
+            or str(_gs(settings, "llm_segment_mode", default="batch")).strip().lower()
+            or "batch"
+        )
+        llm_fallback_failure_threshold = _int_setting(
+            os.environ.get("LLM_FALLBACK_FAILURE_THRESHOLD"),
+            _int_setting(_gs(settings, "llm_fallback_failure_threshold", default=2), 2),
+        )
         # Write per-request LLM call logs next to the other pipeline work files.
         llm_log_path = str(self.work_dir / "llm_calls.jsonl")
         self.llm_client = LLMClient(
@@ -172,7 +198,14 @@ class PipelineController:
             api_key=llm_api_key,
             llm_log_path=llm_log_path,
         )
-        self.pass2_classifier = Pass2Classifier(self.llm_client, batch_size=phase2_batch_size)
+        self.pass2_classifier = Pass2Classifier(
+            self.llm_client,
+            batch_size=phase2_batch_size,
+            json_pipeline_enabled=json_pipeline_enabled,
+            json_repair_max_retries=json_repair_max_retries,
+            segment_mode=llm_segment_mode,
+            fallback_failure_threshold=llm_fallback_failure_threshold,
+        )
 
         # Cancellation + progress callbacks
         self._cancel_flags: Dict[str, bool] = {}

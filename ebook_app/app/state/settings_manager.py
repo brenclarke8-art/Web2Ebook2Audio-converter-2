@@ -64,6 +64,10 @@ class SettingsManager(QObject):
         "llm_preflight_check": True,
         "phase1_llm_assist_enabled": False,
         "phase2_batch_size": 20,
+        "json_pipeline_enabled": True,
+        "json_repair_max_retries": 2,
+        "llm_segment_mode": "batch",
+        "llm_fallback_failure_threshold": 2,
 
         # ------------------------------
         # Character Confidence
