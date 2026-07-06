@@ -172,9 +172,10 @@ class PipelineController:
         llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=None), 1)
         json_pipeline_enabled_env = os.environ.get("JSON_PIPELINE_ENABLED")
         # Environment variable takes precedence over saved settings when provided.
+        json_pipeline_enabled_setting = _bool_setting(_gs(settings, "json_pipeline_enabled", default=True), True)
         json_pipeline_enabled = _bool_setting(
             json_pipeline_enabled_env,
-            _bool_setting(_gs(settings, "json_pipeline_enabled", default=True), True),
+            json_pipeline_enabled_setting,
         )
         json_repair_max_retries = _int_setting(
             os.environ.get("JSON_REPAIR_MAX_RETRIES"),

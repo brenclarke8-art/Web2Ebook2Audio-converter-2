@@ -606,6 +606,7 @@ class Pass2Classifier:
                 lines = lines[:-1]
             text = "\n".join(lines).strip()
 
+        # Normalize common “smart quote” punctuation emitted by LLMs.
         text = (
             text.replace("“", '"')
             .replace("”", '"')
@@ -621,8 +622,8 @@ class Pass2Classifier:
                 maybe_obj = json.loads(text)
                 if isinstance(maybe_obj, dict):
                     return [maybe_obj], None
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                logger.debug("single-object wrapping skipped: invalid object JSON: %s", exc)
 
         try:
             return json.loads(text), None

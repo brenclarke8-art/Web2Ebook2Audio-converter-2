@@ -234,7 +234,8 @@ def test_switches_to_single_segment_mode_after_failure_threshold(monkeypatch):
 
     assert len(output) == 5
     assert all(item["llm_status"] == "FAILED_FORMAT" for item in output)
-    assert all(isinstance(call[1], str) and call[1].strip().startswith("[") for call in client.calls)
+    assert all(isinstance(call[1], str) for call in client.calls), "classifier payloads should be JSON strings"
+    assert all(call[1].strip().startswith("[") for call in client.calls), "payloads should be JSON arrays"
     payload_sizes = [len(json.loads(call[1])) for call in client.calls]
     assert payload_sizes == [2, 1, 1, 1]
 
