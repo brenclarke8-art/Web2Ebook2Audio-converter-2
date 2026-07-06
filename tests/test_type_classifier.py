@@ -189,6 +189,9 @@ def test_validate_batch_response_rejects_missing_keys():
     _, error = Pass2Classifier._validate_batch_response([item], ["x_0"])
     assert error is not None
     assert "missing" in error.lower()
+    # The error should mention at least some of the missing required keys
+    for expected_missing in ("speaker", "gender", "speaker_confidence"):
+        assert expected_missing in error, f"Expected '{expected_missing}' in error: {error}"
 
 
 def test_validate_batch_response_rejects_invalid_type_enum():

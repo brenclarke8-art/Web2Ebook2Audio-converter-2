@@ -304,8 +304,10 @@ class Pass2Classifier:
     DEFAULT_BATCH_SIZE: int = 30
     #: Maximum per-batch validation retries (0 = initial attempt only).
     MAX_BATCH_RETRIES: int = 2
+    #: Base sleep time in seconds between retry attempts (multiplied by attempt index).
+    RETRY_SLEEP_BASE_SECONDS: float = 0.1
 
-    def __init__(self, llm_client: LLMClient, batch_size: int = 30) -> None:
+    def __init__(self, llm_client: LLMClient, batch_size: int = DEFAULT_BATCH_SIZE) -> None:
         self.llm_client = llm_client
         self.batch_size = max(1, int(batch_size))
 
@@ -448,7 +450,7 @@ class Pass2Classifier:
 
             last_error = error
             if attempt < self.MAX_BATCH_RETRIES:
-                time.sleep(0.1 * (attempt + 1))
+                time.sleep(self.RETRY_SLEEP_BASE_SECONDS * (attempt + 1))
 
         logger.warning(
             "classify_batch chapter=%s offset=%d: all %d attempts failed; "
