@@ -581,7 +581,9 @@ class Pass2Classifier:
             return text
         start = min(starts)
         end = max(text.rfind("}"), text.rfind("]"))
-        if end == -1 or end <= start:
+        if end == -1:
+            return text[start:]
+        if end <= start:
             return text[start:]
         return text[start : end + 1]
 
@@ -610,7 +612,12 @@ class Pass2Classifier:
         text = self._extract_json_snippet(text).strip()
 
         if text and text[0] == "{" and text[-1] == "}":
-            text = f"[{text}]"
+            try:
+                maybe_obj = json.loads(text)
+                if isinstance(maybe_obj, dict):
+                    return [maybe_obj], None
+            except Exception:
+                pass
 
         try:
             return json.loads(text), None

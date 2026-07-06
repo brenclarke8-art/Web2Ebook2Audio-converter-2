@@ -170,8 +170,9 @@ class PipelineController:
         phase2_batch_size = int(_gs(settings, "phase2_batch_size", default=20) or 20)
         llm_timeout = _int_setting(_gs(settings, "llm_timeout", "dialogue_llm_timeout", default=None), 300)
         llm_retries = _int_setting(_gs(settings, "llm_retries", "dialogue_llm_retries", default=None), 1)
+        json_pipeline_enabled_env = os.environ.get("JSON_PIPELINE_ENABLED")
         json_pipeline_enabled = _bool_setting(
-            os.environ.get("JSON_PIPELINE_ENABLED"),
+            json_pipeline_enabled_env,
             _bool_setting(_gs(settings, "json_pipeline_enabled", default=True), True),
         )
         json_repair_max_retries = _int_setting(
