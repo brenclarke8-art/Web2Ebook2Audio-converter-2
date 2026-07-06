@@ -1,13 +1,25 @@
-# ebook_app/text/identify/llm_client.py
+# ebook_app/text/identify/type_classifier.py
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Schema constants for batch classification output validation
+# ---------------------------------------------------------------------------
+_REQUIRED_KEYS: frozenset[str] = frozenset(
+    {"id", "type", "speaker", "gender", "speaker_confidence", "gender_confidence", "character_confidence"}
+)
+_VALID_TYPES: frozenset[str] = frozenset({"dialogue", "thought", "narration"})
+_CONFIDENCE_KEYS: tuple[str, ...] = ("speaker_confidence", "gender_confidence", "character_confidence")
 
 
 @dataclass
@@ -287,7 +299,13 @@ class LLMClient:
 # Pass2Classifier (same public API, improved resilience)
 # -------------------------
 class Pass2Classifier:
-    def __init__(self, llm_client: LLMClient, batch_size: int = 20) -> None:
+    #: Default segments per LLM call.  25–40 improves compliance without
+    #: exceeding typical context limits.
+    DEFAULT_BATCH_SIZE: int = 30
+    #: Maximum per-batch validation retries (0 = initial attempt only).
+    MAX_BATCH_RETRIES: int = 2
+
+    def __init__(self, llm_client: LLMClient, batch_size: int = 30) -> None:
         self.llm_client = llm_client
         self.batch_size = max(1, int(batch_size))
 
@@ -333,11 +351,15 @@ class Pass2Classifier:
 
     def _classify_batch(self, *, batch: List[Dict[str, Any]], chapter_id: str, offset: int) -> List[Dict[str, Any]]:
         """
-        Classify a batch.
-        If the LLM returns an empty result, keep the same batch and fall back to
-        deterministic defaults for each segment instead of recursively shrinking the request.
+        Classify a batch with a contract-driven prompt and deterministic retry ladder.
+
+        Attempt 0: base prompt with explicit cardinality and id list.
+        Attempt 1: corrective suffix referencing the validation error.
+        Attempt 2: compact strict prompt.
+
+        If all attempts fail validation the batch falls back to deterministic defaults.
         """
-        entries = []
+        entries: List[Dict[str, Any]] = []
         for idx, segment in enumerate(batch):
             entry_id = f"{chapter_id or 'segment'}_{offset + idx}"
             entries.append(
@@ -350,25 +372,145 @@ class Pass2Classifier:
                 }
             )
 
-        system = (
-            "You are a semantic classifier for novel text. "
-            "Return ONLY JSON array with one object per input id. "
-            "Each object must include keys: id, type, speaker, gender, "
-            "speaker_confidence, gender_confidence, character_confidence. "
-            "Allowed type values: dialogue, thought, narration. "
-            "Confidence values must be numbers between 0.0 and 1.0."
-        )
+        expected_ids: List[str] = [e["id"] for e in entries]
+        n = len(entries)
+        id_list_str = ", ".join(expected_ids)
         user = json.dumps(entries, ensure_ascii=False)
 
-        raw = self.llm_client.generate_json(system=system, user=user)
+        def _base_system() -> str:
+            return (
+                "You are a semantic classifier for novel text segments. "
+                f"Return ONLY a JSON array of exactly {n} objects — one object per input id. "
+                "Do not output any prose, markdown, or wrapper object. "
+                "Your response MUST start with '[' and end with ']'. "
+                "Each object must have ONLY these keys: "
+                "id, type, speaker, gender, speaker_confidence, gender_confidence, character_confidence. "
+                "Allowed type values: dialogue, thought, narration. "
+                "Confidence values must be numbers in [0.0, 1.0]. "
+                f"Input ids to process (in order): {id_list_str}"
+            )
 
-        by_id = self._normalize_batch_output(raw)
+        def _retry1_system(error: str) -> str:
+            return (
+                _base_system()
+                + f"\n\nIMPORTANT: Your previous response was invalid. Error: {error}. "
+                f"Return exactly {n} objects, one for each id in: {id_list_str}."
+            )
 
-        out: List[Dict[str, Any]] = []
-        for idx, segment in enumerate(batch):
-            entry_id = entries[idx]["id"]
-            out.append(self._build_required_segment(segment=segment, classified=by_id.get(entry_id)))
-        return out
+        def _retry2_system() -> str:
+            return (
+                f"Return ONLY a JSON array of {n} objects. "
+                f"Ids: {id_list_str}. "
+                "Keys per object: id,type,speaker,gender,"
+                "speaker_confidence,gender_confidence,character_confidence. "
+                "type in [dialogue,thought,narration]. Confidence 0.0-1.0. "
+                "No text outside the JSON array."
+            )
+
+        last_error: Optional[str] = None
+        model_name = getattr(self.llm_client, "model", "unknown")
+
+        for attempt in range(self.MAX_BATCH_RETRIES + 1):
+            if attempt == 0:
+                system = _base_system()
+            elif attempt == 1:
+                system = _retry1_system(last_error or "unknown error")
+            else:
+                system = _retry2_system()
+
+            t0 = time.monotonic()
+            raw = self.llm_client.generate_json(system=system, user=user)
+            latency = time.monotonic() - t0
+
+            validated, error = self._validate_batch_response(raw, expected_ids)
+
+            logger.info(
+                "classify_batch chapter=%s batch_offset=%d batch_size=%d "
+                "attempt=%d model=%s valid=%s error=%r latency_s=%.2f",
+                chapter_id,
+                offset,
+                n,
+                attempt,
+                model_name,
+                error is None,
+                error,
+                latency,
+            )
+
+            if error is None:
+                by_id: Dict[str, Dict[str, Any]] = {
+                    str(item["id"]).strip(): item for item in validated
+                }
+                return [
+                    self._build_required_segment(segment=seg, classified=by_id.get(entries[idx]["id"]))
+                    for idx, seg in enumerate(batch)
+                ]
+
+            last_error = error
+            if attempt < self.MAX_BATCH_RETRIES:
+                time.sleep(0.1 * (attempt + 1))
+
+        logger.warning(
+            "classify_batch chapter=%s offset=%d: all %d attempts failed; "
+            "falling back to defaults. last_error=%r",
+            chapter_id,
+            offset,
+            self.MAX_BATCH_RETRIES + 1,
+            last_error,
+        )
+        return [self._build_required_segment(segment=seg, classified=None) for seg in batch]
+
+    @staticmethod
+    def _validate_batch_response(
+        raw: Any, expected_ids: List[str]
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Validate a batch LLM response against the classification output contract.
+
+        Returns ``(items, None)`` on success or ``([], error_message)`` on failure.
+        Contract:
+        - top-level must be a JSON array
+        - every item must be a dict with exactly the required keys
+        - ``type`` must be one of ``dialogue | thought | narration``
+        - each confidence field must be a float in ``[0.0, 1.0]``
+        - the set of returned ``id`` values must exactly match ``expected_ids``
+          (no missing, no duplicates, no extras)
+        """
+        if not isinstance(raw, list):
+            return [], f"Top-level must be an array, got {type(raw).__name__}"
+
+        for i, item in enumerate(raw):
+            if not isinstance(item, dict):
+                return [], f"Item {i} is not an object"
+            missing = _REQUIRED_KEYS - set(item.keys())
+            if missing:
+                return [], f"Item {i} missing required keys: {sorted(missing)}"
+            item_type = str(item.get("type", "")).strip().lower()
+            if item_type not in _VALID_TYPES:
+                return [], f"Item {i} has invalid type: {item.get('type')!r}"
+            for k in _CONFIDENCE_KEYS:
+                v = item.get(k)
+                try:
+                    fv = float(v)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    return [], f"Item {i} key {k!r} is not a number: {v!r}"
+                if not (0.0 <= fv <= 1.0):
+                    return [], f"Item {i} key {k!r} out of range [0.0, 1.0]: {fv}"
+
+        got_ids = [str(item.get("id", "")).strip() for item in raw]
+        got_set = set(got_ids)
+        expected_set = set(expected_ids)
+
+        if len(got_ids) != len(got_set):
+            dupes = sorted({id_ for id_ in got_ids if got_ids.count(id_) > 1})
+            return [], f"Duplicate ids in response: {dupes}"
+
+        missing_ids = sorted(expected_set - got_set)
+        extra_ids = sorted(got_set - expected_set)
+        if missing_ids or extra_ids:
+            return [], f"ID mismatch — missing: {missing_ids}, extra: {extra_ids}"
+
+        return raw, None  # type: ignore[return-value]
 
     def _build_required_segment(self, *, segment: Dict[str, Any], classified: Dict[str, Any] | None) -> Dict[str, Any]:
         fallback = {
