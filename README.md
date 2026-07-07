@@ -383,10 +383,11 @@ Custom paths can be set in **Settings → TTS Backend → Model file (.onnx)** a
 | **Voices file (.bin)** | Path to Kokoro voices file (blank = auto-discover) | auto |
 | **TTS Voice** | Default voice for narration | `af_heart` |
 | **Speech Speed** | Global speed multiplier | `1.0` |
-| **Dialogue LLM URL** | Ollama API endpoint for dialogue classification | `http://127.0.0.1:11434/api/generate` |
+| **Dialogue LLM URL** | Ollama chat endpoint for dialogue classification | `http://127.0.0.1:11434/api/chat` |
 | **Dialogue LLM model** | Ollama model for Pass-2 chapter classification | `qwen2.5-coder:7b` |
 | **Dialogue LLM timeout** | Network timeout for LLM requests (seconds) | `300` |
 | **Dialogue LLM retries** | Retry count for failed LLM requests | `1` |
+| **Dialogue LLM delimited text only** | Only send text inside `""`, `''`, `[]`, `{}`, `<>`, or `()` to the dialogue LLM | `false` |
 | **json_pipeline_enabled** | Enable two-stage JSON pipeline (generate/extract → validate/repair) | `true` |
 | **json_repair_max_retries** | Max model-based JSON repair attempts per response | `2` |
 | **llm_segment_mode** | Segment request mode (`batch` or `single`) | `batch` |

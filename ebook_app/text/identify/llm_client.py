@@ -279,7 +279,7 @@ class OllamaChatClient:
     def __init__(
         self,
         *,
-        base_url: str = "http://127.0.0.1:11434/api/generate",
+        base_url: str = "http://127.0.0.1:11434/api/chat",
         model: str = "qwen2.5-coder:7b",
         max_context_tokens: int = 250_000,
         timeout: int = 300,

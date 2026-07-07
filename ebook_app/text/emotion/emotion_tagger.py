@@ -19,7 +19,7 @@ class EmotionTagger:
     def __init__(
         self,
         use_llm: bool = False,
-        llm_url: str = "http://127.0.0.1:11434/api/generate",
+        llm_url: str = "http://127.0.0.1:11434/api/chat",
         llm_model: str = "qwen2.5-coder:7b",
         profiles: Optional[Dict[str, EmotionProfile]] = None,
     ):

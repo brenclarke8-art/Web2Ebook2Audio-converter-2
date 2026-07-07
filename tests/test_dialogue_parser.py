@@ -264,6 +264,14 @@ def test_known_character_context_formatting_includes_alias_gender_and_descriptio
     assert "Alice | aliases=Lady Alice | gender=female | description=Noblewoman" in context
 
 
+def test_extract_delimited_fragments_supports_all_requested_wrappers():
+    fragments = DialogueSegmentationService._extract_delimited_fragments(
+        'Narration "hello" [aside] {meta} <tag> \'thought\' (paren) don\'t'
+    )
+
+    assert fragments == ["hello", "aside", "meta", "tag", "thought", "paren"]
+
+
 def test_dialogue_segmentation_service_injects_structured_known_character_context():
     client = _CaptureClient()
     service = DialogueSegmentationService(client=client)
@@ -312,6 +320,39 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
     # Check new ID-based input/output format
     assert 'Input: JSON array of {"id": "...", "text": "..."}' in pass2_system
     assert '[{"id": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator"}]' in pass2_system
+
+
+def test_dialogue_segmentation_service_can_limit_llm_prompts_to_delimited_text():
+    class _DelimitedCaptureClient:
+        def __init__(self):
+            self.calls: list[dict[str, str]] = []
+
+        def ask_json_any(self, *, system, user, chapter_id):
+            self.calls.append({"system": system, "user": user, "chapter_id": chapter_id})
+            if chapter_id.endswith("_p0"):
+                return {"summary": "hello aside"}
+            if chapter_id.endswith("_p1"):
+                return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+            if chapter_id.endswith("_p2"):
+                id_lines = json.loads(user)
+                return [{"id": entry["id"], "type": "dialogue", "speaker": "Alice"} for entry in id_lines]
+            return []
+
+    client = _DelimitedCaptureClient()
+    service = DialogueSegmentationService(client=client, delimited_text_only=True)
+    result = service.parse(
+        text='Plain narration only.\nHe said, "Hello." [aside]',
+        chapter_id="ch-delimited",
+    )
+
+    assert len(client.calls) == 3
+    assert client.calls[0]["user"] == "Hello.\naside"
+    assert client.calls[1]["user"] == "Hello.\naside"
+    assert json.loads(client.calls[2]["user"]) == [{"id": "ch-delimited_p1", "text": "Hello.\naside"}]
+    assert result.segments[0].type == "narration"
+    assert result.segments[0].speaker == "narrator"
+    assert result.segments[1].type == "dialogue"
+    assert result.segments[1].speaker == "Alice"
 
 
 def test_dialogue_segmentation_long_text_is_chunked_before_llm_calls():

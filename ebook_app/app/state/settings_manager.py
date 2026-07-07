@@ -52,15 +52,16 @@ class SettingsManager(QObject):
         # ------------------------------
         "index_url": "",
         "llm_provider": "ollama_local",
-        "llm_url": "http://127.0.0.1:11434/api/generate",
+        "llm_url": "http://127.0.0.1:11434/api/chat",
         "llm_model": "qwen2.5-coder:7b",
         "llm_api_key": "",
         # Backward compatibility keys (kept in sync with llm_url / llm_model)
-        "dialogue_llm_url": "http://127.0.0.1:11434/api/generate",
+        "dialogue_llm_url": "http://127.0.0.1:11434/api/chat",
         "dialogue_llm_model": "qwen2.5-coder:7b",
         "dialogue_llm_timeout": 300,
         "dialogue_llm_retries": 1,
         "dialogue_llm_strict_quotes": False,
+        "dialogue_llm_delimited_text_only": False,
         "llm_preflight_check": True,
         "phase1_llm_assist_enabled": False,
         "phase2_batch_size": 20,
@@ -145,6 +146,8 @@ class SettingsManager(QObject):
                 self.data = {}
         else:
             self.data = {}
+        stored_delimited_text_only = self.data.get("dialogue_llm_delimited_text_only", None)
+        stored_strict_quotes = self.data.get("dialogue_llm_strict_quotes", None)
 
         # Apply defaults
         changed = False
@@ -166,6 +169,16 @@ class SettingsManager(QObject):
             changed = True
         if self.data.get("dialogue_llm_model") != canonical_llm_model:
             self.data["dialogue_llm_model"] = canonical_llm_model
+            changed = True
+        canonical_delimited_text_only = self._canonical_delimited_text_only(
+            stored_delimited_text_only,
+            stored_strict_quotes,
+        )
+        if self.data.get("dialogue_llm_delimited_text_only") != canonical_delimited_text_only:
+            self.data["dialogue_llm_delimited_text_only"] = canonical_delimited_text_only
+            changed = True
+        if self.data.get("dialogue_llm_strict_quotes") != canonical_delimited_text_only:
+            self.data["dialogue_llm_strict_quotes"] = canonical_delimited_text_only
             changed = True
 
         for legacy_key in (
@@ -191,7 +204,7 @@ class SettingsManager(QObject):
     def _canonical_llm_url(self) -> str:
         llm_url = str(self.data.get("llm_url", "") or "").strip()
         legacy_url = str(self.data.get("dialogue_llm_url", "") or "").strip()
-        default_url = str(self.DEFAULTS.get("llm_url", "http://127.0.0.1:11434/api/generate")).strip()
+        default_url = str(self.DEFAULTS.get("llm_url", "http://127.0.0.1:11434/api/chat")).strip()
         return llm_url or legacy_url or default_url
 
     def _canonical_llm_model(self) -> str:
@@ -199,6 +212,28 @@ class SettingsManager(QObject):
         legacy_model = str(self.data.get("dialogue_llm_model", "") or "").strip()
         default_model = str(self.DEFAULTS.get("llm_model", "qwen2.5-coder:7b")).strip()
         return llm_model or legacy_model or default_model
+
+    @staticmethod
+    def _coerce_bool(value) -> bool:
+        """Coerce persisted settings values to booleans using common JSON/string forms."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        lowered = str(value).strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off", ""}:
+            return False
+        logger.debug("Unrecognized boolean setting value %r; treating it as False.", value)
+        return False
+
+    def _canonical_delimited_text_only(self, value=None, legacy_value=None) -> bool:
+        if value is not None:
+            return self._coerce_bool(value)
+        if legacy_value is not None:
+            return self._coerce_bool(legacy_value)
+        return self._coerce_bool(self.DEFAULTS.get("dialogue_llm_delimited_text_only", False))
 
     def save(self):
         try:

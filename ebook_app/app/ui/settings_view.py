@@ -301,9 +301,9 @@ class SettingsPage(BasePage):
         llm_form.addRow("LLM provider:", self._llm_provider_combo)
 
         self._dialogue_llm_url_input = QLineEdit(
-            str(self.settings.get("llm_url", self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/generate")))
+            str(self.settings.get("llm_url", self.settings.get("dialogue_llm_url", "http://127.0.0.1:11434/api/chat")))
         )
-        self._dialogue_llm_url_input.setPlaceholderText("http://127.0.0.1:11434/api/generate")
+        self._dialogue_llm_url_input.setPlaceholderText("http://127.0.0.1:11434/api/chat")
         llm_form.addRow("LLM URL:", self._dialogue_llm_url_input)
 
         self._llm_api_key_input = QLineEdit(str(self.settings.get("llm_api_key", "")))
@@ -517,6 +517,23 @@ class SettingsPage(BasePage):
         )
         inner.addWidget(self._phase1_llm_assist_cb)
 
+        self._dialogue_llm_delimited_text_only_cb = QCheckBox(
+            "Only send text inside \"\", '', [], {}, <>, or () to the dialogue LLM"
+        )
+        self._dialogue_llm_delimited_text_only_cb.setChecked(
+            bool(
+                self.settings.get(
+                    "dialogue_llm_delimited_text_only",
+                    self.settings.get("dialogue_llm_strict_quotes", False),
+                )
+            )
+        )
+        self._dialogue_llm_delimited_text_only_cb.setToolTip(
+            "When enabled, dialogue parsing only sends delimited snippets to the LLM and "
+            "falls back to heuristics for paragraphs without matching delimiters."
+        )
+        inner.addWidget(self._dialogue_llm_delimited_text_only_cb)
+
         # ── Save ───────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         save_btn = QPushButton("Save Settings")
@@ -568,6 +585,9 @@ class SettingsPage(BasePage):
         self.settings.set("llm_api_key", self._llm_api_key_input.text().strip())
         self.settings.set("dialogue_llm_url", dialogue_llm_url)  # backward compat
         self.settings.set("dialogue_llm_model", dialogue_llm_model)  # backward compat
+        delimited_text_only = self._dialogue_llm_delimited_text_only_cb.isChecked()
+        self.settings.set("dialogue_llm_delimited_text_only", delimited_text_only)
+        self.settings.set("dialogue_llm_strict_quotes", delimited_text_only)  # backward compat
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())
