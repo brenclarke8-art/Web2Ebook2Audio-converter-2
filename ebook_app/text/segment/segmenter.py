@@ -323,6 +323,7 @@ class DialogueSegmentationService:
                 for item in source_items:
                     all_segments.append(self._heuristic_segment(item['text'], item['id']))
                 continue
+            llm_prompt_ids = {item['id'] for item in llm_prompt_items}
             user_payload = json.dumps(llm_prompt_items, ensure_ascii=False)
             try:
                 primary_raw = self._ask(self.client, system=pass2_system, user=user_payload, chapter_id=f'{chunk_id}_p2')
@@ -368,6 +369,9 @@ class DialogueSegmentationService:
                 continue
             resolved_by_id = {entry['id']: entry for entry in normalized_items}
             for prompt_item in source_items:
+                if prompt_item['id'] not in llm_prompt_ids:
+                    all_segments.append(self._heuristic_segment(prompt_item['text'], prompt_item['id']))
+                    continue
                 resolved = resolved_by_id.get(prompt_item['id'])
                 if resolved is None:
                     all_segments.append(self._heuristic_segment(prompt_item['text'], prompt_item['id']))

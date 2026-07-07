@@ -215,11 +215,17 @@ class SettingsManager(QObject):
 
     @staticmethod
     def _coerce_bool(value) -> bool:
+        """Coerce persisted settings values to booleans using common JSON/string forms."""
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):
             return bool(value)
-        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+        lowered = str(value).strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off", ""}:
+            return False
+        return False
 
     def _canonical_delimited_text_only(self, value=None, legacy_value=None) -> bool:
         if value is not None:
