@@ -208,10 +208,12 @@ class DialogueSegmentationService:
         return client.ask_json(system=system, user=user, chapter_id=chapter_id)
 
     def _validate_pass2(self, payload: Any, expected_ids: list[str]) -> tuple[list[dict[str, Any]] | None, bool, float]:
+        # Unwrap {"segments": [...]} envelope before any other handling
+        if isinstance(payload, dict) and 'segments' in payload:
+            payload = payload.get('segments')
+        # Accept a bare single-object dict only when exactly one segment is expected
         if isinstance(payload, dict):
             payload = [payload] if len(expected_ids) == 1 else None
-        if isinstance(payload, dict) and payload.keys() >= {'segments'}:
-            payload = payload.get('segments')
         if not isinstance(payload, list):
             return None, True, 0.0
         normalized = []
