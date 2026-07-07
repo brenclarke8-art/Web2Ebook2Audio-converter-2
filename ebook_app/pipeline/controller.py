@@ -382,7 +382,11 @@ class PipelineController:
 
         if self.chapter_urls:
             start_idx = self.selected_start_chapter - 1
-            end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(self.chapter_urls)
+            end_idx = (
+                min(self.selected_end_chapter, len(self.chapter_urls))
+                if self.selected_end_chapter > 0
+                else len(self.chapter_urls)
+            )
             selected_urls = list(self.chapter_urls[start_idx:end_idx])
             chapter_offset = self.selected_start_chapter
         else:
@@ -414,7 +418,7 @@ class PipelineController:
             scrape_chapters = scraper.scrape_chapters
             try:
                 scrape_signature = inspect.signature(scrape_chapters)
-            except (TypeError, ValueError):
+            except (AttributeError, TypeError, ValueError):
                 scrape_signature = None
 
             if scrape_signature and "progress_callback" in scrape_signature.parameters:
