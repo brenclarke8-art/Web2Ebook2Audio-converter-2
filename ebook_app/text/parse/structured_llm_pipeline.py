@@ -31,9 +31,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, List, Literal, Optional
+from typing import Any, Callable, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,19 @@ logger = logging.getLogger(__name__)
 CharacterType = Literal["dialogue", "thought", "narration"]
 
 _VALID_TYPES: frozenset[str] = frozenset({"dialogue", "thought", "narration"})
+
+# Typographic ("smart") quotes commonly emitted by LLMs mapped to straight-quote equivalents.
+# Defined at module level to avoid repeated construction on every repair call.
+_SMART_QUOTE_MAP: dict[str, str] = {
+    "\u201c": '"',  # "  LEFT DOUBLE QUOTATION MARK
+    "\u201d": '"',  # "  RIGHT DOUBLE QUOTATION MARK
+    "\u2018": "'",  # '  LEFT SINGLE QUOTATION MARK
+    "\u2019": "'",  # '  RIGHT SINGLE QUOTATION MARK
+}
+
+# Null-like speaker strings an LLM might output when the speaker is unknown.
+# Case-insensitive comparison is applied; "none" matches "None", "NONE", etc.
+_NULL_SPEAKER_VALUES: frozenset[str] = frozenset({"none", "n/a", "null", "undefined"})
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas
@@ -197,15 +210,11 @@ def _extract_json_snippet(text: str) -> str:
 def _deterministic_repair(text: str) -> str:
     """Apply common LLM-output fixups that produce invalid JSON.
 
-    - Replaces curly/smart quotes with straight quotes.
+    - Replaces curly/smart quotes with straight quotes (using module-level map).
     - Removes trailing commas before ``}`` or ``]``.
     """
-    text = (
-        text.replace("\u201c", '"')  # LEFT DOUBLE QUOTATION MARK
-        .replace("\u201d", '"')  # RIGHT DOUBLE QUOTATION MARK
-        .replace("\u2018", "'")  # LEFT SINGLE QUOTATION MARK
-        .replace("\u2019", "'")  # RIGHT SINGLE QUOTATION MARK
-    )
+    for smart, straight in _SMART_QUOTE_MAP.items():
+        text = text.replace(smart, straight)
     text = re.sub(r",\s*([}\]])", r"\1", text)
     return text
 
@@ -352,7 +361,7 @@ def post_process_segments(
         # Normalise speaker name
         raw_speaker = str(seg.get("speaker_name") or seg.get("speaker") or "").strip()
         speaker = _clean_speaker(raw_speaker)
-        if not speaker or speaker.lower() in {"", "none"}:
+        if not speaker or speaker.lower() in _NULL_SPEAKER_VALUES:
             speaker = "Narrator" if seg_type != "dialogue" else "Unknown"
 
         char_info = registry.get_or_create(speaker)
@@ -375,7 +384,7 @@ def validate_and_post_process(
     raw: Any,
     registry: CharacterRegistry,
     *,
-    repair_callback: Any = None,
+    repair_callback: Optional[Callable[[Any], Any]] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Parse, validate, and post-process a raw LLM response end-to-end.
 
@@ -400,8 +409,6 @@ def validate_and_post_process(
         *success* is ``True`` when the original (or repaired) response passed
         schema validation without falling back to heuristics.
     """
-    from pydantic import ValidationError  # local import to avoid top-level dep issues
-
     def _try_parse_and_validate(data: Any) -> list[dict[str, Any]] | None:
         try:
             parsed = parse_llm_json(data)

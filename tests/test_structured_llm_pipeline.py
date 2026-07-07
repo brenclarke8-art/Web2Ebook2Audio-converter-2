@@ -98,7 +98,15 @@ class Test_LLMSegment:
         assert seg.character_type == "narration"
 
     def test_invalid_character_type_coerced_to_narration(self):
+        # The field_validator normalises unrecognised types to "narration" at runtime.
+        # The type: ignore suppresses the static type-checker, which correctly
+        # flags the literal mismatch — the coercion is intentional for LLM robustness.
         seg = LLMSegment(line_id="s1", raw_text="X", character_type="monologue")  # type: ignore[arg-type]
+        assert seg.character_type == "narration"
+
+    def test_invalid_character_type_via_model_validate_coerced_to_narration(self):
+        # model_validate() (used when parsing dicts from JSON) also coerces invalid types.
+        seg = LLMSegment.model_validate({"line_id": "s1", "raw_text": "X", "character_type": "soliloquy"})
         assert seg.character_type == "narration"
 
     def test_confidence_out_of_range_rejected(self):
@@ -242,8 +250,11 @@ class Test_ParseLlmJson:
         assert result[0]["id"] == "a"
 
     def test_repairs_smart_quotes(self):
-        malformed = '[\u007b\u201cid\u201d:\u201ca\u201d,\u201ctype\u201d:\u201cnarration\u201d\u007d]'
-        # That's [{"id":"a","type":"narration"}] but with curly quotes
+        # Build a string that uses LEFT/RIGHT DOUBLE QUOTATION MARKs (\u201c / \u201d)
+        # instead of straight ASCII quotes — a common LLM output artifact.
+        ldqm = "\u201c"  # "  LEFT DOUBLE QUOTATION MARK
+        rdqm = "\u201d"  # "  RIGHT DOUBLE QUOTATION MARK
+        malformed = f'[{{{ldqm}id{rdqm}:{ldqm}a{rdqm},{ldqm}type{rdqm}:{ldqm}narration{rdqm}}}]'
         result = parse_llm_json(malformed)
         assert result[0]["id"] == "a"
 
@@ -327,6 +338,14 @@ class Test_PostProcessSegments:
         segs = [{"line_id": "s1", "text": "Narration.", "type": "narration", "speaker": None}]
         result = post_process_segments(segs, reg)
         assert result[0]["speaker"] == "Narrator"
+
+    def test_null_like_speaker_strings_fall_back_to_narrator(self):
+        """'none', 'n/a', 'null', 'undefined' (any case) should be treated as missing."""
+        reg = CharacterRegistry()
+        for null_val in ("none", "None", "NONE", "n/a", "N/A", "null", "undefined"):
+            segs = [{"line_id": "s1", "text": "Narration.", "type": "narration", "speaker": null_val}]
+            result = post_process_segments(segs, CharacterRegistry())
+            assert result[0]["speaker"] == "Narrator", f"Expected Narrator for speaker={null_val!r}"
 
     def test_invalid_type_defaults_to_narration(self):
         reg = CharacterRegistry()
@@ -533,6 +552,10 @@ class Test_ValidatePass2SegmentsEnvelope:
     def test_segments_envelope_is_unwrapped(self):
         from ebook_app.text.segment.segmenter import DialogueSegmentationService
 
+        # The segmenter calls the client with chapter_id suffixed by the pass
+        # number (_p0 = summary, _p1 = character extraction, _p2 = type/speaker).
+        # For a single-chunk parse with chapter_id="ch-envelope", the client sees
+        # chapter_ids "ch-envelope_p0", "ch-envelope_p1", "ch-envelope_p2".
         class _EnvelopeClient:
             def ask_json_any(self, *, system, user, chapter_id):
                 if chapter_id.endswith("_p0"):
@@ -541,7 +564,7 @@ class Test_ValidatePass2SegmentsEnvelope:
                     return []
                 if chapter_id.endswith("_p2"):
                     id_lines = json.loads(user)
-                    # Return a {"segments": [...]} envelope
+                    # Return a {"segments": [...]} envelope — previously rejected
                     return {
                         "segments": [
                             {"id": entry["id"], "type": "dialogue", "speaker": "Alice"}
