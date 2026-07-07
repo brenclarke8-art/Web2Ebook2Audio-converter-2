@@ -31,6 +31,14 @@ def _obj_to_dict(obj: Any) -> Dict:
     return dict(obj)  # type: ignore
 
 
+def _supports_progress_callback(scrape_method: Any) -> bool:
+    """Return True when *scrape_method* accepts an optional progress callback."""
+    try:
+        return "progress_callback" in inspect.signature(scrape_method).parameters
+    except (AttributeError, TypeError):
+        return False
+
+
 logger = logging.getLogger(__name__)
 MIN_LLM_TIMEOUT_SEC = 1
 MIN_LLM_RETRIES = 0
@@ -380,22 +388,28 @@ class PipelineController:
 
         from ebook_app.text.parse.html_cleaner import TextCleaner
 
+        first_selected_chapter = max(self.selected_start_chapter, 1)
+
         if self.chapter_urls:
-            start_idx = self.selected_start_chapter - 1
+            start_idx = first_selected_chapter - 1
             end_idx = (
                 min(self.selected_end_chapter, len(self.chapter_urls))
                 if self.selected_end_chapter > 0
                 else len(self.chapter_urls)
             )
             selected_urls = list(self.chapter_urls[start_idx:end_idx])
-            chapter_offset = self.selected_start_chapter
+            chapter_offset = first_selected_chapter
         else:
             chapters_raw = self._load_json(self.work_dir / "chapters_raw.json", default=[])
             all_urls = [ch.get("source", "") for ch in chapters_raw if ch.get("source")]
-            start_idx = self.selected_start_chapter - 1
-            end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(all_urls)
+            start_idx = first_selected_chapter - 1
+            end_idx = (
+                min(self.selected_end_chapter, len(all_urls))
+                if self.selected_end_chapter > 0
+                else len(all_urls)
+            )
             selected_urls = all_urls[start_idx:end_idx]
-            chapter_offset = self.selected_start_chapter
+            chapter_offset = first_selected_chapter
 
         if not selected_urls:
             logger.warning("No chapter URLs — cannot scrape chapters.")
@@ -415,16 +429,12 @@ class PipelineController:
                     pass
 
         try:
-            scrape_chapters = scraper.scrape_chapters
-            try:
-                scrape_signature = inspect.signature(scrape_chapters)
-            except (AttributeError, TypeError, ValueError):
-                scrape_signature = None
-
-            if scrape_signature and "progress_callback" in scrape_signature.parameters:
-                results = scrape_chapters(selected_urls, progress_callback=_progress)
-            else:
-                results = scrape_chapters(selected_urls)
+            scrape_kwargs = (
+                {"progress_callback": _progress}
+                if _supports_progress_callback(scraper.scrape_chapters)
+                else {}
+            )
+            results = scraper.scrape_chapters(selected_urls, **scrape_kwargs)
         except Exception:
             logger.error("Chapter scraping failed.", exc_info=True)
             results = []
