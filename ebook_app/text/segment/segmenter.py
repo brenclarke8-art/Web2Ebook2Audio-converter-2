@@ -75,7 +75,23 @@ class DialogueSegmentationService:
         "angle_brackets": True,
         "parentheses": True,
     }
+    _VALID_DELIMITER_TYPES = {*_DEFAULT_DELIMITER_FILTERS.keys(), "none"}
     _CHARACTER_TYPES = {"character", "narrator", "unknown"}
+    _PASS2_PROTOCOL_FIELDS = (
+        "id",
+        "source_id",
+        "chunk_id",
+        "text",
+        "span_start",
+        "span_end",
+        "delimiter_type",
+        "is_dialogue",
+        "type",
+        "speaker",
+        "character_type",
+        "confidence",
+        "notes",
+    )
 
     def __init__(
         self,
@@ -117,7 +133,8 @@ class DialogueSegmentationService:
         matches: list[tuple[int, str]] = []
         seen: set[tuple[int, str]] = set()
         for delimiter_key, pattern in cls._DELIMITER_PATTERNS:
-            if not active_filters.get(delimiter_key, False):
+            # Missing keys in partial/legacy configs default to enabled behavior.
+            if not active_filters.get(delimiter_key, True):
                 continue
             for match in pattern.finditer(text):
                 fragment = (match.group(1) or '').strip()
@@ -289,12 +306,12 @@ class DialogueSegmentationService:
             "speaker": speaker,
             "character_type": str(item.get("character_type", "narrator" if seg_type == "narration" else "unknown")).strip().lower(),
             "confidence": float(item.get("confidence", 1.0) or 0.0),
-            "notes": item.get("notes") if item.get("notes") is None else str(item.get("notes", "")),
+            "notes": None if item.get("notes") is None else str(item.get("notes")),
             "type": seg_type,
         }
         if protocol["character_type"] not in self._CHARACTER_TYPES:
-            return None, f"character_type must be one of {sorted(self._CHARACTER_TYPES)}"
-        if protocol["delimiter_type"] not in {*self._DEFAULT_DELIMITER_FILTERS.keys(), "none"}:
+            return None, f"character_type '{protocol['character_type']}' must be one of {self._CHARACTER_TYPES}"
+        if protocol["delimiter_type"] not in self._VALID_DELIMITER_TYPES:
             return None, "delimiter_type is invalid"
         if protocol["speaker"] is not None and not isinstance(protocol["speaker"], str):
             return None, "speaker must be string or null"
@@ -304,8 +321,9 @@ class DialogueSegmentationService:
             return None, "span_start must be integer or null"
         if protocol["span_end"] is not None and not isinstance(protocol["span_end"], int):
             return None, "span_end must be integer or null"
-        if protocol["span_start"] is not None and protocol["span_end"] is not None and protocol["span_end"] < protocol["span_start"]:
-            return None, "span_end must be >= span_start"
+        if protocol["span_start"] is not None and protocol["span_end"] is not None:
+            if protocol["span_end"] < protocol["span_start"]:
+                return None, "span_end must be >= span_start"
         return protocol, None
 
     def _validate_pass2(
@@ -324,16 +342,16 @@ class DialogueSegmentationService:
         if isinstance(payload, dict):
             payload = [payload] if len(expected_ids) == 1 else None
         if not isinstance(payload, list):
-            return None, True, 0.0, "payload is not a list"
+            return None, True, 0.0, f"payload is not a list (got {type(payload).__name__})"
         normalized = []
         expected = set(expected_ids)
         seen = set()
         for item in payload:
             if not isinstance(item, dict):
-                return None, True, 0.0, "candidate is not an object"
+                return None, True, 0.0, f"candidate is not an object (got {type(item).__name__})"
             item_id = str(item.get('id', '')).strip()
             if item_id not in expected or item_id in seen:
-                return None, True, len(seen) / max(1, len(expected_ids)), "candidate ids do not match expected ids"
+                return None, True, len(seen) / max(1, len(expected_ids)), f"unexpected or duplicate id: {item_id or '<empty>'}"
             seen.add(item_id)
             normalized_item, error = self._normalize_protocol_candidate(
                 item,
@@ -345,7 +363,8 @@ class DialogueSegmentationService:
                 return None, True, len(seen) / max(1, len(expected_ids)), error
             normalized.append(normalized_item)
         if len(seen) != len(expected_ids):
-            return None, True, len(seen) / max(1, len(expected_ids)), "missing ids in response"
+            missing_ids = sorted(expected.difference(seen))
+            return None, True, len(seen) / max(1, len(expected_ids)), f"missing ids in response: {missing_ids}"
         return normalized, False, 1.0, None
 
     def parse(
@@ -431,11 +450,10 @@ class DialogueSegmentationService:
             pass2_system = (
                 'SEGMENT AND ATTRIBUTE\n'
                 'Input: JSON array of {"id": "...", "text": "..."}\n'
-                'Return JSON only as an array where each item includes:\n'
-                '{"id":"...","source_id":"...","chunk_id":"...","text":"...","span_start":null|int,'
-                '"span_end":null|int,"delimiter_type":"single_quotes|double_quotes|square_brackets|curly_braces|angle_brackets|parentheses|none",'
-                '"is_dialogue":true|false,"type":"dialogue|thought|narration","speaker":"Name|narrator|null",'
-                '"character_type":"character|narrator|unknown","confidence":0.0-1.0,"notes":"optional"}'
+                f'Return JSON only where each item contains fields: {", ".join(self._PASS2_PROTOCOL_FIELDS)}.\n'
+                'Rules: type=dialogue|thought|narration, delimiter_type=single_quotes|double_quotes|square_brackets|'
+                'curly_braces|angle_brackets|parentheses|none, speaker is nullable string, '
+                'character_type=character|narrator|unknown, confidence=0.0-1.0.'
             )
             if manual_segment_hints:
                 pass2_system += f'\nManual hints: {json.dumps(manual_segment_hints, ensure_ascii=False)}'
@@ -469,8 +487,9 @@ class DialogueSegmentationService:
                             f"EXPECTED_IDS:{json.dumps(expected_batch_ids, ensure_ascii=False)}\n"
                             f"SOURCE_LIST:{json.dumps(batch_items, ensure_ascii=False)}\n"
                             f"INVALID_RESPONSE:{json.dumps(primary_raw, ensure_ascii=False)}\n"
-                            "Each item must include id, source_id, chunk_id, text, span_start, span_end, "
-                            "delimiter_type, is_dialogue, type, speaker (nullable), character_type, confidence, notes."
+                            "Each item must include: "
+                            + ", ".join(self._PASS2_PROTOCOL_FIELDS)
+                            + "."
                         )
                     try:
                         primary_raw = self._ask(self.client, system=pass2_system, user=request_user, chapter_id=request_chapter_id)
@@ -530,16 +549,17 @@ class DialogueSegmentationService:
                 if normalized_items is None:
                     diagnostics.validation_passed = False
                     diagnostics.needs_review = True
-                    diagnostics.malformed_json = True or malformed
+                    diagnostics.malformed_json = diagnostics.malformed_json or bool(malformed)
                     diagnostics.fallback_count += len(batch_items)
                     if validation_error:
                         diagnostics.llm_failures.append(f'{chunk_id}_p2_validation_b{batch_index}:{validation_error}')
                     for item in batch_items:
+                        heuristic_seg = self._heuristic_segment(item["text"], item["id"])
                         resolved_by_id[item["id"]] = {
                             "id": item["id"],
                             "text": item["text"],
-                            "type": self._heuristic_segment(item["text"], item["id"]).type,
-                            "speaker": self._heuristic_segment(item["text"], item["id"]).speaker,
+                            "type": heuristic_seg.type,
+                            "speaker": heuristic_seg.speaker,
                             "chunk_id": chunk_id,
                             "source_id": item["id"],
                             "span_start": None,

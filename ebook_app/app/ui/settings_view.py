@@ -534,11 +534,11 @@ class SettingsPage(BasePage):
             "falls back to heuristics for paragraphs without matching delimiters."
         )
         inner.addWidget(self._dialogue_llm_delimited_text_only_cb)
-        self._dialogue_llm_delimiter_single_quotes_cb = QCheckBox("Single quotes ''")
+        self._dialogue_llm_delimiter_single_quotes_cb = QCheckBox("Single quotes ('')")
         self._dialogue_llm_delimiter_single_quotes_cb.setChecked(
             bool(self.settings.get("dialogue_llm_delimiter_single_quotes", True))
         )
-        self._dialogue_llm_delimiter_double_quotes_cb = QCheckBox('Double quotes ""')
+        self._dialogue_llm_delimiter_double_quotes_cb = QCheckBox("Double quotes \"\"")
         self._dialogue_llm_delimiter_double_quotes_cb.setChecked(
             bool(self.settings.get("dialogue_llm_delimiter_double_quotes", True))
         )
