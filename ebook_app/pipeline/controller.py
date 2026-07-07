@@ -1,6 +1,7 @@
 # ebook_app/pipeline/controller.py
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -379,15 +380,10 @@ class PipelineController:
 
         from ebook_app.text.parse.html_cleaner import TextCleaner
 
-        # When chapter_urls has been set externally (e.g. from the UI's selected
-        # checkboxes) it already contains exactly the URLs to scrape — do NOT
-        # re-apply the start/end chapter range, as that would slice the list a
-        # second time and skip chapters.  When chapter_urls is empty we fall back
-        # to chapters_raw.json and apply the range there.
         if self.chapter_urls:
-            selected_urls = list(self.chapter_urls)
-            # chapter_offset: 1-based index of the first URL in the file-naming
-            # scheme so that ch<N>_raw.txt reflects the right chapter number.
+            start_idx = self.selected_start_chapter - 1
+            end_idx = self.selected_end_chapter if self.selected_end_chapter > 0 else len(self.chapter_urls)
+            selected_urls = list(self.chapter_urls[start_idx:end_idx])
             chapter_offset = self.selected_start_chapter
         else:
             chapters_raw = self._load_json(self.work_dir / "chapters_raw.json", default=[])
@@ -415,7 +411,16 @@ class PipelineController:
                     pass
 
         try:
-            results = scraper.scrape_chapters(selected_urls, progress_callback=_progress)
+            scrape_chapters = scraper.scrape_chapters
+            try:
+                scrape_signature = inspect.signature(scrape_chapters)
+            except (TypeError, ValueError):
+                scrape_signature = None
+
+            if scrape_signature and "progress_callback" in scrape_signature.parameters:
+                results = scrape_chapters(selected_urls, progress_callback=_progress)
+            else:
+                results = scrape_chapters(selected_urls)
         except Exception:
             logger.error("Chapter scraping failed.", exc_info=True)
             results = []
