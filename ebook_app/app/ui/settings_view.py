@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -533,6 +534,40 @@ class SettingsPage(BasePage):
             "falls back to heuristics for paragraphs without matching delimiters."
         )
         inner.addWidget(self._dialogue_llm_delimited_text_only_cb)
+        self._dialogue_llm_delimiter_single_quotes_cb = QCheckBox("Single quotes ('')")
+        self._dialogue_llm_delimiter_single_quotes_cb.setChecked(
+            bool(self.settings.get("dialogue_llm_delimiter_single_quotes", True))
+        )
+        self._dialogue_llm_delimiter_double_quotes_cb = QCheckBox("Double quotes \"\"")
+        self._dialogue_llm_delimiter_double_quotes_cb.setChecked(
+            bool(self.settings.get("dialogue_llm_delimiter_double_quotes", True))
+        )
+        self._dialogue_llm_delimiter_square_brackets_cb = QCheckBox("Square brackets []")
+        self._dialogue_llm_delimiter_square_brackets_cb.setChecked(
+            bool(self.settings.get("dialogue_llm_delimiter_square_brackets", True))
+        )
+        self._dialogue_llm_delimiter_curly_braces_cb = QCheckBox("Curly braces {}")
+        self._dialogue_llm_delimiter_curly_braces_cb.setChecked(
+            bool(self.settings.get("dialogue_llm_delimiter_curly_braces", True))
+        )
+        self._dialogue_llm_delimiter_angle_brackets_cb = QCheckBox("Angle brackets <>")
+        self._dialogue_llm_delimiter_angle_brackets_cb.setChecked(
+            bool(self.settings.get("dialogue_llm_delimiter_angle_brackets", True))
+        )
+        self._dialogue_llm_delimiter_parentheses_cb = QCheckBox("Parentheses ()")
+        self._dialogue_llm_delimiter_parentheses_cb.setChecked(
+            bool(self.settings.get("dialogue_llm_delimiter_parentheses", True))
+        )
+        delimiter_group = QGroupBox("Delimited Dialogue Filters")
+        delimiter_layout = QGridLayout(delimiter_group)
+        delimiter_layout.setContentsMargins(8, 6, 8, 6)
+        delimiter_layout.addWidget(self._dialogue_llm_delimiter_single_quotes_cb, 0, 0)
+        delimiter_layout.addWidget(self._dialogue_llm_delimiter_double_quotes_cb, 0, 1)
+        delimiter_layout.addWidget(self._dialogue_llm_delimiter_square_brackets_cb, 1, 0)
+        delimiter_layout.addWidget(self._dialogue_llm_delimiter_curly_braces_cb, 1, 1)
+        delimiter_layout.addWidget(self._dialogue_llm_delimiter_angle_brackets_cb, 2, 0)
+        delimiter_layout.addWidget(self._dialogue_llm_delimiter_parentheses_cb, 2, 1)
+        inner.addWidget(delimiter_group)
 
         # ── Save ───────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -588,6 +623,30 @@ class SettingsPage(BasePage):
         delimited_text_only = self._dialogue_llm_delimited_text_only_cb.isChecked()
         self.settings.set("dialogue_llm_delimited_text_only", delimited_text_only)
         self.settings.set("dialogue_llm_strict_quotes", delimited_text_only)  # backward compat
+        self.settings.set(
+            "dialogue_llm_delimiter_single_quotes",
+            self._dialogue_llm_delimiter_single_quotes_cb.isChecked(),
+        )
+        self.settings.set(
+            "dialogue_llm_delimiter_double_quotes",
+            self._dialogue_llm_delimiter_double_quotes_cb.isChecked(),
+        )
+        self.settings.set(
+            "dialogue_llm_delimiter_square_brackets",
+            self._dialogue_llm_delimiter_square_brackets_cb.isChecked(),
+        )
+        self.settings.set(
+            "dialogue_llm_delimiter_curly_braces",
+            self._dialogue_llm_delimiter_curly_braces_cb.isChecked(),
+        )
+        self.settings.set(
+            "dialogue_llm_delimiter_angle_brackets",
+            self._dialogue_llm_delimiter_angle_brackets_cb.isChecked(),
+        )
+        self.settings.set(
+            "dialogue_llm_delimiter_parentheses",
+            self._dialogue_llm_delimiter_parentheses_cb.isChecked(),
+        )
         self.settings.set("narrator_voice", self._narrator_voice_combo.currentText())
         self.settings.set("default_male_voice", self._default_male_voice_combo.currentText())
         self.settings.set("default_female_voice", self._default_female_voice_combo.currentText())

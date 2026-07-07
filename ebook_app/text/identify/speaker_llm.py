@@ -290,6 +290,11 @@ class DialogueParser:
         retries: int = 1,
         max_context_tokens: int = 250_000,
         delimited_text_only: bool = False,
+        delimiter_filters: dict[str, bool] | None = None,
+        chunk_size: int = 6000,
+        chunk_overlap: int = 500,
+        pass2_batch_size: int = 0,
+        protocol_retries: int = 1,
     ) -> None:
 
         self.ollama_url = self._normalize_ollama_url(ollama_url)
@@ -300,6 +305,11 @@ class DialogueParser:
         self.formatter_model = chosen
         self.character_db = character_db
         self.delimited_text_only = bool(delimited_text_only)
+        self.delimiter_filters = dict(delimiter_filters or {})
+        self.chunk_size = max(1, int(chunk_size or 6000))
+        self.chunk_overlap = max(0, int(chunk_overlap or 500))
+        self.pass2_batch_size = max(0, int(pass2_batch_size or 0))
+        self.protocol_retries = max(0, int(protocol_retries or 1))
 
         common = dict(
             base_url=self.ollama_url,
@@ -317,6 +327,9 @@ class DialogueParser:
             fallback_client=self.fallback_client,
             formatter_client=self.formatter_client,
             delimited_text_only=self.delimited_text_only,
+            delimiter_filters=self.delimiter_filters,
+            pass2_batch_size=self.pass2_batch_size,
+            protocol_retries=self.protocol_retries,
         )
 
     @staticmethod
@@ -385,6 +398,10 @@ class DialogueParser:
                 chapter_id=chapter_id,
                 known_characters=self._known_characters(),
                 manual_segment_hints=manual_segment_hints,
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+                pass2_batch_size=self.pass2_batch_size,
+                protocol_retries=self.protocol_retries,
             )
             segments: list[Segment] = []
             for item in llm_result.segments:

@@ -59,20 +59,62 @@ class DialogueLLMResult:
 
 
 class DialogueSegmentationService:
-    _DELIMITED_PATTERNS = (
-        re.compile(r'"([^"]+?)"', re.DOTALL),
-        re.compile(r"(?<!\w)'([^']+?)'(?!\w)", re.DOTALL),
-        re.compile(r'\[([^\[\]]+?)\]', re.DOTALL),
-        re.compile(r'\{([^{}]+?)\}', re.DOTALL),
-        re.compile(r'<([^<>]+?)>', re.DOTALL),
-        re.compile(r'\(([^()]+?)\)', re.DOTALL),
+    _DELIMITER_PATTERNS = (
+        ("double_quotes", re.compile(r'"([^"]+?)"', re.DOTALL)),
+        ("single_quotes", re.compile(r"(?<!\w)'([^']+?)'(?!\w)", re.DOTALL)),
+        ("square_brackets", re.compile(r'\[([^\[\]]+?)\]', re.DOTALL)),
+        ("curly_braces", re.compile(r'\{([^{}]+?)\}', re.DOTALL)),
+        ("angle_brackets", re.compile(r'<([^<>]+?)>', re.DOTALL)),
+        ("parentheses", re.compile(r'\(([^()]+?)\)', re.DOTALL)),
+    )
+    _DEFAULT_DELIMITER_FILTERS = {
+        "single_quotes": True,
+        "double_quotes": True,
+        "square_brackets": True,
+        "curly_braces": True,
+        "angle_brackets": True,
+        "parentheses": True,
+    }
+    _VALID_DELIMITER_TYPES = {*_DEFAULT_DELIMITER_FILTERS.keys(), "none"}
+    _CHARACTER_TYPES = {"character", "narrator", "unknown"}
+    _PASS2_PROTOCOL_FIELDS = (
+        "id",
+        "source_id",
+        "chunk_id",
+        "text",
+        "span_start",
+        "span_end",
+        "delimiter_type",
+        "is_dialogue",
+        "type",
+        "speaker",
+        "character_type",
+        "confidence",
+        "notes",
     )
 
-    def __init__(self, *, client, fallback_client=None, formatter_client=None, delimited_text_only: bool = False):
+    def __init__(
+        self,
+        *,
+        client,
+        fallback_client=None,
+        formatter_client=None,
+        delimited_text_only: bool = False,
+        delimiter_filters: dict[str, bool] | None = None,
+        pass2_batch_size: int = 0,
+        protocol_retries: int = 1,
+    ):
         self.client = client
         self.fallback_client = fallback_client
         self.formatter_client = formatter_client
         self.delimited_text_only = bool(delimited_text_only)
+        merged_filters = dict(self._DEFAULT_DELIMITER_FILTERS)
+        for key, value in (delimiter_filters or {}).items():
+            if key in merged_filters:
+                merged_filters[key] = bool(value)
+        self.delimiter_filters = merged_filters
+        self.pass2_batch_size = max(0, int(pass2_batch_size or 0))
+        self.protocol_retries = max(0, int(protocol_retries or 0))
 
     @staticmethod
     def _clean_input_text(text: str) -> str:
@@ -81,12 +123,19 @@ class DialogueSegmentationService:
         return '\n'.join(lines).strip()
 
     @classmethod
-    def _extract_delimited_fragments(cls, text: str) -> list[str]:
+    def _extract_delimited_fragments(cls, text: str, delimiter_filters: dict[str, bool] | None = None) -> list[str]:
         if not text:
             return []
+        active_filters = dict(cls._DEFAULT_DELIMITER_FILTERS)
+        for key, value in (delimiter_filters or {}).items():
+            if key in active_filters:
+                active_filters[key] = bool(value)
         matches: list[tuple[int, str]] = []
         seen: set[tuple[int, str]] = set()
-        for pattern in cls._DELIMITED_PATTERNS:
+        for delimiter_key, pattern in cls._DELIMITER_PATTERNS:
+            # Missing keys in partial/legacy configs default to enabled behavior.
+            if not active_filters.get(delimiter_key, True):
+                continue
             for match in pattern.finditer(text):
                 fragment = (match.group(1) or '').strip()
                 if not fragment:
@@ -100,11 +149,23 @@ class DialogueSegmentationService:
         return [fragment for _, fragment in matches]
 
     @classmethod
-    def _llm_text_for_segment(cls, text: str, delimited_text_only: bool) -> str:
+    def _llm_text_for_segment(
+        cls,
+        text: str,
+        delimited_text_only: bool,
+        delimiter_filters: dict[str, bool] | None = None,
+    ) -> str:
         if not delimited_text_only:
             return text
-        fragments = cls._extract_delimited_fragments(text)
+        fragments = cls._extract_delimited_fragments(text, delimiter_filters)
         return '\n'.join(fragments).strip()
+
+    @classmethod
+    def _detect_delimiter_type(cls, text: str) -> str:
+        for delimiter_key, pattern in cls._DELIMITER_PATTERNS:
+            if pattern.search(text or ""):
+                return delimiter_key
+        return "none"
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
@@ -207,34 +268,104 @@ class DialogueSegmentationService:
             return client.ask_json_any(system=system, user=user, chapter_id=chapter_id)
         return client.ask_json(system=system, user=user, chapter_id=chapter_id)
 
-    def _validate_pass2(self, payload: Any, expected_ids: list[str]) -> tuple[list[dict[str, Any]] | None, bool, float]:
+    @staticmethod
+    def _batch_items(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+        if size <= 0 or len(items) <= size:
+            return [items]
+        return [items[idx:idx + size] for idx in range(0, len(items), size)]
+
+    def _normalize_protocol_candidate(
+        self,
+        item: Any,
+        *,
+        expected_id: str,
+        source_text: str,
+        chunk_id: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if not isinstance(item, dict):
+            return None, "candidate is not an object"
+        item_id = str(item.get("id", "")).strip()
+        if item_id != expected_id:
+            return None, f"id mismatch expected={expected_id} got={item_id or '<empty>'}"
+        seg_type = self._normalize_type(item.get("type", "narration"))
+        speaker_value = item.get("speaker", None)
+        speaker = self._normalize_speaker(speaker_value, seg_type) if speaker_value is not None else None
+        if speaker is None and seg_type == "narration":
+            speaker = "narrator"
+
+        # Strict protocol shape (backward-compatible normalization when old keys are returned).
+        protocol = {
+            "id": item_id,
+            "chunk_id": str(item.get("chunk_id", chunk_id)).strip() or chunk_id,
+            "source_id": str(item.get("source_id", item_id)).strip() or item_id,
+            "text": str(item.get("text", source_text)).strip() or source_text,
+            "span_start": item.get("span_start", None),
+            "span_end": item.get("span_end", None),
+            "delimiter_type": str(item.get("delimiter_type", self._detect_delimiter_type(source_text))).strip() or "none",
+            "is_dialogue": bool(item.get("is_dialogue", seg_type in {"dialogue", "thought"})),
+            "speaker": speaker,
+            "character_type": str(item.get("character_type", "narrator" if seg_type == "narration" else "unknown")).strip().lower(),
+            "confidence": float(item.get("confidence", 1.0) or 0.0),
+            "notes": None if item.get("notes") is None else str(item.get("notes")),
+            "type": seg_type,
+        }
+        if protocol["character_type"] not in self._CHARACTER_TYPES:
+            return None, f"character_type '{protocol['character_type']}' must be one of {self._CHARACTER_TYPES}"
+        if protocol["delimiter_type"] not in self._VALID_DELIMITER_TYPES:
+            return None, "delimiter_type is invalid"
+        if protocol["speaker"] is not None and not isinstance(protocol["speaker"], str):
+            return None, "speaker must be string or null"
+        if not 0.0 <= protocol["confidence"] <= 1.0:
+            return None, "confidence must be within [0.0, 1.0]"
+        if protocol["span_start"] is not None and not isinstance(protocol["span_start"], int):
+            return None, "span_start must be integer or null"
+        if protocol["span_end"] is not None and not isinstance(protocol["span_end"], int):
+            return None, "span_end must be integer or null"
+        if protocol["span_start"] is not None and protocol["span_end"] is not None:
+            if protocol["span_end"] < protocol["span_start"]:
+                return None, "span_end must be >= span_start"
+        return protocol, None
+
+    def _validate_pass2(
+        self,
+        payload: Any,
+        expected_items: list[dict[str, Any]],
+        chunk_id: str,
+    ) -> tuple[list[dict[str, Any]] | None, bool, float, str | None]:
         # Unwrap {"segments": [...]} envelope before the single-object check so
         # that wrapped responses are not silently dropped when multiple IDs are
         # expected.
         if isinstance(payload, dict) and payload.keys() >= {'segments'}:
             payload = payload.get('segments')
+        expected_ids = [item["id"] for item in expected_items]
+        text_by_id = {item["id"]: item["text"] for item in expected_items}
         if isinstance(payload, dict):
             payload = [payload] if len(expected_ids) == 1 else None
         if not isinstance(payload, list):
-            return None, True, 0.0
+            return None, True, 0.0, f"payload is not a list (got {type(payload).__name__})"
         normalized = []
         expected = set(expected_ids)
         seen = set()
         for item in payload:
             if not isinstance(item, dict):
-                return None, True, 0.0
+                return None, True, 0.0, f"candidate is not an object (got {type(item).__name__})"
             item_id = str(item.get('id', '')).strip()
             if item_id not in expected or item_id in seen:
-                return None, True, len(seen) / max(1, len(expected_ids))
+                return None, True, len(seen) / max(1, len(expected_ids)), f"unexpected or duplicate id: {item_id or '<empty>'}"
             seen.add(item_id)
-            normalized.append({
-                'id': item_id,
-                'type': self._normalize_type(item.get('type', 'narration')),
-                'speaker': self._normalize_speaker(item.get('speaker', ''), self._normalize_type(item.get('type', 'narration'))),
-            })
+            normalized_item, error = self._normalize_protocol_candidate(
+                item,
+                expected_id=item_id,
+                source_text=text_by_id.get(item_id, ""),
+                chunk_id=chunk_id,
+            )
+            if normalized_item is None:
+                return None, True, len(seen) / max(1, len(expected_ids)), error
+            normalized.append(normalized_item)
         if len(seen) != len(expected_ids):
-            return None, True, len(seen) / max(1, len(expected_ids))
-        return normalized, False, 1.0
+            missing_ids = sorted(expected.difference(seen))
+            return None, True, len(seen) / max(1, len(expected_ids)), f"missing ids in response: {missing_ids}"
+        return normalized, False, 1.0, None
 
     def parse(
         self,
@@ -246,6 +377,8 @@ class DialogueSegmentationService:
         chunk_overlap: int | None = None,
         manual_segment_hints=None,
         story_context_block: str | None = None,
+        pass2_batch_size: int | None = None,
+        protocol_retries: int | None = None,
     ) -> DialogueLLMResult:
         cleaned = self._clean_input_text(text)
         chunks = self._split_chunks(cleaned, int(chunk_size or 6000), int(chunk_overlap or 500))
@@ -260,7 +393,7 @@ class DialogueSegmentationService:
             source_items = [{'id': f'{chunk_id}_p{i}', 'text': paragraph} for i, paragraph in enumerate(self._paragraphs(chunk))]
             llm_prompt_items = []
             for item in source_items:
-                llm_text = self._llm_text_for_segment(item['text'], self.delimited_text_only)
+                llm_text = self._llm_text_for_segment(item['text'], self.delimited_text_only, self.delimiter_filters)
                 if not llm_text:
                     continue
                 llm_prompt_items.append({'id': item['id'], 'text': llm_text})
@@ -317,8 +450,10 @@ class DialogueSegmentationService:
             pass2_system = (
                 'SEGMENT AND ATTRIBUTE\n'
                 'Input: JSON array of {"id": "...", "text": "..."}\n'
-                'Return JSON only as:\n'
-                '[{"id": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator"}]'
+                f'Return JSON only where each item contains fields: {", ".join(self._PASS2_PROTOCOL_FIELDS)}.\n'
+                'Rules: type=dialogue|thought|narration, delimiter_type=single_quotes|double_quotes|square_brackets|'
+                'curly_braces|angle_brackets|parentheses|none, speaker is nullable string, '
+                'character_type=character|narrator|unknown, confidence=0.0-1.0.'
             )
             if manual_segment_hints:
                 pass2_system += f'\nManual hints: {json.dumps(manual_segment_hints, ensure_ascii=False)}'
@@ -327,50 +462,117 @@ class DialogueSegmentationService:
                     all_segments.append(self._heuristic_segment(item['text'], item['id']))
                 continue
             llm_prompt_ids = {item['id'] for item in llm_prompt_items}
-            user_payload = json.dumps(llm_prompt_items, ensure_ascii=False)
-            try:
-                primary_raw = self._ask(self.client, system=pass2_system, user=user_payload, chapter_id=f'{chunk_id}_p2')
-            except Exception as exc:
+            resolved_by_id: dict[str, dict[str, Any]] = {}
+            effective_batch_size = int(pass2_batch_size if pass2_batch_size is not None else self.pass2_batch_size)
+            effective_protocol_retries = int(protocol_retries if protocol_retries is not None else self.protocol_retries)
+            pass2_batches = self._batch_items(llm_prompt_items, effective_batch_size)
+            for batch_index, batch_items in enumerate(pass2_batches):
+                user_payload = json.dumps(batch_items, ensure_ascii=False)
+                expected_batch_ids = [item['id'] for item in batch_items]
                 primary_raw = []
-                diagnostics.llm_failures.append(f'{chunk_id}_p2:{exc}')
-            normalized_items, malformed, ratio = self._validate_pass2(primary_raw, [item['id'] for item in llm_prompt_items])
-            matched_ratios.append(ratio)
-            if normalized_items is None and self.fallback_client:
-                diagnostics.pass2_fallback_attempted = True
-                try:
-                    fallback_raw = self._ask(self.fallback_client, system=pass2_system, user=user_payload, chapter_id=f'{chunk_id}_p2f')
-                except Exception as exc:
-                    fallback_raw = []
-                    diagnostics.llm_failures.append(f'{chunk_id}_p2f:{exc}')
-                normalized_items, malformed, ratio = self._validate_pass2(fallback_raw, [item['id'] for item in llm_prompt_items])
-                matched_ratios[-1] = ratio
-                if normalized_items is not None:
-                    diagnostics.pass2_fallback_used = True
-            if normalized_items is None and self.formatter_client:
-                diagnostics.repair_attempted = True
-                repair_user = (
-                    'Repair malformed pass-2 JSON.\n'
-                    f'SOURCE LIST:\n{json.dumps(llm_prompt_items, ensure_ascii=False)}\n'
-                    f'MALFORMED RESPONSE:\n{json.dumps(primary_raw, ensure_ascii=False)}'
-                )
-                try:
-                    repaired_raw = self._ask(self.formatter_client, system='Repair malformed pass-2 output.', user=repair_user, chapter_id=f'{chunk_id}_p2r')
-                except Exception as exc:
-                    repaired_raw = []
-                    diagnostics.llm_failures.append(f'{chunk_id}_p2r:{exc}')
-                normalized_items, malformed, ratio = self._validate_pass2(repaired_raw, [item['id'] for item in llm_prompt_items])
-                matched_ratios[-1] = ratio
-                if normalized_items is not None:
-                    diagnostics.repair_succeeded = True
-            if normalized_items is None:
-                diagnostics.validation_passed = False
-                diagnostics.needs_review = True
-                diagnostics.malformed_json = True or malformed
-                diagnostics.fallback_count += len(llm_prompt_items)
-                for item in source_items:
-                    all_segments.append(self._heuristic_segment(item['text'], item['id']))
-                continue
-            resolved_by_id = {entry['id']: entry for entry in normalized_items}
+                normalized_items = None
+                malformed = False
+                ratio = 0.0
+                validation_error = None
+                for attempt in range(effective_protocol_retries + 1):
+                    request_user = user_payload
+                    request_chapter_id = (
+                        f'{chunk_id}_p2'
+                        if (batch_index == 0 and attempt == 0 and len(pass2_batches) == 1)
+                        else f'{chunk_id}_p2b{batch_index}_r{attempt}'
+                    )
+                    if attempt > 0:
+                        request_user = (
+                            "Repair prior response to strict protocol JSON only.\n"
+                            f"EXPECTED_IDS:{json.dumps(expected_batch_ids, ensure_ascii=False)}\n"
+                            f"SOURCE_LIST:{json.dumps(batch_items, ensure_ascii=False)}\n"
+                            f"INVALID_RESPONSE:{json.dumps(primary_raw, ensure_ascii=False)}\n"
+                            "Each item must include: "
+                            + ", ".join(self._PASS2_PROTOCOL_FIELDS)
+                            + "."
+                        )
+                    try:
+                        primary_raw = self._ask(self.client, system=pass2_system, user=request_user, chapter_id=request_chapter_id)
+                    except Exception as exc:
+                        primary_raw = []
+                        diagnostics.llm_failures.append(f'{request_chapter_id}:{exc}')
+                    normalized_items, malformed, ratio, validation_error = self._validate_pass2(primary_raw, batch_items, chunk_id)
+                    if normalized_items is not None:
+                        break
+                matched_ratios.append(ratio)
+                if normalized_items is None and self.fallback_client:
+                    diagnostics.pass2_fallback_attempted = True
+                    try:
+                        fallback_raw = self._ask(
+                            self.fallback_client,
+                            system=pass2_system,
+                            user=user_payload,
+                            chapter_id=(
+                                f'{chunk_id}_p2f'
+                                if (batch_index == 0 and len(pass2_batches) == 1)
+                                else f'{chunk_id}_p2f_b{batch_index}'
+                            ),
+                        )
+                    except Exception as exc:
+                        fallback_raw = []
+                        diagnostics.llm_failures.append(f'{chunk_id}_p2f_b{batch_index}:{exc}')
+                    normalized_items, malformed, ratio, validation_error = self._validate_pass2(fallback_raw, batch_items, chunk_id)
+                    matched_ratios[-1] = ratio
+                    if normalized_items is not None:
+                        diagnostics.pass2_fallback_used = True
+                if normalized_items is None and self.formatter_client:
+                    diagnostics.repair_attempted = True
+                    repair_user = (
+                        'Repair malformed pass-2 JSON.\n'
+                        f'SOURCE LIST:\n{json.dumps(batch_items, ensure_ascii=False)}\n'
+                        f'MALFORMED RESPONSE:\n{json.dumps(primary_raw, ensure_ascii=False)}\n'
+                        'Return JSON array only with strict candidate fields.'
+                    )
+                    try:
+                        repaired_raw = self._ask(
+                            self.formatter_client,
+                            system='Repair malformed pass-2 output.',
+                            user=repair_user,
+                            chapter_id=(
+                                f'{chunk_id}_p2r'
+                                if (batch_index == 0 and len(pass2_batches) == 1)
+                                else f'{chunk_id}_p2r_b{batch_index}'
+                            ),
+                        )
+                    except Exception as exc:
+                        repaired_raw = []
+                        diagnostics.llm_failures.append(f'{chunk_id}_p2r_b{batch_index}:{exc}')
+                    normalized_items, malformed, ratio, validation_error = self._validate_pass2(repaired_raw, batch_items, chunk_id)
+                    matched_ratios[-1] = ratio
+                    if normalized_items is not None:
+                        diagnostics.repair_succeeded = True
+                if normalized_items is None:
+                    diagnostics.validation_passed = False
+                    diagnostics.needs_review = True
+                    diagnostics.malformed_json = diagnostics.malformed_json or bool(malformed)
+                    diagnostics.fallback_count += len(batch_items)
+                    if validation_error:
+                        diagnostics.llm_failures.append(f'{chunk_id}_p2_validation_b{batch_index}:{validation_error}')
+                    for item in batch_items:
+                        heuristic_seg = self._heuristic_segment(item["text"], item["id"])
+                        resolved_by_id[item["id"]] = {
+                            "id": item["id"],
+                            "text": item["text"],
+                            "type": heuristic_seg.type,
+                            "speaker": heuristic_seg.speaker,
+                            "chunk_id": chunk_id,
+                            "source_id": item["id"],
+                            "span_start": None,
+                            "span_end": None,
+                            "delimiter_type": self._detect_delimiter_type(item["text"]),
+                            "is_dialogue": False,
+                            "character_type": "unknown",
+                            "confidence": 0.0,
+                            "notes": "heuristic fallback",
+                        }
+                    continue
+                for entry in normalized_items:
+                    resolved_by_id[entry['id']] = entry
             for prompt_item in source_items:
                 if prompt_item['id'] not in llm_prompt_ids:
                     all_segments.append(self._heuristic_segment(prompt_item['text'], prompt_item['id']))

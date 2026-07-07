@@ -64,6 +64,29 @@ def _extract_id_lines_from_prompt(prompt: str) -> list[dict]:
     return []
 
 
+def _build_strict_protocol_candidate(
+    entry: dict,
+    *,
+    speaker: str = "Alice",
+    segment_type: str = "dialogue",
+) -> dict:
+    return {
+        "id": entry["id"],
+        "source_id": entry["id"],
+        "chunk_id": entry["id"].split("_p", 1)[0],
+        "text": entry["text"],
+        "span_start": None,
+        "span_end": None,
+        "delimiter_type": "double_quotes",
+        "is_dialogue": segment_type in {"dialogue", "thought"},
+        "type": segment_type,
+        "speaker": speaker,
+        "character_type": "character" if speaker not in {"narrator", "unknown"} else speaker,
+        "confidence": 0.9,
+        "notes": None,
+    }
+
+
 def test_dialogue_parser_validates_llm_json_contract(monkeypatch):
     parser = DialogueParser(ollama_url="http://example/api/generate", model="mistral:instruct")
     pass1_payload = [{"name": "Alice", "gender": "female", "confidence": 0.9}]
@@ -319,7 +342,23 @@ def test_dialogue_segmentation_service_uses_new_system_prompt_contract():
     assert "SEGMENT AND ATTRIBUTE" in pass2_system
     # Check new ID-based input/output format
     assert 'Input: JSON array of {"id": "...", "text": "..."}' in pass2_system
-    assert '[{"id": "...", "type": "dialogue|thought|narration", "speaker": "Name or narrator"}]' in pass2_system
+    for field in (
+        "id",
+        "source_id",
+        "chunk_id",
+        "text",
+        "span_start",
+        "span_end",
+        "delimiter_type",
+        "is_dialogue",
+        "type",
+        "speaker",
+        "character_type",
+        "confidence",
+        "notes",
+    ):
+        assert field in pass2_system
+    assert "character_type=character|narrator|unknown" in pass2_system
 
 
 def test_dialogue_segmentation_service_can_limit_llm_prompts_to_delimited_text():
@@ -505,6 +544,110 @@ def test_dialogue_segmentation_accepts_line_mapping_payloads():
     assert result.segments[0].speaker == "Alice"
     assert result.segments[1].type == "narration"
     assert result.characters[0]["name"] == "Alice"
+
+
+def test_extract_delimited_fragments_honors_per_delimiter_filters():
+    text = 'Narration "hello" [aside] {meta} <tag> \'thought\' (paren)'
+    fragments = DialogueSegmentationService._extract_delimited_fragments(
+        text,
+        {"double_quotes": False, "single_quotes": True, "square_brackets": False},
+    )
+    assert "hello" not in fragments
+    assert "aside" not in fragments
+    assert "thought" in fragments
+    assert "meta" in fragments
+    assert "tag" in fragments
+    assert "paren" in fragments
+
+
+def test_dialogue_segmentation_retries_protocol_then_repairs():
+    class _RetryClient:
+        def __init__(self):
+            self.p2_calls = 0
+
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Alice greets Bob."}
+            if chapter_id.endswith("_p1"):
+                return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+            if "_p2" in chapter_id:
+                self.p2_calls += 1
+                if self.p2_calls == 1:
+                    return [{"id": "wrong", "type": "dialogue", "speaker": "Ghost"}]
+                id_lines = json.loads(user.split("SOURCE_LIST:", 1)[1].split("\nINVALID_RESPONSE:", 1)[0])
+                return [_build_strict_protocol_candidate(entry, speaker="Alice") for entry in id_lines]
+            return []
+
+    service = DialogueSegmentationService(client=_RetryClient(), protocol_retries=1)
+    result = service.parse(text='"Hello there."', chapter_id="ch-protocol-retry")
+
+    assert result.diagnostics.validation_passed
+    assert result.segments[0].speaker == "Alice"
+
+
+def test_dialogue_segmentation_fallback_used_after_protocol_failures():
+    class _AlwaysBadClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Alice speaks."}
+            if chapter_id.endswith("_p1"):
+                return []
+            if "_p2" in chapter_id:
+                return [{"id": "bad", "type": "dialogue", "speaker": "Ghost", "confidence": 2.0}]
+            return []
+
+    service = DialogueSegmentationService(client=_AlwaysBadClient(), protocol_retries=1)
+    result = service.parse(text='"Hello."\nNarration.', chapter_id="ch-protocol-fail")
+
+    assert not result.diagnostics.validation_passed
+    assert result.diagnostics.needs_review
+    assert all(seg.speaker != "Ghost" for seg in result.segments)
+
+
+def test_dialogue_segmentation_accepts_full_strict_protocol_contract():
+    class _StrictClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Alice says hello."}
+            if chapter_id.endswith("_p1"):
+                return [{"name": "Alice", "gender": "female", "confidence": 0.9}]
+            if "_p2" in chapter_id:
+                id_lines = json.loads(user)
+                return [_build_strict_protocol_candidate(entry, speaker="Alice") for entry in id_lines]
+            return []
+
+    service = DialogueSegmentationService(client=_StrictClient())
+    result = service.parse(text='"Hello."\n"Bye."', chapter_id="ch-strict-contract")
+
+    assert result.diagnostics.validation_passed
+    assert not result.diagnostics.needs_review
+    assert [seg.speaker for seg in result.segments] == ["Alice", "Alice"]
+    assert [seg.type for seg in result.segments] == ["dialogue", "dialogue"]
+
+
+def test_dialogue_segmentation_batches_pass2_and_preserves_order_with_partial_failures():
+    class _BatchClient:
+        def ask_json_any(self, *, system, user, chapter_id):
+            if chapter_id.endswith("_p0"):
+                return {"summary": "Batch test."}
+            if chapter_id.endswith("_p1"):
+                return []
+            if "_p2" in chapter_id:
+                id_lines = json.loads(user) if user.strip().startswith("[") else []
+                if "b1" in chapter_id:
+                    return [{"id": "invalid", "type": "dialogue", "speaker": "Ghost"}]
+                return [_build_strict_protocol_candidate(entry, speaker="Alice") for entry in id_lines]
+            return []
+
+    service = DialogueSegmentationService(client=_BatchClient(), pass2_batch_size=2, protocol_retries=0)
+    text = '"A"\n"B"\n"C"\n"D"\n"E"'
+    result = service.parse(text=text, chapter_id="ch-batch")
+
+    assert len(result.segments) == 5
+    assert [seg.text for seg in result.segments] == ['"A"', '"B"', '"C"', '"D"', '"E"']
+    assert result.diagnostics.fallback_count == 2
+    assert result.segments[0].speaker == "Alice"
+    assert result.segments[1].speaker == "Alice"
 
 
 # ---------------------------------------------------------------------------
