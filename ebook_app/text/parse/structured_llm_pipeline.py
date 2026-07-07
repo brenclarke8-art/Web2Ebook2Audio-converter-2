@@ -157,9 +157,6 @@ class CharacterRegistry:
         """
         display = speaker_name.strip() if speaker_name else "Narrator"
         key = display.lower()
-        if not key:
-            key = "narrator"
-            display = "Narrator"
         if key not in self._by_name:
             self._by_name[key] = {
                 "character_id": f"char_{self._next_id}",
@@ -201,8 +198,13 @@ def _extract_json_snippet(text: str) -> str:
     if not candidates:
         return text
     start = min(candidates)
-    end = max(text.rfind("}"), text.rfind("]"))
-    if end <= start:
+    last_close_brace = text.rfind("}")
+    last_close_bracket = text.rfind("]")
+    end = max(last_close_brace, last_close_bracket)
+    # If no closing bracket/brace found, or end comes before start, return
+    # the text from start to the end of the string so the caller can attempt
+    # to parse it (it will fail gracefully in the outer try/except).
+    if end == -1 or end <= start:
         return text[start:]
     return text[start : end + 1]
 
