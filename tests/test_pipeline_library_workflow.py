@@ -238,6 +238,29 @@ def test_build_dialogue_parser_prefers_unified_model_setting(tmp_path):
     assert parser.formatter_model == "unified:model"
 
 
+def test_build_dialogue_parser_applies_delimiter_and_batch_settings(tmp_path):
+    settings = DummySettings()
+    settings.set("output_dir", str(tmp_path))
+    settings.set("dialogue_llm_delimited_text_only", True)
+    settings.set("dialogue_llm_delimiter_double_quotes", False)
+    settings.set("dialogue_llm_delimiter_single_quotes", True)
+    settings.set("llm_chunk_size", 321)
+    settings.set("llm_chunk_overlap", 12)
+    settings.set("dialogue_llm_batch_size", 3)
+    settings.set("dialogue_llm_protocol_retries", 2)
+    controller = PipelineController(settings=settings, work_dir=tmp_path / "pipeline_work")
+
+    parser = controller._build_dialogue_parser()
+
+    assert parser.delimited_text_only is True
+    assert parser.delimiter_filters["double_quotes"] is False
+    assert parser.delimiter_filters["single_quotes"] is True
+    assert parser.chunk_size == 321
+    assert parser.chunk_overlap == 12
+    assert parser.pass2_batch_size == 3
+    assert parser.protocol_retries == 2
+
+
 def test_clean_chapters_removes_ui_noise_and_zero_width_chars(tmp_path):
     settings = DummySettings()
     settings.set("output_dir", str(tmp_path))

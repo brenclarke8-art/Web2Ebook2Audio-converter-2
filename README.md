@@ -388,6 +388,16 @@ Custom paths can be set in **Settings → TTS Backend → Model file (.onnx)** a
 | **Dialogue LLM timeout** | Network timeout for LLM requests (seconds) | `300` |
 | **Dialogue LLM retries** | Retry count for failed LLM requests | `1` |
 | **Dialogue LLM delimited text only** | Only send text inside `""`, `''`, `[]`, `{}`, `<>`, or `()` to the dialogue LLM | `false` |
+| **dialogue_llm_delimiter_single_quotes** | Include `'...'` snippets when delimited-only mode is enabled | `true` |
+| **dialogue_llm_delimiter_double_quotes** | Include `"..."` snippets when delimited-only mode is enabled | `true` |
+| **dialogue_llm_delimiter_square_brackets** | Include `[...]` snippets when delimited-only mode is enabled | `true` |
+| **dialogue_llm_delimiter_curly_braces** | Include `{...}` snippets when delimited-only mode is enabled | `true` |
+| **dialogue_llm_delimiter_angle_brackets** | Include `<...>` snippets when delimited-only mode is enabled | `true` |
+| **dialogue_llm_delimiter_parentheses** | Include `(...)` snippets when delimited-only mode is enabled | `true` |
+| **dialogue_llm_batch_size** | Pass-2 protocol batch size (`0` = whole chunk in one request) | `0` |
+| **dialogue_llm_protocol_retries** | Additional schema-repair retries before fallback | `1` |
+| **llm_chunk_size** | Chunk size for dialogue candidate + assignment stages | `6000` |
+| **llm_chunk_overlap** | Overlap between adjacent dialogue chunks | `500` |
 | **json_pipeline_enabled** | Enable two-stage JSON pipeline (generate/extract → validate/repair) | `true` |
 | **json_repair_max_retries** | Max model-based JSON repair attempts per response | `2` |
 | **llm_segment_mode** | Segment request mode (`batch` or `single`) | `batch` |
@@ -404,6 +414,13 @@ Pass-2 classification now uses a two-stage JSON flow:
    - bounded repair retries before marking a segment as `FAILED_FORMAT`.
 
 When `llm_segment_mode=batch`, the classifier automatically switches to single-segment calls for remaining segments if format failures hit `llm_fallback_failure_threshold`.
+
+Dialogue parsing uses two explicit stages per chunk as well:
+
+1. **Dialogue candidate detection** (summary + character context)
+2. **Speaker/type assignment** (strict pass-2 candidate protocol)
+
+Pass-2 now validates each candidate object against a strict contract (id/source_id/chunk_id/text/span/delimiter/is_dialogue/type/speaker/character_type/confidence/notes). Invalid schema responses trigger bounded repair retries, then fallback/repair clients, and finally deterministic heuristic fallback for unresolved batches.
 
 Environment overrides are supported:
 

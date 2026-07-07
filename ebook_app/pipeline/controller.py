@@ -720,10 +720,27 @@ class PipelineController:
             ),
             False,
         )
+        delimiter_filters = {
+            "single_quotes": _bool_setting(_gs(self.settings, "dialogue_llm_delimiter_single_quotes", default=True), True),
+            "double_quotes": _bool_setting(_gs(self.settings, "dialogue_llm_delimiter_double_quotes", default=True), True),
+            "square_brackets": _bool_setting(_gs(self.settings, "dialogue_llm_delimiter_square_brackets", default=True), True),
+            "curly_braces": _bool_setting(_gs(self.settings, "dialogue_llm_delimiter_curly_braces", default=True), True),
+            "angle_brackets": _bool_setting(_gs(self.settings, "dialogue_llm_delimiter_angle_brackets", default=True), True),
+            "parentheses": _bool_setting(_gs(self.settings, "dialogue_llm_delimiter_parentheses", default=True), True),
+        }
+        llm_chunk_size = _int_setting(_gs(self.settings, "llm_chunk_size", default=6000), 6000)
+        llm_chunk_overlap = _int_setting(_gs(self.settings, "llm_chunk_overlap", default=500), 500)
+        dialogue_llm_batch_size = _int_setting(_gs(self.settings, "dialogue_llm_batch_size", default=0), 0)
+        dialogue_protocol_retries = _int_setting(_gs(self.settings, "dialogue_llm_protocol_retries", default=1), 1)
         return DialogueParser(
             ollama_url=url,
             model=base_model,
             delimited_text_only=delimited_text_only,
+            delimiter_filters=delimiter_filters,
+            chunk_size=max(1, llm_chunk_size),
+            chunk_overlap=max(0, llm_chunk_overlap),
+            pass2_batch_size=max(0, dialogue_llm_batch_size),
+            protocol_retries=max(0, dialogue_protocol_retries),
         )
 
     def _preflight_llm_check(self, parser) -> None:
