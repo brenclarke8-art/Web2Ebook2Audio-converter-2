@@ -225,6 +225,7 @@ class SettingsManager(QObject):
             return True
         if lowered in {"0", "false", "no", "off", ""}:
             return False
+        logger.debug("Unrecognized boolean setting value %r; treating it as False.", value)
         return False
 
     def _canonical_delimited_text_only(self, value=None, legacy_value=None) -> bool:
