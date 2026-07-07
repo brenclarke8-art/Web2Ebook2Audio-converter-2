@@ -7,6 +7,7 @@ deep-translator>=1.11.4
 numpy>=1.26.0
 soundfile>=0.12.1
 playwright>=1.44.0
+pydantic>=2.0.0
 # Optional — only needed in "local" TTS mode (same Python env as GUI).
 # If using "remote" mode (tts_service/tts_server.py), these are not required here.
 # kokoro-onnx>=0.4.4,<1.0.0

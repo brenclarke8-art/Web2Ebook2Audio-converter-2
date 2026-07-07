@@ -208,10 +208,13 @@ class DialogueSegmentationService:
         return client.ask_json(system=system, user=user, chapter_id=chapter_id)
 
     def _validate_pass2(self, payload: Any, expected_ids: list[str]) -> tuple[list[dict[str, Any]] | None, bool, float]:
-        if isinstance(payload, dict):
-            payload = [payload] if len(expected_ids) == 1 else None
+        # Unwrap {"segments": [...]} envelope before the single-object check so
+        # that wrapped responses are not silently dropped when multiple IDs are
+        # expected.
         if isinstance(payload, dict) and payload.keys() >= {'segments'}:
             payload = payload.get('segments')
+        if isinstance(payload, dict):
+            payload = [payload] if len(expected_ids) == 1 else None
         if not isinstance(payload, list):
             return None, True, 0.0
         normalized = []
@@ -387,4 +390,26 @@ class DialogueSegmentationService:
 
         if matched_ratios:
             diagnostics.id_match_ratio = sum(matched_ratios) / len(matched_ratios)
-        return DialogueLLMResult(all_segments, list(characters_by_name.values()), diagnostics)
+
+        # Drop segments with empty/whitespace text and guarantee every segment
+        # has a non-empty speaker and a valid type.
+        final_segments: list[DialogueLLMSegment] = []
+        for seg in all_segments:
+            if not (seg.text or '').strip():
+                continue
+            seg_type = self._normalize_type(seg.type)
+            seg_speaker = self._normalize_speaker(seg.speaker, seg_type)
+            final_segments.append(
+                DialogueLLMSegment(
+                    text=seg.text,
+                    type=seg_type,
+                    speaker=seg_speaker,
+                    gender=seg.gender,
+                    speaker_confidence=seg.speaker_confidence,
+                    gender_confidence=seg.gender_confidence,
+                    character_confidence=seg.character_confidence,
+                    paragraph_id=seg.paragraph_id,
+                )
+            )
+
+        return DialogueLLMResult(final_segments, list(characters_by_name.values()), diagnostics)
