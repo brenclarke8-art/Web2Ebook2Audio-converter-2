@@ -59,16 +59,52 @@ class DialogueLLMResult:
 
 
 class DialogueSegmentationService:
-    def __init__(self, *, client, fallback_client=None, formatter_client=None):
+    _DELIMITED_PATTERNS = (
+        re.compile(r'"([^"]+?)"', re.DOTALL),
+        re.compile(r"(?<!\w)'([^']+?)'(?!\w)", re.DOTALL),
+        re.compile(r'\[([^\[\]]+?)\]', re.DOTALL),
+        re.compile(r'\{([^{}]+?)\}', re.DOTALL),
+        re.compile(r'<([^<>]+?)>', re.DOTALL),
+        re.compile(r'\(([^()]+?)\)', re.DOTALL),
+    )
+
+    def __init__(self, *, client, fallback_client=None, formatter_client=None, delimited_text_only: bool = False):
         self.client = client
         self.fallback_client = fallback_client
         self.formatter_client = formatter_client
+        self.delimited_text_only = bool(delimited_text_only)
 
     @staticmethod
     def _clean_input_text(text: str) -> str:
         cleaned = TextCleaner.clean_text(text or '')
         lines = [line for line in cleaned.splitlines() if line.strip().casefold() not in _UI_NOISE_LINES]
         return '\n'.join(lines).strip()
+
+    @classmethod
+    def _extract_delimited_fragments(cls, text: str) -> list[str]:
+        if not text:
+            return []
+        matches: list[tuple[int, str]] = []
+        seen: set[tuple[int, str]] = set()
+        for pattern in cls._DELIMITED_PATTERNS:
+            for match in pattern.finditer(text):
+                fragment = (match.group(1) or '').strip()
+                if not fragment:
+                    continue
+                key = (match.start(), fragment)
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(key)
+        matches.sort(key=lambda item: item[0])
+        return [fragment for _, fragment in matches]
+
+    @classmethod
+    def _llm_text_for_segment(cls, text: str, delimited_text_only: bool) -> str:
+        if not delimited_text_only:
+            return text
+        fragments = cls._extract_delimited_fragments(text)
+        return '\n'.join(fragments).strip()
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
@@ -218,12 +254,23 @@ class DialogueSegmentationService:
 
         for idx, chunk in enumerate(chunks):
             chunk_id = chapter_id if len(chunks) == 1 else f'{chapter_id}_c{idx + 1}'
+            source_items = [{'id': f'{chunk_id}_p{i}', 'text': paragraph} for i, paragraph in enumerate(self._paragraphs(chunk))]
+            llm_prompt_items = []
+            for item in source_items:
+                llm_text = self._llm_text_for_segment(item['text'], self.delimited_text_only)
+                if not llm_text:
+                    continue
+                llm_prompt_items.append({'id': item['id'], 'text': llm_text})
+            llm_chunk = '\n'.join(item['text'] for item in llm_prompt_items).strip()
             summary_system = 'You are a chapter-summary assistant. Return JSON object {"summary": "..."} only.'
-            try:
-                summary_payload = self._ask(self.client, system=summary_system, user=chunk, chapter_id=f'{chunk_id}_p0')
-            except Exception as exc:
+            if llm_chunk:
+                try:
+                    summary_payload = self._ask(self.client, system=summary_system, user=llm_chunk, chapter_id=f'{chunk_id}_p0')
+                except Exception as exc:
+                    summary_payload = {}
+                    diagnostics.llm_failures.append(f'{chunk_id}_p0:{exc}')
+            else:
                 summary_payload = {}
-                diagnostics.llm_failures.append(f'{chunk_id}_p0:{exc}')
             summary = self._extract_summary(summary_payload)
 
             pass1_system = (
@@ -236,17 +283,20 @@ class DialogueSegmentationService:
                 pass1_system += f'\n{story_context_block}'
             if known_context:
                 pass1_system += f'\nCONTEXT (from previous chapters):\n{known_context}'
-            try:
-                pass1_payload = self._ask(self.client, system=pass1_system, user=chunk, chapter_id=f'{chunk_id}_p1')
-            except Exception as exc:
+            if llm_chunk:
+                try:
+                    pass1_payload = self._ask(self.client, system=pass1_system, user=llm_chunk, chapter_id=f'{chunk_id}_p1')
+                except Exception as exc:
+                    pass1_payload = []
+                    diagnostics.llm_failures.append(f'{chunk_id}_p1:{exc}')
+            else:
                 pass1_payload = []
-                diagnostics.llm_failures.append(f'{chunk_id}_p1:{exc}')
             pass1_chars = self._normalize_character_payload(pass1_payload)
-            if self.fallback_client and self._suspiciously_weak(pass1_chars, summary):
+            if llm_chunk and self.fallback_client and self._suspiciously_weak(pass1_chars, summary):
                 diagnostics.pass1_fallback_attempted = True
                 try:
                     fallback_chars = self._normalize_character_payload(
-                        self._ask(self.fallback_client, system=pass1_system, user=chunk, chapter_id=f'{chunk_id}_p1f')
+                        self._ask(self.fallback_client, system=pass1_system, user=llm_chunk, chapter_id=f'{chunk_id}_p1f')
                     )
                 except Exception as exc:
                     fallback_chars = []
@@ -261,7 +311,6 @@ class DialogueSegmentationService:
                 if existing is None or candidate.confidence >= existing.confidence:
                     characters_by_name[key] = candidate
 
-            prompt_items = [{'id': f'{chunk_id}_p{i}', 'text': paragraph} for i, paragraph in enumerate(self._paragraphs(chunk))]
             pass2_system = (
                 'SEGMENT AND ATTRIBUTE\n'
                 'Input: JSON array of {"id": "...", "text": "..."}\n'
@@ -270,13 +319,17 @@ class DialogueSegmentationService:
             )
             if manual_segment_hints:
                 pass2_system += f'\nManual hints: {json.dumps(manual_segment_hints, ensure_ascii=False)}'
-            user_payload = json.dumps(prompt_items, ensure_ascii=False)
+            if not llm_prompt_items:
+                for item in source_items:
+                    all_segments.append(self._heuristic_segment(item['text'], item['id']))
+                continue
+            user_payload = json.dumps(llm_prompt_items, ensure_ascii=False)
             try:
                 primary_raw = self._ask(self.client, system=pass2_system, user=user_payload, chapter_id=f'{chunk_id}_p2')
             except Exception as exc:
                 primary_raw = []
                 diagnostics.llm_failures.append(f'{chunk_id}_p2:{exc}')
-            normalized_items, malformed, ratio = self._validate_pass2(primary_raw, [item['id'] for item in prompt_items])
+            normalized_items, malformed, ratio = self._validate_pass2(primary_raw, [item['id'] for item in llm_prompt_items])
             matched_ratios.append(ratio)
             if normalized_items is None and self.fallback_client:
                 diagnostics.pass2_fallback_attempted = True
@@ -285,7 +338,7 @@ class DialogueSegmentationService:
                 except Exception as exc:
                     fallback_raw = []
                     diagnostics.llm_failures.append(f'{chunk_id}_p2f:{exc}')
-                normalized_items, malformed, ratio = self._validate_pass2(fallback_raw, [item['id'] for item in prompt_items])
+                normalized_items, malformed, ratio = self._validate_pass2(fallback_raw, [item['id'] for item in llm_prompt_items])
                 matched_ratios[-1] = ratio
                 if normalized_items is not None:
                     diagnostics.pass2_fallback_used = True
@@ -293,7 +346,7 @@ class DialogueSegmentationService:
                 diagnostics.repair_attempted = True
                 repair_user = (
                     'Repair malformed pass-2 JSON.\n'
-                    f'SOURCE LIST:\n{json.dumps(prompt_items, ensure_ascii=False)}\n'
+                    f'SOURCE LIST:\n{json.dumps(llm_prompt_items, ensure_ascii=False)}\n'
                     f'MALFORMED RESPONSE:\n{json.dumps(primary_raw, ensure_ascii=False)}'
                 )
                 try:
@@ -301,7 +354,7 @@ class DialogueSegmentationService:
                 except Exception as exc:
                     repaired_raw = []
                     diagnostics.llm_failures.append(f'{chunk_id}_p2r:{exc}')
-                normalized_items, malformed, ratio = self._validate_pass2(repaired_raw, [item['id'] for item in prompt_items])
+                normalized_items, malformed, ratio = self._validate_pass2(repaired_raw, [item['id'] for item in llm_prompt_items])
                 matched_ratios[-1] = ratio
                 if normalized_items is not None:
                     diagnostics.repair_succeeded = True
@@ -309,12 +362,16 @@ class DialogueSegmentationService:
                 diagnostics.validation_passed = False
                 diagnostics.needs_review = True
                 diagnostics.malformed_json = True or malformed
-                diagnostics.fallback_count += len(prompt_items)
-                for item in prompt_items:
+                diagnostics.fallback_count += len(llm_prompt_items)
+                for item in source_items:
                     all_segments.append(self._heuristic_segment(item['text'], item['id']))
                 continue
-            for prompt_item in prompt_items:
-                resolved = next(entry for entry in normalized_items if entry['id'] == prompt_item['id'])
+            resolved_by_id = {entry['id']: entry for entry in normalized_items}
+            for prompt_item in source_items:
+                resolved = resolved_by_id.get(prompt_item['id'])
+                if resolved is None:
+                    all_segments.append(self._heuristic_segment(prompt_item['text'], prompt_item['id']))
+                    continue
                 all_segments.append(
                     DialogueLLMSegment(
                         text=prompt_item['text'],

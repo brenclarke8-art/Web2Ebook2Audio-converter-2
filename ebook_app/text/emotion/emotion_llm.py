@@ -30,7 +30,7 @@ class EmotionLlm:
 
     def __init__(
         self,
-        llm_url: str = "http://127.0.0.1:11434/api/generate",
+        llm_url: str = "http://127.0.0.1:11434/api/chat",
         model: str = "qwen2.5-coder:7b",
         timeout: int = 120,
         retries: int = 1,

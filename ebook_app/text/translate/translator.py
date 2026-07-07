@@ -24,7 +24,7 @@ class Translator:
         provider: str = "llm",
         target_language: str = "en",
         source_language: str = "auto",
-        llm_url: str = "http://127.0.0.1:11434/api/generate",
+        llm_url: str = "http://127.0.0.1:11434/api/chat",
         llm_model: str = "qwen2.5-coder:7b",
         api_key: Optional[str] = None,
         timeout: int = 120,

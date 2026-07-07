@@ -31,7 +31,7 @@ class OllamaChatClient:
     def __init__(
         self,
         *,
-        base_url: str = "http://127.0.0.1:11434/api/generate",
+        base_url: str = "http://127.0.0.1:11434/api/chat",
         model: str = "qwen2.5-coder:7b",
         max_context_tokens: int = 250_000,
         timeout: int = 300,
@@ -279,7 +279,7 @@ class DialogueParser:
     def __init__(
         self,
         *,
-        ollama_url: str = "http://127.0.0.1:11434/api/generate",
+        ollama_url: str = "http://127.0.0.1:11434/api/chat",
         model: str | None = None,
         semantic_model: str | None = None,
         fallback_model: str | None = None,
@@ -289,6 +289,7 @@ class DialogueParser:
         timeout: int = 300,
         retries: int = 1,
         max_context_tokens: int = 250_000,
+        delimited_text_only: bool = False,
     ) -> None:
 
         self.ollama_url = self._normalize_ollama_url(ollama_url)
@@ -298,6 +299,7 @@ class DialogueParser:
         self.fallback_model = chosen
         self.formatter_model = chosen
         self.character_db = character_db
+        self.delimited_text_only = bool(delimited_text_only)
 
         common = dict(
             base_url=self.ollama_url,
@@ -314,6 +316,7 @@ class DialogueParser:
             client=self.client,
             fallback_client=self.fallback_client,
             formatter_client=self.formatter_client,
+            delimited_text_only=self.delimited_text_only,
         )
 
     @staticmethod
@@ -322,11 +325,11 @@ class DialogueParser:
         Normalize the Ollama URL.
 
         - Both /api/chat and /api/generate are accepted as-is (LLMClient handles both).
-        - Bare host (no path) gets /api/generate appended for backward compatibility.
+        - Bare host (no path) gets /api/chat appended by default.
         - Any other URL is kept unchanged.
         """
         if not url:
-            return "http://127.0.0.1:11434/api/generate"
+            return "http://127.0.0.1:11434/api/chat"
 
         url = url.rstrip("/")
 
@@ -339,7 +342,7 @@ class DialogueParser:
             (url.startswith("http://") or url.startswith("https://"))
             and "/" not in url.split("://", 1)[-1]
         ):
-            return url + "/api/generate"
+            return url + "/api/chat"
 
         # Custom endpoint — keep unchanged
         return url

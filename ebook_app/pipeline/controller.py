@@ -711,9 +711,19 @@ class PipelineController:
             default="http://127.0.0.1:11434/api/chat",
         )
         base_model = _gs(self.settings, "llm_model", "dialogue_llm_model", default="") or None
+        delimited_text_only = _bool_setting(
+            _gs(
+                self.settings,
+                "dialogue_llm_delimited_text_only",
+                "dialogue_llm_strict_quotes",
+                default=False,
+            ),
+            False,
+        )
         return DialogueParser(
             ollama_url=url,
             model=base_model,
+            delimited_text_only=delimited_text_only,
         )
 
     def _preflight_llm_check(self, parser) -> None:
