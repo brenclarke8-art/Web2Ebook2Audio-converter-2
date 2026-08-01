@@ -1,22 +1,9 @@
 # ebook_app/pipeline/__init__.py
-"""
-ebook_app.pipeline
-------------------
-Unified pipeline package.
-"""
-from .controller import PipelineController, PipelineSettings
-from .phases import PIPELINE_STEPS
-from .chapter_rebuilder import ChapterRebuilder
-
-try:
-    from ebook_app.tts.voice_router import VoiceRouter
-except Exception:
-    VoiceRouter = None
+"""Pipeline package.  Imports are lazy to avoid pulling in PySide6 at test time."""
+from .phases import PIPELINE_STEPS, PIPELINE_PHASES, PHASE_LABELS
 
 __all__ = [
-    "PipelineController",
-    "PipelineSettings",
     "PIPELINE_STEPS",
-    "ChapterRebuilder",
-    "VoiceRouter",
+    "PIPELINE_PHASES",
+    "PHASE_LABELS",
 ]

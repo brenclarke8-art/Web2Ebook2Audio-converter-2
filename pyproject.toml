@@ -35,11 +35,21 @@ dev = [
 ]
 
 [project.scripts]
-ebook-audio-studio = "ebook_app.app.main:main"
+ebook-audio-studio = "ebook_app.core.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ebook_app", "ebook_app.*"]
+include = [
+    "ebook_app",
+    "ebook_app.*",
+    "ebook_app.core",
+    "ebook_app.gui",
+    "ebook_app.gui.phase_panels",
+    "ebook_app.gui.widgets",
+    "ebook_app.phases",
+    "ebook_app.pipeline",
+    "ebook_app.utility",
+]
 
 [tool.pytest.ini_options]
 # Only collect tests from the tests/ directory (prevents collecting UI component
