@@ -78,6 +78,17 @@ class BrowserSessionManager:
             return cls._open_requests
 
     @classmethod
+    def get_current_url(cls) -> Optional[str]:
+        """Return the URL currently shown in the browser, or None if no session is open."""
+        with cls._lock:
+            if not cls._session_is_alive_locked():
+                return None
+            try:
+                return cls._page.url
+            except Exception:
+                return None
+
+    @classmethod
     def _session_is_alive_locked(cls) -> bool:
         browser = cls._browser
         page = cls._page

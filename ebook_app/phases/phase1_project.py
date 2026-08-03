@@ -25,14 +25,11 @@ class Phase1Project(PhaseBase):
 
         title = kwargs.get("title", "")
         author = kwargs.get("author", "")
-        source = kwargs.get("source", "")
         output_dir = kwargs.get("output_dir", "")
 
         errors = []
         if not title.strip():
             errors.append("Book title is required.")
-        if not source.strip():
-            errors.append("A source URL or file path is required.")
 
         if errors:
             return PhaseResult.error_result("\n".join(errors))
@@ -47,7 +44,6 @@ class Phase1Project(PhaseBase):
         summary_lines = [
             f"Title:  {title}",
             f"Author: {author or '(not set)'}",
-            f"Source: {source}",
             f"Output: {output_dir or '(default)'}",
         ]
 
@@ -57,7 +53,6 @@ class Phase1Project(PhaseBase):
             data={
                 "title": title,
                 "author": author,
-                "source": source,
                 "output_dir": output_dir,
             },
         )

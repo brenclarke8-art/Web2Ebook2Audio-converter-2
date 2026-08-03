@@ -88,6 +88,8 @@ class ProjectManager(QObject):
             "selected_end_chapter": 0,
             "chapter_urls": [],
             "chapters": [],
+            "source_method": "",
+            "local_folder": "",
             "pipeline_step": None,
             "created_at": None,
             "last_opened": None,
@@ -250,6 +252,14 @@ class ProjectManager(QObject):
                 continue
 
         return audio_files
+
+    def set_source_method(self, method: str, path: str = "") -> None:
+        """Persist the source method (``'url'`` or ``'local_folder'``) and optional path."""
+        if not self.current_project_dir:
+            return
+        self._project_data["source_method"] = method
+        self._project_data["local_folder"] = path
+        self._save_project_state()
 
     def set_index_url(self, index_url: str) -> None:
         """Persist the project's index URL."""
