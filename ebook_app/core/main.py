@@ -57,7 +57,7 @@ def main() -> None:
     app.setQuitOnLastWindowClosed(True)
 
     # Launch main window
-    from ebook_app.core.main_window import MainWindow
+    from ebook_app.app.main_window import MainWindow
     window = MainWindow(settings)
     window.show()
 
