@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -119,6 +120,8 @@ class SourceMethodPanel(QWidget):
 
         self._chapter_urls: List[str] = []
         self._chapter_files: List[str] = []
+        self._queued_chapter_urls: List[str] = []
+        self._queued_chapter_files: List[str] = []
         self._source_type: str = ""
         self._index_url: str = ""
         self._local_folder: str = ""
@@ -198,6 +201,7 @@ class SourceMethodPanel(QWidget):
         self._chapter_list = QListWidget()
         self._chapter_list.setVisible(False)
         self._chapter_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._chapter_list.itemChanged.connect(self._on_chapter_item_changed)
         outer.addWidget(self._chapter_list, 1)
 
         # Bottom navigation row
@@ -322,19 +326,39 @@ class SourceMethodPanel(QWidget):
     def _show_chapter_list(self, items: List[str], *, source_type: str) -> None:
         n = len(items)
         label = "chapter URLs" if source_type == "url" else "chapter files"
-        self._status_label.setText(f"✅ Found {n} {label}.")
+        self._status_label.setText(f"✅ Found {n} {label}. Select which chapters to queue.")
 
         self._chapter_list.clear()
         for item in items:
-            self._chapter_list.addItem(item)
+            list_item = QListWidgetItem(item)
+            list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            list_item.setCheckState(Qt.CheckState.Checked)
+            self._chapter_list.addItem(list_item)
         self._chapter_list.setVisible(True)
 
-        self._continue_btn.setEnabled(n > 0)
+        self._sync_queued_selection()
         if n == 0:
             self._set_buttons_enabled(True)
             self._status_label.setText(
                 "⚠ No chapters found. Try a different page or folder."
             )
+
+    def _on_chapter_item_changed(self, _item: QListWidgetItem) -> None:
+        self._sync_queued_selection()
+
+    def _sync_queued_selection(self) -> None:
+        selected_items = [
+            self._chapter_list.item(i).text()
+            for i in range(self._chapter_list.count())
+            if self._chapter_list.item(i).checkState() == Qt.CheckState.Checked
+        ]
+        if self._source_type == "url":
+            self._queued_chapter_urls = selected_items
+            self._queued_chapter_files = []
+        elif self._source_type == "file":
+            self._queued_chapter_files = selected_items
+            self._queued_chapter_urls = []
+        self._continue_btn.setEnabled(bool(selected_items))
 
     def _set_buttons_enabled(self, enabled: bool) -> None:
         self._url_btn.setEnabled(enabled)
@@ -343,11 +367,14 @@ class SourceMethodPanel(QWidget):
     def _on_continue(self) -> None:
         data: dict = {
             "source_type": self._source_type,
-            "chapter_urls": list(self._chapter_urls),
-            "chapter_files": list(self._chapter_files),
+            "chapter_urls": list(self._queued_chapter_urls),
+            "chapter_files": list(self._queued_chapter_files),
             "index_url": self._index_url,
             "local_folder": self._local_folder,
         }
+        selected_count = len(data["chapter_urls"] or data["chapter_files"])
+        if self.project_manager:
+            self.project_manager.set_selected_range(1, selected_count)
         self.source_ready.emit(data)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -358,6 +385,8 @@ class SourceMethodPanel(QWidget):
         """Reset the panel to its initial state."""
         self._chapter_urls = []
         self._chapter_files = []
+        self._queued_chapter_urls = []
+        self._queued_chapter_files = []
         self._source_type = ""
         self._index_url = ""
         self._local_folder = ""
