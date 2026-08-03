@@ -243,9 +243,10 @@ class _StatusRow(QWidget):
 class StartupCheckerDialog(QDialog):
     """Modal startup-check dialog.
 
-    Checks start automatically when the dialog is shown.  The dialog
-    closes automatically if all four checks pass, or the user can click
-    "Proceed Anyway" once all checks have completed (pass or fail).
+    Checks start automatically when the dialog is shown.  Once all four
+    checks have completed the user must click "Continue" (all passed) or
+    "Proceed Anyway" (some failed) to confirm the LLM model selection and
+    open the main window.
     """
 
     all_checks_done = Signal()
@@ -487,13 +488,16 @@ class StartupCheckerDialog(QDialog):
         all_done = all(v is not None for v in self._results.values())
         if all_done:
             all_ok = all(self._results.values())
-            self._status_label.setText(
-                "All checks passed! Launching…" if all_ok else "Some checks failed — see above."
-            )
+            if all_ok:
+                self._status_label.setText(
+                    "All checks passed! Select your LLM model and click Continue."
+                )
+                self._proceed_btn.setText("Continue")
+            else:
+                self._status_label.setText("Some checks failed — see above.")
+                self._proceed_btn.setText("Proceed Anyway")
             self._proceed_btn.setEnabled(True)
             self.all_checks_done.emit()
-            if all_ok:
-                self.accept()
 
     def _on_proceed(self) -> None:
         """Save selected model and close the dialog."""
