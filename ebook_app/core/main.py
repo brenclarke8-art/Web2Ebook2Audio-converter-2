@@ -41,6 +41,9 @@ def main() -> None:
     # Startup checks (model download, TTS, Ollama, LLM)
     from ebook_app.core.startup_checker import StartupCheckerDialog
     checker = StartupCheckerDialog(settings)
+    # start_checks() is also triggered automatically via showEvent, but calling
+    # it here first ensures checks are queued before exec() blocks.
+    checker.start_checks()
     checker.exec()  # blocks until done or "Proceed Anyway" clicked
 
     # Launch main window
