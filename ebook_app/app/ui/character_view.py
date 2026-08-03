@@ -92,6 +92,17 @@ class CharacterDBPage(BasePage):
     # ------------------------------------------------------------------
 
     def _on_row_changed(self, row: int) -> None:
+        # Flush any pending edits for the previously selected character first,
+        # and update the list item text so the name/gender stays current.
+        if self._current_index is not None and 0 <= self._current_index < len(self._characters):
+            updated = self._editor.extract()
+            self._characters[self._current_index] = updated
+            prev_item = self._list.item(self._current_index)
+            if prev_item is not None:
+                prev_item.setText(
+                    f"{updated.get('name', '?')}  ({updated.get('gender', 'unknown')})"
+                )
+
         if 0 <= row < len(self._characters):
             self._current_index = row
             self._editor.load_character(self._characters[row])

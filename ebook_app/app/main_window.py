@@ -13,16 +13,14 @@ from ebook_app.app.ui.logs_viewer import LogConsole
 # Pages
 from ebook_app.app.ui.pipeline_view import PipelinePage
 from ebook_app.app.ui.character_view import CharacterDBPage
-from ebook_app.app.ui.review_view import ReviewPage
 from ebook_app.app.ui.settings_view import SettingsPage
-from ebook_app.app.ui.test_view import TestPage
 
 
 class MainWindow(QMainWindow):
     """
-    Main application window for Ebook Audio Studio.
+    Main application window for Web2Ebook2Audio Converter.
     Hosts:
-        - Top navigation bar
+        - Top navigation bar (Pipeline | Characters | Settings)
         - Stacked pages
         - Log console dock
         - ProjectManager
@@ -36,7 +34,7 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------------------
         # Window setup
         # --------------------------------------------------------------
-        self.setWindowTitle("Ebook Audio Studio")
+        self.setWindowTitle("Web2Ebook2Audio Converter")
         self.resize(
             self.settings.get("window_width", 1280),
             self.settings.get("window_height", 800)
@@ -80,21 +78,15 @@ class MainWindow(QMainWindow):
 
         self.pipeline_page = PipelinePage(**_page_kwargs)
         self.character_page = CharacterDBPage(**_page_kwargs)
-        self.review_page = ReviewPage(**_page_kwargs)
         self.settings_page = SettingsPage(**_page_kwargs)
-        self.test_page = TestPage(**_page_kwargs)
 
         # Order MUST match TopNavBar indices:
         # 0 = Pipeline
         # 1 = Characters
-        # 2 = Review
-        # 3 = Settings
-        # 4 = Tests
+        # 2 = Settings
         self.pages.addWidget(self.pipeline_page)     # 0
         self.pages.addWidget(self.character_page)    # 1
-        self.pages.addWidget(self.review_page)       # 2
-        self.pages.addWidget(self.settings_page)     # 3
-        self.pages.addWidget(self.test_page)         # 4
+        self.pages.addWidget(self.settings_page)     # 2
 
         # --------------------------------------------------------------
         # Navigation wiring

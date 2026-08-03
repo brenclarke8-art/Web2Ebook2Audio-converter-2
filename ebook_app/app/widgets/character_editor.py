@@ -5,10 +5,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QTextEdit, QComboBox
 )
 
+from ebook_app.tts.voice_catalog import KOKORO_VOICE_LIST
+
+# "(none)" sentinel lets users explicitly clear the voice assignment
+_VOICE_OPTIONS = ["(none)"] + KOKORO_VOICE_LIST
+
 
 class CharacterEditor(QWidget):
     """
     Reusable editor panel for a single character.
+    Lets users set the name, gender, TTS voice, aliases, and description.
     """
 
     def __init__(self, parent=None):
@@ -28,10 +34,16 @@ class CharacterEditor(QWidget):
         self.gender_combo.addItems(["unknown", "male", "female"])
         layout.addWidget(self.gender_combo)
 
-        # Voice
+        # Voice — dropdown populated from KOKORO_VOICE_LIST
         layout.addWidget(QLabel("Voice:"))
-        self.voice_edit = QLineEdit()
-        layout.addWidget(self.voice_edit)
+        self.voice_combo = QComboBox()
+        self.voice_combo.setEditable(True)   # allow manual override for custom voices
+        self.voice_combo.addItems(_VOICE_OPTIONS)
+        self.voice_combo.setToolTip(
+            "Select a Kokoro voice or type a custom voice name.\n"
+            "Leave as '(none)' to use the per-gender default."
+        )
+        layout.addWidget(self.voice_combo)
 
         # Aliases
         layout.addWidget(QLabel("Aliases (comma-separated):"))
@@ -50,7 +62,12 @@ class CharacterEditor(QWidget):
     def load_character(self, char: dict):
         self.name_edit.setText(char.get("name", ""))
         self.gender_combo.setCurrentText(char.get("gender", "unknown"))
-        self.voice_edit.setText(char.get("voice", ""))
+
+        voice = char.get("voice", "") or ""
+        if voice and voice not in _VOICE_OPTIONS:
+            # Custom voice not in the catalog — add it so it can be displayed
+            self.voice_combo.addItem(voice)
+        self.voice_combo.setCurrentText(voice if voice else "(none)")
 
         aliases = ", ".join(char.get("aliases", []))
         self.aliases_edit.setText(aliases)
@@ -64,10 +81,14 @@ class CharacterEditor(QWidget):
         aliases_raw = self.aliases_edit.text().strip()
         aliases = [a.strip() for a in aliases_raw.split(",") if a.strip()]
 
+        voice = self.voice_combo.currentText().strip()
+        if voice == "(none)":
+            voice = ""
+
         return {
             "name": self.name_edit.text().strip(),
             "gender": self.gender_combo.currentText(),
-            "voice": self.voice_edit.text().strip(),
+            "voice": voice,
             "aliases": aliases,
             "description": self.desc_edit.toPlainText().strip(),
         }

@@ -9,9 +9,7 @@ from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 _NAV_ITEMS = [
     (0, "🔄 Pipeline"),
     (1, "👤 Characters"),
-    (2, "🔍 Review"),
-    (3, "⚙ Settings"),
-    (4, "🧪 Tests"),
+    (2, "⚙ Settings"),
 ]
 
 
