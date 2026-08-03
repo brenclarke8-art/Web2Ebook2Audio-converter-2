@@ -1,11 +1,10 @@
-# ebook_app/gui/pipeline_wizard.py
 """Pipeline Wizard — the central UI component that guides the user through
 all 8 phases of the pipeline for one or more chapters.
 
 Layout
 ──────
   Top:    StepProgressBar (phase 1-8 status indicators)
-  Center: QStackedWidget — one panel per phase + chapter gate screen
+  Center: QStackedWidget — one panel per phase + source method screen + chapter gate screen
   Bottom: log console dock is managed by MainWindow
 
 Mode-based flow
@@ -42,20 +41,48 @@ from ebook_app.gui.phase_panels.phase6_panel import Phase6Panel
 from ebook_app.gui.phase_panels.phase7_panel import Phase7Panel
 from ebook_app.gui.phase_panels.phase8_panel import Phase8Panel
 from ebook_app.gui.phase_panels.chapter_gate_panel import ChapterGatePanel
+from ebook_app.gui.phase_panels.source_method_panel import SourceMethodPanel
 
 logger = logging.getLogger(__name__)
 
 # Phase panel index constants
+# Stack layout:
+#   0  → Phase1Panel      (project setup)
+#   1  → SourceMethodPanel (choose URL / local folder — NOT a numbered phase)
+#   2  → Phase2Panel      (retrieval)
+#   3  → Phase3Panel
+#   4  → Phase4Panel
+#   5  → Phase5aPanel
+#   6  → Phase5bPanel
+#   7  → Phase6Panel
+#   8  → Phase7Panel
+#   9  → Phase8Panel
+#  10  → ChapterGatePanel
+
 _IDX_P1 = 0
-_IDX_P2 = 1
-_IDX_P3 = 2
-_IDX_P4 = 3
-_IDX_P5A = 4
-_IDX_P5B = 5
-_IDX_P6 = 6
-_IDX_P7 = 7
-_IDX_P8 = 8
-_IDX_GATE = 9   # chapter gate screen
+_IDX_SOURCE = 1      # source method screen
+_IDX_P2 = 2
+_IDX_P3 = 3
+_IDX_P4 = 4
+_IDX_P5A = 5
+_IDX_P5B = 6
+_IDX_P6 = 7
+_IDX_P7 = 8
+_IDX_P8 = 9
+_IDX_GATE = 10   # chapter gate screen
+
+# Mapping from pipeline phase number (0-based) to stack index
+_PHASE_IDX_TO_STACK: Dict[int, int] = {
+    0: _IDX_P1,
+    1: _IDX_P2,
+    2: _IDX_P3,
+    3: _IDX_P4,
+    4: _IDX_P5A,
+    5: _IDX_P5B,
+    6: _IDX_P6,
+    7: _IDX_P7,
+    8: _IDX_P8,
+}
 
 _STATE_LOCKED = "locked"
 _STATE_ACTIVE = "active"
@@ -166,7 +193,7 @@ class PipelineWizard(QWidget):
         self.project_manager = project_manager
 
         self._cancel_requested: bool = False
-        self._current_phase_idx: int = 0
+        self._current_phase_idx: int = 0   # 0-based phase controller index
         self._phase_states: List[str] = [_STATE_LOCKED] * 9
         self._phase_data: Dict[str, Any] = {}   # accumulated data between phases
 
@@ -196,13 +223,29 @@ class PipelineWizard(QWidget):
         self._stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         outer.addWidget(self._stack, 1)
 
-        # Build panels
+        # Build phase panels (indices 0 and 2-9 in stack)
         self._panels: List[BasePhasePanel] = []
         panel_classes = [
             Phase1Panel, Phase2Panel, Phase3Panel, Phase4Panel,
             Phase5aPanel, Phase5bPanel, Phase6Panel, Phase7Panel, Phase8Panel,
         ]
-        for cls in panel_classes:
+
+        # Stack index 0: Phase 1
+        p1 = Phase1Panel(self.settings)
+        p1.run_requested.connect(self._on_run_requested)
+        p1.cancel_requested.connect(self._on_cancel_requested)
+        p1.back_requested.connect(self._on_back_requested)
+        self._panels.append(p1)
+        self._stack.addWidget(p1)   # stack index 0
+
+        # Stack index 1: Source Method Panel (not a phase panel)
+        self._source_panel = SourceMethodPanel(self.settings, self.project_manager)
+        self._source_panel.source_ready.connect(self._on_source_ready)
+        self._source_panel.cancelled.connect(lambda: self._stack.setCurrentIndex(_IDX_P1))
+        self._stack.addWidget(self._source_panel)   # stack index 1
+
+        # Stack indices 2-9: Phases 2-8
+        for cls in panel_classes[1:]:   # Phase2Panel … Phase8Panel
             panel = cls(self.settings)
             panel.run_requested.connect(self._on_run_requested)
             panel.cancel_requested.connect(self._on_cancel_requested)
@@ -210,14 +253,16 @@ class PipelineWizard(QWidget):
             self._panels.append(panel)
             self._stack.addWidget(panel)
 
-        # Chapter gate screen
+        # Stack index 10: Chapter gate screen
         self._gate_panel = ChapterGatePanel()
         self._gate_panel.next_requested.connect(self._on_chapter_gate_next)
         self._gate_panel.cancel_requested.connect(self._on_cancel_requested)
         self._stack.addWidget(self._gate_panel)
 
         # Activate first panel
-        self._set_phase(0)
+        self._stack.setCurrentIndex(_IDX_P1)
+        self._phase_states[0] = _STATE_ACTIVE
+        self._step_bar.set_state(0, _STATE_ACTIVE)
 
     # ─────────────────────────────────────────────────────────────────────
     # Phase controllers
@@ -247,12 +292,16 @@ class PipelineWizard(QWidget):
         }
 
     # ─────────────────────────────────────────────────────────────────────
-    # Navigation
+    # Navigation helpers
     # ─────────────────────────────────────────────────────────────────────
+
+    def _phase_to_stack(self, phase_idx: int) -> int:
+        """Convert a 0-based phase controller index to a stack widget index."""
+        return _PHASE_IDX_TO_STACK.get(phase_idx, phase_idx)
 
     def _set_phase(self, idx: int) -> None:
         self._current_phase_idx = idx
-        self._stack.setCurrentIndex(idx)
+        self._stack.setCurrentIndex(self._phase_to_stack(idx))
         if 0 <= idx < 9:
             self._phase_states[idx] = _STATE_ACTIVE
             self._step_bar.set_state(idx, _STATE_ACTIVE)
@@ -266,19 +315,57 @@ class PipelineWizard(QWidget):
         self._step_bar.set_state(idx, _STATE_FAILED)
 
     # ─────────────────────────────────────────────────────────────────────
+    # Source method slot
+    # ─────────────────────────────────────────────────────────────────────
+
+    @Slot(dict)
+    def _on_source_ready(self, data: dict) -> None:
+        """Called when the SourceMethodPanel emits source_ready."""
+        self._phase_data.update(data)
+        self.log_message.emit(
+            f"Source configured: {data.get('source_type')} — "
+            f"{len(data.get('chapter_urls') or data.get('chapter_files', []))} chapters found.",
+            "INFO",
+        )
+        # Advance to Phase 2
+        self._set_phase(1)   # phase controller index 1 == Phase2Retrieval
+
+    # ─────────────────────────────────────────────────────────────────────
     # Run / Cancel / Back
     # ─────────────────────────────────────────────────────────────────────
 
     @Slot()
     def _on_run_requested(self) -> None:
         idx = self._current_phase_idx
+
+        # After Phase 1 completes, show the source method screen instead of
+        # going directly to Phase 2.
+        if idx == 0:
+            # Run Phase 1 first; on success show source panel.
+            ctrl = self._phase_controllers[0]
+            panel = self._panels[0]
+            kwargs = panel.get_phase_kwargs()
+            kwargs.update(self._phase_data)
+            kwargs.setdefault("work_dir", self._get_work_dir())
+            kwargs.setdefault("output_dir", self.settings.get("output_dir", "output"))
+            kwargs.setdefault("character_db", self._get_character_db())
+
+            panel.set_running(True)
+            panel.clear_output()
+
+            chapter_id = self._phase_data.get("chapter_id", "ch1")
+            self._runner = _PhaseRunnerThread(ctrl, chapter_id, kwargs)
+            self._runner.finished.connect(self._on_phase1_finished)
+            self._runner.start()
+            return
+
         if idx not in self._phase_controllers:
             return
 
         ctrl = self._phase_controllers[idx]
         panel = self._panels[idx]
         kwargs = panel.get_phase_kwargs()
-        kwargs.update(self._phase_data)   # inject accumulated chapter data
+        kwargs.update(self._phase_data)
 
         # Inject project-level objects
         kwargs.setdefault("work_dir", self._get_work_dir())
@@ -293,6 +380,32 @@ class PipelineWizard(QWidget):
         self._runner.finished.connect(self._on_phase_finished)
         self._runner.progress.connect(lambda pct, p=panel: p.set_progress(pct) if hasattr(p, "set_progress") else None)
         self._runner.start()
+
+    @Slot(object)
+    def _on_phase1_finished(self, result: Any) -> None:
+        """Special handler for Phase 1 — on success show the source method screen."""
+        panel = self._panels[0]
+        panel.set_running(False)
+
+        if result.cancelled:
+            self.log_message.emit("Phase 1 cancelled.", "WARNING")
+            self.reset_pipeline()
+            return
+
+        if not result.success:
+            self.log_message.emit(f"Phase 1 failed: {result.error}", "ERROR")
+            self._mark_phase_failed(0)
+            panel.show_output(f"❌ Failed: {result.error}")
+            return
+
+        self.log_message.emit("Phase 1 complete.", "SUCCESS")
+        panel.show_output(result.output_text)
+        self._mark_phase_done(0)
+        self._phase_data.update(result.data)
+
+        # Show the source method screen (stack index 1)
+        self._source_panel.reset()
+        self._stack.setCurrentIndex(_IDX_SOURCE)
 
     @Slot(object)
     def _on_phase_finished(self, result: Any) -> None:
@@ -422,6 +535,9 @@ class PipelineWizard(QWidget):
             self._panels[i].clear_output()
             self._panels[i].set_running(False)
 
+        # Reset source method panel
+        self._source_panel.reset()
+
         # Reconnect run buttons (may have been rewired for confirm mode)
         for panel in self._panels:
             try:
@@ -432,7 +548,9 @@ class PipelineWizard(QWidget):
 
         if not keep_project:
             self._phase_data = {}
-        self._set_phase(0)
+        self._stack.setCurrentIndex(_IDX_P1)
+        self._phase_states[0] = _STATE_ACTIVE
+        self._step_bar.set_state(0, _STATE_ACTIVE)
         self.pipeline_cancelled.emit()
 
     # ─────────────────────────────────────────────────────────────────────
@@ -458,3 +576,4 @@ class PipelineWizard(QWidget):
     def inject_phase_data(self, data: dict) -> None:
         """Inject external data (e.g. source URL) into the accumulated phase data."""
         self._phase_data.update(data)
+

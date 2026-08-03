@@ -66,10 +66,7 @@ class BookManagerWidget(QWidget):
         author, ok2 = QInputDialog.getText(self, "New Project", "Author:")
         if not ok2:
             return
-        url, ok3 = QInputDialog.getText(self, "New Project", "Index URL (optional):")
-        if not ok3:
-            url = ""
-        book_id = self.pm.create_project(title.strip(), author.strip(), url.strip())
+        book_id = self.pm.create_project(title.strip(), author.strip(), "")
         self.refresh()
         self.book_opened.emit(book_id)
 
