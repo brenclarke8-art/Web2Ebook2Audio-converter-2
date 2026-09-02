@@ -1,4 +1,4 @@
-from ebook_app.text.scrape.browser_scraper import BrowserSessionManager, WebScraper
+from scrape_clean.browser_scraper import BrowserSessionManager, WebScraper
 
 
 class _FakePage:

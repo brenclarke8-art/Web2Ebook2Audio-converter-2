@@ -67,7 +67,7 @@ class _BrowserScanThread(QThread):
 
     def run(self) -> None:
         try:
-            from ebook_app.text.scrape.browser_scraper import (
+            from scrape_clean.browser_scraper import (
                 BrowserSessionManager,
                 WebScraper,
             )
@@ -234,7 +234,7 @@ class SourceMethodPanel(QWidget):
 
         # Request a browser open token from the session manager on the main thread
         try:
-            from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
+            from scrape_clean.browser_scraper import BrowserSessionManager
             BrowserSessionManager.request_open()
         except Exception as exc:
             self._set_buttons_enabled(True)
@@ -265,7 +265,7 @@ class SourceMethodPanel(QWidget):
 
         # Capture the index URL from the browser session
         try:
-            from ebook_app.text.scrape.browser_scraper import BrowserSessionManager
+            from scrape_clean.browser_scraper import BrowserSessionManager
             captured = BrowserSessionManager.get_current_url()
             if captured and captured != "about:blank":
                 self._index_url = captured

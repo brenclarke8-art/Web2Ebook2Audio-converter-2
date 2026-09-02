@@ -1,15 +1,9 @@
-# ebook_app/text/scrape/__init__.py
-from .base_scraper import BaseScraper
-from .web_scraper import HttpWebScraper
-from .browser_scraper import WebScraper
-from .errors import ScraperError
-from .epub_importer import EpubImporter
-from .pdf_importer import PdfImporter
-from .file_importer import FileImporter
-from .api_importer import ApiImporter
-from .ocr_importer import OcrImporter
-
-__all__ = [
-    "BaseScraper", "HttpWebScraper", "WebScraper", "ScraperError",
-    "EpubImporter", "PdfImporter", "FileImporter", "ApiImporter", "OcrImporter",
-]
+from scrape_clean.base_scraper import BaseScraper
+from scrape_clean.web_scraper import HttpWebScraper
+from scrape_clean.browser_scraper import WebScraper, BrowserSessionManager
+from scrape_clean.errors import ScraperError
+from scrape_clean.epub_importer import EpubImporter
+from scrape_clean.pdf_importer import PdfImporter
+from scrape_clean.file_importer import FileImporter
+from scrape_clean.api_importer import ApiImporter
+from scrape_clean.ocr_importer import OcrImporter

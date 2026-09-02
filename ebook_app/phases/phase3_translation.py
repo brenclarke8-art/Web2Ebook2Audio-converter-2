@@ -49,7 +49,7 @@ class Phase3Translation(PhaseBase):
         llm_model: str = self.settings.get("llm_model", "")
 
         try:
-            from ebook_app.text.translate.translator import Translator
+            from llm_process.translator import Translator
 
             translator = Translator(
                 provider="llm",

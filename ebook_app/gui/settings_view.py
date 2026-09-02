@@ -49,7 +49,7 @@ class _ServiceHealthThread(QThread):
         self._url = url
 
     def run(self) -> None:
-        from ebook_app.tts.tts_client import TTSClient
+        from audio_render.tts_client import TTSClient
         self.result.emit(TTSClient(base_url=self._url).health())
 
 

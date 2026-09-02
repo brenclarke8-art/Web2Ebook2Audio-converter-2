@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from ebook_app.pipeline.chapter_iterator import ChapterInfo, ChapterIterator
+from scrape_clean.chapter_detection import ChapterInfo, ChapterIterator
 
 
 # ─────────────────────────────────────────────────────────────────────────────

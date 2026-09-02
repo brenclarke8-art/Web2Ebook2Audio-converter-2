@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ebook_app.text.identify.type_classifier import Pass2Classifier
+from llm_process.type_classifier import Pass2Classifier
 
 
 # ---------------------------------------------------------------------------

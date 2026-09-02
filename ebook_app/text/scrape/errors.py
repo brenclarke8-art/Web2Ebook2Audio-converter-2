@@ -1,4 +1,1 @@
-# ebook_app/text/scrape/errors.py
-class ScraperError(Exception):
-    """Base exception for scraper-related errors."""
-    pass
+from scrape_clean.errors import *  # noqa: F401,F403

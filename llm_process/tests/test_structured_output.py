@@ -19,7 +19,7 @@ import json
 
 import pytest
 
-from ebook_app.text.identify.structured_output import (
+from llm_process.structured_output import (
     CharacterRegistry,
     LLMResultInput,
     LLMSegmentInput,
@@ -491,7 +491,7 @@ def test_validate_pass2_accepts_wrapped_segments_envelope():
     single-object dict check, otherwise multi-segment wrapped responses are
     silently dropped.
     """
-    from ebook_app.text.segment.segmenter import DialogueSegmentationService
+    from llm_process.segmenter import DialogueSegmentationService
 
     class _WrappedClient:
         def ask_json_any(self, *, system, user, chapter_id):
@@ -524,7 +524,7 @@ def test_validate_pass2_accepts_wrapped_segments_envelope():
 
 def test_segmenter_drops_whitespace_only_segments():
     """parse() must not emit segments with empty/whitespace text."""
-    from ebook_app.text.segment.segmenter import DialogueSegmentationService
+    from llm_process.segmenter import DialogueSegmentationService
 
     class _SpaceClient:
         def ask_json_any(self, *, system, user, chapter_id):
@@ -551,7 +551,7 @@ def test_segmenter_drops_whitespace_only_segments():
 
 def test_segmenter_guarantees_type_and_speaker_on_every_segment():
     """Every segment returned by parse() must have a non-empty type and speaker."""
-    from ebook_app.text.segment.segmenter import DialogueSegmentationService
+    from llm_process.segmenter import DialogueSegmentationService
 
     class _WeirdClient:
         def ask_json_any(self, *, system, user, chapter_id):

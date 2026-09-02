@@ -49,12 +49,18 @@ include = [
     "ebook_app.phases",
     "ebook_app.pipeline",
     "ebook_app.utility",
+    "scrape_clean",
+    "scrape_clean.*",
+    "llm_process",
+    "llm_process.*",
+    "audio_render",
+    "audio_render.*",
 ]
 
 [tool.pytest.ini_options]
 # Only collect tests from the tests/ directory (prevents collecting UI component
 # files like ebook_app/app/ui/test_view.py that are not pytest test files).
-testpaths = ["tests"]
+testpaths = ["tests", "scrape_clean/tests", "llm_process/tests", "audio_render/tests"]
 # Only collect test classes that follow the Test_Foo pattern (underscore),
 # not TestFoo (camel-case, which conflicts with GUI page class names like TestPage).
 python_classes = ["Test_*"]

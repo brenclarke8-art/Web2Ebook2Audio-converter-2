@@ -1,7 +1,7 @@
 import json
 import logging
 
-from ebook_app.text.identify.speaker_llm import OllamaChatClient
+from llm_process.speaker_llm import OllamaChatClient
 
 
 class _Response:
@@ -71,7 +71,7 @@ def test_ask_json_debug_logging(monkeypatch, tmp_path, caplog):
         llm_log_path=str(log_file),
     )
 
-    with caplog.at_level(logging.DEBUG, logger="ebook_app.text.identify.speaker_llm"):
+    with caplog.at_level(logging.DEBUG, logger="llm_process.speaker_llm"):
         parsed = client.ask_json(system="sys", user="hello", chapter_id="ch007")
 
     record = json.loads(log_file.read_text(encoding="utf-8").splitlines()[0])

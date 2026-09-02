@@ -1,14 +1,4 @@
-# ebook_app/text/segment/__init__.py
-from .segmenter import DialogueSegmentationService
-from .segment_models import Segment, DetectedCharacter, SegmentationResult
-from .dialogue_detector import DialogueDetector
-from .thought_detector import ThoughtDetector
-
-__all__ = [
-    "DialogueSegmentationService",
-    "Segment",
-    "DetectedCharacter",
-    "SegmentationResult",
-    "DialogueDetector",
-    "ThoughtDetector",
-]
+from llm_process.segmenter import DialogueSegmentationService
+from llm_process.segment_models import Segment, DetectedCharacter, SegmentationResult
+from llm_process.dialogue_detector import DialogueDetector
+from llm_process.thought_detector import ThoughtDetector

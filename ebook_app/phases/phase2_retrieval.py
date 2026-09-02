@@ -63,7 +63,7 @@ class Phase2Retrieval(PhaseBase):
         )
 
     def _retrieve(self, source: str, source_type: str, chapter_id: str) -> tuple[str, str]:
-        from ebook_app.text.parse.html_cleaner import TextCleaner
+        from scrape_clean.html_cleaner import TextCleaner
 
         cleaner = TextCleaner()
 
@@ -79,9 +79,9 @@ class Phase2Retrieval(PhaseBase):
     def _scrape_url(self, url: str, cleaner) -> tuple[str, str]:
         self._emit_progress(20)
         try:
-            from ebook_app.text.scrape.browser_scraper import WebScraper
+            from scrape_clean.browser_scraper import WebScraper
         except ImportError:
-            from ebook_app.text.scrape.web_scraper import WebScraper  # type: ignore
+            from scrape_clean.web_scraper import WebScraper  # type: ignore
 
         scraper = WebScraper()
         results = scraper.scrape_chapters([url])

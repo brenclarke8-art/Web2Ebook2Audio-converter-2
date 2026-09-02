@@ -201,7 +201,7 @@ Model files are downloaded and saved to `<repo>/.ebook_audio_studio/models/` by 
 **Method B — Command line:**
 
 ```python
-from ebook_app.tts.kokoro_model_setup import download_and_setup_kokoro_models
+from audio_render.kokoro_model_setup import download_and_setup_kokoro_models
 download_and_setup_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models/
 ```
 
