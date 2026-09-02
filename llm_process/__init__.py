@@ -3,7 +3,7 @@
 from .character_db_updater import CharacterMerger
 from .dialogue_detector import DialogueDetector
 from .llm_client import LLMClient
-from .pronouns import PronounResolver
+from .pronouns import CharacterProfile, PronounAnalyzer
 from .role_tagger import Pass1Extractor
 from .segment_models import DetectedCharacter, Segment, SegmentationResult
 from .segmenter import DialogueSegmentationService
@@ -35,7 +35,8 @@ __all__ = [
     "ParseResult",
     "Pass1Extractor",
     "Pass2Classifier",
-    "PronounResolver",
+    "CharacterProfile",
+    "PronounAnalyzer",
     "Segment",
     "SegmentationResult",
     "TranslationProfile",
