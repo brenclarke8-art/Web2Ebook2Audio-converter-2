@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QTextEdit, QComboBox
 )
 
-from ebook_app.tts.voice_catalog import KOKORO_VOICE_LIST
+from audio_render.voice_catalog import KOKORO_VOICE_LIST
 
 # "(none)" sentinel lets users explicitly clear the voice assignment
 _VOICE_OPTIONS = ["(none)"] + KOKORO_VOICE_LIST

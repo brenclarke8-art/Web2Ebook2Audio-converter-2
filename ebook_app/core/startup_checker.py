@@ -56,7 +56,7 @@ class _ModelCheckWorker(QThread):
 
     def run(self) -> None:
         try:
-            from ebook_app.tts.kokoro_model_setup import (
+            from audio_render.kokoro_model_setup import (
                 resolve_kokoro_model_paths,
                 download_and_setup_kokoro_models,
             )
@@ -86,8 +86,8 @@ class _TTSServiceWorker(QThread):
     def run(self) -> None:
         import time
         try:
-            from ebook_app.tts.tts_client import TTSClient
-            from ebook_app.tts.tts_service_launcher import launch_tts_service
+            from audio_render.tts_client import TTSClient
+            from audio_render.tts_service_launcher import launch_tts_service
 
             base_url: str = self._settings.get("tts_backend_url", "http://127.0.0.1:5005")
             client = TTSClient(base_url=base_url)
@@ -161,7 +161,7 @@ class _LLMTestWorker(QThread):
 
     def run(self) -> None:
         try:
-            from ebook_app.text.identify.type_classifier import LLMClient
+            from llm_process.type_classifier import LLMClient
 
             client = LLMClient(
                 base_url=self._settings.get("llm_url", ""),

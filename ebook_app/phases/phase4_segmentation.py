@@ -33,7 +33,7 @@ class Phase4Segmentation(PhaseBase):
         self._emit_progress(10)
 
         try:
-            from ebook_app.text.identify.role_tagger import Pass1Extractor
+            from llm_process.role_tagger import Pass1Extractor
 
             extractor = Pass1Extractor()
             segments: List[dict] = extractor.extract(text, chapter_id)

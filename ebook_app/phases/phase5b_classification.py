@@ -38,7 +38,7 @@ class Phase5bClassification(PhaseBase):
         self._emit_progress(5)
 
         try:
-            from ebook_app.text.identify.type_classifier import LLMClient, Pass2Classifier
+            from llm_process.type_classifier import LLMClient, Pass2Classifier
 
             llm_client = LLMClient(
                 base_url=self.settings.get("llm_url", ""),

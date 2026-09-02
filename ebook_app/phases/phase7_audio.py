@@ -38,10 +38,10 @@ class Phase7Audio(PhaseBase):
         tts_speed: float = float(self.settings.get("tts_speed", 1.0))
 
         try:
-            from ebook_app.tts.tts_client import TTSClient
-            from ebook_app.tts.tts_service import TTSEngine
-            from ebook_app.tts.tts_pipeline import TTSPipeline
-            from ebook_app.tts.voice_router import VoiceRouter
+            from audio_render.tts_client import TTSClient
+            from audio_render.tts_service import TTSEngine
+            from audio_render.tts_pipeline import TTSPipeline
+            from audio_render.voice_router import VoiceRouter
 
             tts_engine = TTSEngine(client=TTSClient(base_url=tts_url))
             voice_router = VoiceRouter(

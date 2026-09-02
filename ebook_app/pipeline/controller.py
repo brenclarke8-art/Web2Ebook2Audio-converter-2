@@ -9,15 +9,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ebook_app.app.state.character_db import CharacterDatabase
-from ebook_app.text.identify.role_tagger import Pass1Extractor
-from ebook_app.text.identify.type_classifier import Pass2Classifier, LLMClient
-from ebook_app.tts.voice_router import VoiceRouter
+from llm_process.role_tagger import Pass1Extractor
+from llm_process.type_classifier import Pass2Classifier, LLMClient
+from audio_render.voice_router import VoiceRouter
 from ebook_app.pipeline.chapter_rebuilder import ChapterRebuilder
 from ebook_app.epub.packaging import EPUBBuilder
-from ebook_app.tts.tts_service import TTSEngineContract
+from audio_render.tts_service import TTSEngineContract
 
 try:
-    from ebook_app.text.scrape.browser_scraper import WebScraper as WebScraper  # noqa: F401
+    from scrape_clean.browser_scraper import WebScraper as WebScraper  # noqa: F401
 except ImportError:  # pragma: no cover
     WebScraper = None  # type: ignore
 
@@ -386,7 +386,7 @@ class PipelineController:
         """
         logger.info("[Phase 2] Scraping chapters…")
 
-        from ebook_app.text.parse.html_cleaner import TextCleaner
+        from scrape_clean.html_cleaner import TextCleaner
 
         first_selected_chapter = max(self.selected_start_chapter, 1)
 
@@ -700,7 +700,7 @@ class PipelineController:
 
     def _build_dialogue_parser(self):
         """Build a DialogueParser using current settings."""
-        from ebook_app.text.identify.speaker_llm import DialogueParser
+        from llm_process.speaker_llm import DialogueParser
 
         url = _gs(
             self.settings,

@@ -1,4 +1,4 @@
-from ebook_app.tts.audio_utils import (
+from audio_render.audio_utils import (
     build_normalized_voice_lookup,
     resolve_voice_for_segment,
 )

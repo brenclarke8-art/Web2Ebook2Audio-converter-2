@@ -34,7 +34,7 @@ class Phase5aCharacters(PhaseBase):
         self._emit_progress(10)
 
         try:
-            from ebook_app.text.identify.character_db_updater import CharacterDBUpdater
+            from llm_process.character_db_updater import CharacterDBUpdater
 
             updater = CharacterDBUpdater(character_db=character_db)
             discovered = updater.update_from_segments(segments)

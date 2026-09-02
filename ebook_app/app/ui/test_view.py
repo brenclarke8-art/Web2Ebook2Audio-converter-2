@@ -36,7 +36,7 @@ class _DiagnosticsThread(QThread):
 
         # TTS health check
         try:
-            from ebook_app.tts.tts_client import TTSClient
+            from audio_render.tts_client import TTSClient
 
             result = TTSClient(base_url=self._tts_url).health()
             status = result.get("status", "unknown")

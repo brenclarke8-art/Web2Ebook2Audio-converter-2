@@ -39,7 +39,7 @@ class Phase6ReviewPrep(PhaseBase):
         self._emit_progress(10)
 
         try:
-            from ebook_app.tts.voice_router import VoiceRouter
+            from audio_render.voice_router import VoiceRouter
 
             voice_router = VoiceRouter(
                 narrator_voice=self.settings.get("narrator_voice", "af_heart"),

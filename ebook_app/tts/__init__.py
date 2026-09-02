@@ -1,15 +1,3 @@
-# ebook_app/tts/__init__.py
-try:
-    from .tts_service import TTSEngine, TTSEngineContract
-    from .voice_router import VoiceRouter
-    from .audio_utils import resolve_voice_for_segment, VoiceResolution
-
-    __all__ = [
-        "TTSEngine",
-        "TTSEngineContract",
-        "VoiceRouter",
-        "resolve_voice_for_segment",
-        "VoiceResolution",
-    ]
-except ImportError:
-    pass
+from audio_render.tts_service import TTSEngine, TTSEngineContract
+from audio_render.voice_router import VoiceRouter
+from audio_render.audio_utils import resolve_voice_for_segment, VoiceResolution

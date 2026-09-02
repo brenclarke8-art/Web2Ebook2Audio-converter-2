@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ebook_app.tts.voice_catalog import KOKORO_VOICE_LIST
+from audio_render.voice_catalog import KOKORO_VOICE_LIST
 from ebook_app.app.ui.base_view import BasePage
 
 _DEFAULT_TTS_SERVICE_URL = "http://127.0.0.1:5005"
@@ -38,7 +38,7 @@ class _ServiceHealthThread(QThread):
         self._url = url
 
     def run(self) -> None:
-        from ebook_app.tts.tts_client import TTSClient
+        from audio_render.tts_client import TTSClient
 
         client = TTSClient(base_url=self._url)
         self.result.emit(client.health())
@@ -54,7 +54,7 @@ class _PreviewThread(QThread):
         self._speed = speed
 
     def run(self) -> None:
-        from ebook_app.tts.tts_client import TTSClient
+        from audio_render.tts_client import TTSClient
 
         client = TTSClient(base_url=self._url)
         self.result.emit(client.preview(voice=self._voice, speed=self._speed))
@@ -150,7 +150,7 @@ class _KokoroModelSetupThread(QThread):
     result = Signal(dict)
 
     def run(self) -> None:
-        from ebook_app.tts.kokoro_model_setup import download_and_setup_kokoro_models
+        from audio_render.kokoro_model_setup import download_and_setup_kokoro_models
 
         try:
             paths = download_and_setup_kokoro_models()
@@ -686,8 +686,8 @@ class SettingsPage(BasePage):
         self._svc_health_thread.start()
 
     def _on_start_tts_server(self) -> None:
-        from ebook_app.tts.tts_service_launcher import launch_tts_service
-        from ebook_app.tts.tts_client import TTSClient
+        from audio_render.tts_service_launcher import launch_tts_service
+        from audio_render.tts_client import TTSClient
 
         url = self._backend_url_input.text().strip() or _DEFAULT_TTS_SERVICE_URL
         existing_health = TTSClient(base_url=url, timeout=1).health()

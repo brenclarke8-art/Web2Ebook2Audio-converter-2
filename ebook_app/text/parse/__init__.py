@@ -1,6 +1,3 @@
-# ebook_app/text/parse/__init__.py
-from .html_cleaner import TextCleaner
-from .text_normalizer import TextNormalizer
-from .parser import Chapter
-
-__all__ = ["TextCleaner", "TextNormalizer", "Chapter"]
+from scrape_clean.html_cleaner import TextCleaner, extract_main_content_by_structure
+from scrape_clean.text_normalizer import TextNormalizer
+from scrape_clean.parser import Chapter
