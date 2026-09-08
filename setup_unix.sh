@@ -51,4 +51,5 @@ echo "  cd \"$REPO_ROOT/tts_service\""
 echo "  \"$TTS_VENV/bin/python\" -m uvicorn tts_server:app --host 127.0.0.1 --port 5005"
 echo
 echo "Start GUI:"
-echo "  \"$GUI_VENV/bin/python\" -m ebook_app.app.main"
+echo "  cd \"$REPO_ROOT\""
+echo "  \"$GUI_VENV/bin/python\" \"$REPO_ROOT/run_app.py\""

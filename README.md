@@ -6,49 +6,47 @@ A PySide6 desktop application that converts web novels into EPUB3 audiobooks wit
 
 ### Core Components
 
-- **ProjectManager** (`ebook_app/app/state/book_state.py`): Centralized state management for the current project/book, coordinating between UI, BookLibrary, and PipelineController.
-- **SettingsManager** (`ebook_app/app/state/settings_manager.py`): Persistent application settings storage.
-- **BookLibrary** (`ebook_app/app/state/book_library.py`): Multi-book library management with metadata and progress tracking.
-- **PipelineController** (`ebook_app/pipeline/controller.py`): Orchestrates the end-to-end conversion pipeline.
+- **ProjectManager** (`ebook_app/core/project_manager.py`): Centralized state management for the current project/book, coordinating the library, active project state, and pipeline launches.
+- **SettingsManager** (`ebook_app/core/settings_manager.py`): Persistent application settings storage.
+- **BookLibrary** (`ebook_app/core/book_library.py`): Multi-book library management with metadata and progress tracking.
+- **PipelineWizard** (`ebook_app/gui/pipeline_wizard.py`): The primary GUI workflow for project setup, retrieval, review, audio generation, and output export across phases 1-8 with separate 5a/5b review steps.
+- **PipelineController** (`ebook_app/pipeline/controller.py`): Lower-level orchestration API used by the project manager and tests.
 
 ### Project Structure
 
-```
-ebook_app/
-├── app/                # Application entry point, UI, state management
-│   ├── main.py
-│   ├── main_window.py
-│   ├── ui/             # UI pages
-│   ├── state/          # State management (book, chapter, character, settings)
-│   ├── widgets/        # Reusable UI widgets
-│   └── dialogs/        # Dialog windows
-├── pipeline/           # Pipeline controller and phase definitions
-│   ├── controller.py
-│   └── phases.py
-├── text/               # Text processing sub-packages
-│   ├── scrape/         # Web/EPUB/PDF/file/OCR importers
-│   ├── parse/          # HTML cleaner, text normalizer
-│   ├── translate/      # Translation engine and profiles
-│   ├── overrides/      # Override rules and glossary
-│   ├── segment/        # Dialogue/thought segmentation
-│   ├── identify/       # Speaker ID, character DB update
-│   └── emotion/        # Emotion tagging
-├── tts/                # TTS engine, voice routing, audio utils
-├── epub/               # EPUB3 builder (XHTML, SMIL, OPF, TOC)
-├── config/             # Default JSON configuration files
-├── logs/               # Runtime log outputs
-└── output/             # Generated EPUB and audio output
+```text
+.
+├── ebook_app/
+│   ├── core/           # Current startup flow, main window, settings, project manager
+│   ├── gui/            # Current Qt views, panels, and widgets
+│   ├── phases/         # GUI phase controllers
+│   ├── pipeline/       # Shared orchestration helpers and controller API
+│   ├── text/           # Scraping, parsing, translation, segmentation, speaker ID
+│   ├── tts/            # TTS helpers and compatibility exports
+│   ├── epub/           # EPUB3 build/output helpers
+│   ├── utility/        # Shared runtime/util modules
+│   ├── app/            # Legacy compatibility shims and older UI modules
+│   └── config/         # Default JSON configuration files
+├── tts_service/        # FastAPI Kokoro TTS service and its requirements
+├── tests/              # Top-level regression/integration tests
+├── scrape_clean/       # Compatibility package for scraping/text cleaning
+├── llm_process/        # Compatibility package for LLM/segmentation helpers
+├── audio_render/       # Compatibility package for audio/TTS helpers
+├── run_app.py          # Root launcher for the desktop app
+├── setup_unix.sh       # Unix/macOS environment setup helper
+└── setup_windows.ps1   # Windows environment setup helper
 ```
 
 ## Architecture
 
-### TTS Backend
+### Runtime Flow
 
-The application runs in **remote backend mode only**:
+The desktop app uses a split local setup:
 
-| Mode | Description | Python env |
-|------|-------------|------------|
-| `remote` | Calls `tts_service/tts_server.py` over HTTP | Two envs — GUI (3.10) + TTS service (3.14) |
+| Component | Description | Python env |
+|-----------|-------------|------------|
+| GUI app | PySide6 desktop UI, project management, scraping, LLM flow, EPUB export | Python 3.10 |
+| TTS service | Local FastAPI service at `tts_service/tts_server.py` used over HTTP | Python 3.14 recommended |
 
 ```
 ┌──────────────────────────┐
@@ -62,7 +60,7 @@ The application runs in **remote backend mode only**:
 └──────────────────────────┘
 ```
 
-This split setup is the supported path: GUI in Python 3.10 and Kokoro service in Python 3.14.
+The default startup path is `run_app.py` (or the `ebook-audio-studio` console script), which launches the current `ebook_app.core.main` entry point and runs the startup checks before opening the main window.
 
 ## System Requirements
 
@@ -72,7 +70,7 @@ This split setup is the supported path: GUI in Python 3.10 and Kokoro service in
 
 ## Installation
 
-The app runs in remote mode, so you must set up **both** environments from the
+The app uses separate GUI and TTS environments, so you must set up **both** from the
 repository root:
 
 1. GUI environment (`.venv_gui`, Python 3.10+)
@@ -176,7 +174,7 @@ You can also launch the default local service from **Settings → TTS Backend �
 In a separate terminal, from the repository root, activate the GUI venv and run:
 
 ```bash
-python -m ebook_app.app.main
+python run_app.py
 ```
 
 After the editable install, the console entry point is also available:
@@ -201,7 +199,7 @@ Model files are downloaded and saved to `<repo>/.ebook_audio_studio/models/` by 
 **Method B — Command line:**
 
 ```python
-from audio_render.kokoro_model_setup import download_and_setup_kokoro_models
+from ebook_app.tts.kokoro_model_setup import download_and_setup_kokoro_models
 download_and_setup_kokoro_models()  # saves to <repo>/.ebook_audio_studio/models/
 ```
 
@@ -257,6 +255,12 @@ and Settings can be used to verify service health.
 ebook-audio-studio
 ```
 
+Or, from the repository root:
+
+```bash
+python run_app.py
+```
+
 ### Application Workflow
 
 The application follows a project-based workflow:
@@ -267,10 +271,10 @@ The application follows a project-based workflow:
    - Each project maintains `project.json` for resume support
 
 #### 2. **Run the Pipeline**
-   - Navigate to the **Pipeline** page
-   - Enter the index URL when creating a book project, then load it
-   - Use **Check Index** to verify available chapters
-   - Run **Run to Character Review** to scrape, translate, and parse chapters
+   - On launch, let the startup checker verify the TTS service, models, and LLM settings
+   - Use the **Pipeline** tab to work through the current phase flow:
+     Project → Retrieval → Translation → Segmentation → Characters → Classification → Review → Audio → Output
+   - Choose a source method (web/EPUB/PDF/file/OCR), verify chapters, then continue phase-by-phase or in the configured automation mode
 
 #### 3. **Review Characters and Models**
    - Navigate to **Settings**
@@ -293,10 +297,11 @@ The application follows a project-based workflow:
 
 ### Pipeline Steps (Advanced)
 
-For programmatic use or automation:
+For programmatic use or automation, the lower-level controller still exposes a
+condensed 7-step API:
 
 ```python
-from ebook_app.app.state.settings_manager import SettingsManager
+from ebook_app.core.settings_manager import SettingsManager
 from ebook_app.pipeline.controller import PipelineController, PipelineSettings
 from pathlib import Path
 
@@ -306,25 +311,25 @@ ps = PipelineSettings(
     output_dir=Path("output"),
     book_title="My Book",
     book_author="Author Name",
-    llm_base_url=settings.get("dialogue_llm_url", ""),
-    llm_model=settings.get("dialogue_llm_model", ""),
+    llm_base_url=settings.get("llm_url", ""),
+    llm_model=settings.get("llm_model", ""),
 )
-pipeline = PipelineController(ps)
+controller = PipelineController(ps)
 
-# Phase 1 — scrape chapter list from index URL
-pipeline.scrape_index()
-# Phase 2 — scrape and clean each chapter's text
-pipeline.scrape_chapters()
-# Phase 3 — deterministic Pass-1 extraction (no LLM)
-pipeline.pass1_extraction()
-# Phase 4 — LLM-based Pass-2 classification
-pipeline.pass2_classification()
-# Phase 5 — rebuild final chapters from reviewed character DB
-pipeline.smart_review_dialogue()
-# Phase 6 — TTS audio generation (per-segment WAVs + concat)
-pipeline.tts_generate()
-# Phase 7 — EPUB3 build with Media Overlays
-pipeline.epub_build()
+# Step 1 — scrape chapter list from the source
+controller.scrape_index()
+# Step 2 — retrieve and clean chapter text
+controller.scrape_chapters()
+# Step 3 — deterministic Pass-1 extraction
+controller.pass1_extraction()
+# Step 4 — LLM-based Pass-2 classification
+controller.pass2_classification()
+# Step 5 — rebuild final chapter data after review
+controller.smart_review_dialogue()
+# Step 6 — TTS audio generation
+controller.tts_generate()
+# Step 7 — EPUB build with Media Overlays
+controller.epub_build()
 ```
 
 ### Project Directory Structure
@@ -383,25 +388,19 @@ Custom paths can be set in **Settings → TTS Backend → Model file (.onnx)** a
 | **Voices file (.bin)** | Path to Kokoro voices file (blank = auto-discover) | auto |
 | **TTS Voice** | Default voice for narration | `af_heart` |
 | **Speech Speed** | Global speed multiplier | `1.0` |
-| **Dialogue LLM URL** | Ollama chat endpoint for dialogue classification | `http://127.0.0.1:11434/api/chat` |
-| **Dialogue LLM model** | Ollama model for Pass-2 chapter classification | `qwen2.5-coder:7b` |
-| **Dialogue LLM timeout** | Network timeout for LLM requests (seconds) | `300` |
-| **Dialogue LLM retries** | Retry count for failed LLM requests | `1` |
-| **Dialogue LLM delimited text only** | Only send text inside `""`, `''`, `[]`, `{}`, `<>`, or `()` to the dialogue LLM (enables `dialogue_llm_delimiter_*` filters below) | `false` |
-| **Dialogue LLM delimiter single quotes** (`dialogue_llm_delimiter_single_quotes`) | Include `'...'` snippets when delimited-only mode is enabled | `true` |
-| **Dialogue LLM delimiter double quotes** (`dialogue_llm_delimiter_double_quotes`) | Include `"..."` snippets when delimited-only mode is enabled | `true` |
-| **Dialogue LLM delimiter square brackets** (`dialogue_llm_delimiter_square_brackets`) | Include `[...]` snippets when delimited-only mode is enabled | `true` |
-| **Dialogue LLM delimiter curly braces** (`dialogue_llm_delimiter_curly_braces`) | Include `{...}` snippets when delimited-only mode is enabled | `true` |
-| **Dialogue LLM delimiter angle brackets** (`dialogue_llm_delimiter_angle_brackets`) | Include `<...>` snippets when delimited-only mode is enabled | `true` |
-| **Dialogue LLM delimiter parentheses** (`dialogue_llm_delimiter_parentheses`) | Include `(...)` snippets when delimited-only mode is enabled | `true` |
-| **Dialogue LLM batch size** (`dialogue_llm_batch_size`) | Pass-2 protocol batch size (`0` = whole chunk in one request) | `0` |
-| **Dialogue LLM protocol retries** (`dialogue_llm_protocol_retries`) | Additional schema-repair retries before fallback | `1` |
+| **TTS service URL** (`tts_backend_url`) | URL for the local HTTP TTS service | `http://127.0.0.1:5005` |
+| **Auto-start TTS service** (`tts_autostart_service`) | Start the local TTS service automatically during startup checks | `true` |
+| **LLM provider** (`llm_provider`) | LLM backend type used by the classifier UI | `ollama_local` |
+| **LLM URL** (`llm_url`) | Chat/completions endpoint used for classification and translation | `http://127.0.0.1:11434/api/chat` |
+| **LLM model** (`llm_model`) | Model name used for translation/classification | `qwen2.5-coder:7b` |
+| **LLM timeout** (`llm_timeout`) | Network timeout for LLM requests (seconds) | `300` |
+| **LLM retries** (`llm_retries`) | Retry count for failed LLM requests | `1` |
+| **LLM batch size** (`llm_batch_size`) | Pass-2 request batch size | `20` |
 | **LLM chunk size** (`llm_chunk_size`) | Chunk size for dialogue candidate + assignment stages | `6000` |
 | **LLM chunk overlap** (`llm_chunk_overlap`) | Overlap between adjacent dialogue chunks | `500` |
-| **json_pipeline_enabled** | Enable two-stage JSON pipeline (generate/extract → validate/repair) | `true` |
-| **json_repair_max_retries** | Max model-based JSON repair attempts per response | `2` |
-| **llm_segment_mode** | Segment request mode (`batch` or `single`) | `batch` |
-| **llm_fallback_failure_threshold** | Number of batch format failures before switching to single mode | `2` |
+| **Translation enabled** (`translation_enabled`) | Turn phase 3 translation on/off | `false` |
+| **Translation target language** (`translation_target_language`) | Target language when translation is enabled | `en` |
+| **Scraper method** (`scraper_method`) | Retrieval mode used by phase 2 | `browser` |
 
 ### Pass-2 JSON Handling Architecture
 
@@ -493,7 +492,7 @@ python -c "from pathlib import Path; print(Path('tts_service/requirements.txt').
 Try running directly with Python:
 
 ```bash
-python -m ebook_app.app.main
+python run_app.py
 ```
 
 Check for missing dependencies:
@@ -542,7 +541,13 @@ If malformed JSON keeps occurring:
 ### Running Tests
 
 ```bash
-pytest tests/
+python -m pytest
+
+# individual suites
+python -m pytest tests
+python -m pytest scrape_clean/tests
+python -m pytest llm_process/tests
+python -m pytest audio_render/tests
 ```
 
 ### Code Style
@@ -551,11 +556,12 @@ The project uses Python type hints and follows PEP 8 conventions.
 
 ### Architecture Overview
 
-- **ProjectManager** (`ebook_app/app/state/book_state.py`): Centralized state management for the current project
-- **SettingsManager** (`ebook_app/app/state/settings_manager.py`): Persistent application settings (`<repo>/.ebook_audio_studio/settings.json`)
-- **BookLibrary** (`ebook_app/app/state/book_library.py`): Multi-book library management
-- **PipelineController** (`ebook_app/pipeline/controller.py`): Orchestrates the 7-phase end-to-end conversion pipeline
-- **TTSEngine** (`ebook_app/tts/`): Remote TTS via HTTP to `tts_service/tts_server.py`; uses kokoro-onnx
+- **ProjectManager** (`ebook_app/core/project_manager.py`): Centralized state management for the active project and pipeline runs
+- **SettingsManager** (`ebook_app/core/settings_manager.py`): Persistent application settings (`<repo>/.ebook_audio_studio/settings.json`)
+- **BookLibrary** (`ebook_app/core/book_library.py`): Multi-book library management
+- **PipelineWizard** (`ebook_app/gui/pipeline_wizard.py`): The desktop phase workflow shown in the GUI
+- **PipelineController** (`ebook_app/pipeline/controller.py`): Lower-level 7-step orchestration API used by project management and tests
+- **TTS helpers** (`ebook_app/tts/` + `tts_service/tts_server.py`): GUI-side client/launch helpers plus the FastAPI Kokoro service
 - **EPUBBuilder** (`ebook_app/epub/`): EPUB3 generation with Media Overlays
 
 Each project maintains its own directory with intermediate files and state preservation for resume support.
