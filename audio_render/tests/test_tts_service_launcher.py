@@ -69,3 +69,18 @@ def test_build_tts_service_launch_spec_rejects_remote_url(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="local TTS service URLs"):
         build_tts_service_launch_spec("http://10.0.0.8:5005", repo_root=tmp_path)
+
+
+def test_resolve_tts_service_python_accepts_env_var_pointing_to_venv_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    venv_dir = tmp_path / "custom_tts_env"
+    env_python = venv_dir / "bin" / "python"
+    env_python.parent.mkdir(parents=True, exist_ok=True)
+    env_python.write_text("", encoding="utf-8")
+    monkeypatch.setenv("EBOOK_AUDIO_STUDIO_TTS_PYTHON", str(venv_dir))
+
+    resolved = resolve_tts_service_python(repo_root=tmp_path)
+
+    assert resolved == env_python.resolve()

@@ -24,6 +24,19 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _resolve_python_candidate(path: Path) -> Path | None:
+    if path.is_file():
+        return path
+    if path.is_dir():
+        for candidate in (
+            path / "Scripts" / "python.exe",
+            path / "bin" / "python",
+        ):
+            if candidate.is_file():
+                return candidate
+    return None
+
+
 def resolve_tts_service_python(
     *,
     repo_root: Path | None = None,
@@ -33,15 +46,19 @@ def resolve_tts_service_python(
     env_python = os.environ.get("EBOOK_AUDIO_STUDIO_TTS_PYTHON", "").strip()
     if env_python:
         candidate = Path(env_python).expanduser().resolve()
-        if not candidate.exists():
+        resolved = _resolve_python_candidate(candidate)
+        if resolved is None:
             raise FileNotFoundError(
-                f"EBOOK_AUDIO_STUDIO_TTS_PYTHON does not exist: {candidate}"
+                "EBOOK_AUDIO_STUDIO_TTS_PYTHON must point to a Python executable "
+                f"or a venv directory containing one: {candidate}"
             )
-        return candidate
+        return resolved
 
     candidates = [
         repo_root / "tts_service" / ".venv_tts" / "Scripts" / "python.exe",
         repo_root / "tts_service" / ".venv_tts" / "bin" / "python",
+        repo_root / "tts_service" / "venv_tts" / "Scripts" / "python.exe",
+        repo_root / "tts_service" / "venv_tts" / "bin" / "python",
     ]
     for candidate in candidates:
         if candidate.exists():
