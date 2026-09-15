@@ -233,9 +233,6 @@ class WebScraper:
         effective_max = max_pages if max_pages > 0 else self.max_index_pages
 
         parsed = urlparse(index_url)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
-        host = parsed.netloc
-        index_path = parsed.path.rstrip("/")
 
         chapter_urls: List[str] = []
         seen_chapters: set = set()
@@ -262,6 +259,10 @@ class WebScraper:
             progress_callback=progress_callback,
         )
         start_url = page.url or index_url
+        start_parsed = urlparse(start_url)
+        base_url = f"{start_parsed.scheme}://{start_parsed.netloc}"
+        host = start_parsed.netloc
+        index_path = start_parsed.path.rstrip("/")
         queue = [start_url]
 
         while queue and page_num < effective_max:
