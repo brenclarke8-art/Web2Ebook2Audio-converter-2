@@ -2,220 +2,429 @@
 Phase 01 — Source Acquisition Processor
 
 Copilot Instructions:
-- Implement ONLY the helper functions below.
-- Follow Phase 00 patterns EXACTLY.
-- Use legacy/scrape_clean/* ONLY as reference.
-- NEVER import legacy code.
-- NEVER perform network calls.
-- NEVER perform filesystem writes.
-- NEVER perform HTML cleaning or normalization.
-- ALWAYS extract the full chapter_index.
-- raw_payloads MUST contain only selected chapters.
+- Follow Phase 00 processor.py EXACTLY.
+- Rewrite source acquisition logic cleanly using legacy code ONLY as reference.
+- Do NOT import legacy code.
+- Do NOT perform filesystem writes.
+- Do NOT perform logging.
+- Do NOT perform network calls.
+- Do NOT use global state.
+- Do NOT introduce side effects.
+- All logic must be PURE and DETERMINISTIC.
+- Helpers MUST return the full chapter_index and full raw_payloads.
+- chapter_range MUST be applied ONLY inside process().
 """
 
-import time
 from .input_schema import Phase01Input
 from .output_schema import Phase01Output
 
-# ------------------------------------------------------------
-# Helper functions Copilot must implement
-# ------------------------------------------------------------
 
-def _load_web_source(source: dict) -> tuple:
-    """
-    PURPOSE:
-        Extract the full chapter index and raw HTML/text for a web source.
+# ---------------------------------------------------------------------------
+# Helper functions — PURE, deterministic, NO chapter_range filtering
+# ---------------------------------------------------------------------------
 
-    INPUT:
-        source = {
-            "type": "web",
-            "url": "...",
-            "chapter_range": [start, end] (optional)
-        }
+def _load_web_source(source: dict) -> (list, dict):
+    raw_items = (
+        source.get("chapters")
+        or source.get("chapter_items")
+        or source.get("items")
+        or source.get("pages")
+        or None
+    )
 
-    OUTPUT:
-        chapter_index: list[dict]
-            [
-                {
-                    "chapter_id": "ch1",
-                    "title": "Chapter 1",
-                    "order": 1
-                },
-                ...
-            ]
+    if raw_items is None:
+        direct = (
+            source.get("content")
+            or source.get("html")
+            or source.get("text")
+            or source.get("body")
+            or source.get("raw_content")
+            or ""
+        )
+        raw_items = [{
+            "title": source.get("title") or "Chapter 1",
+            "content": direct,
+            "source": source.get("url") or "",
+        }]
 
-        raw_payloads: dict[str, str]
-            {
-                "ch1": "<raw html or text>",
-                "ch2": "<raw html or text>",
-                ...
-            }
+    chapter_index = []
+    raw_payloads = {}
 
-    LEGACY REFERENCES (READ ONLY):
-        legacy/scrape_clean/web_scraper.py
-        legacy/scrape_clean/browser_scraper.py
-        legacy/scrape_clean/chapter_detection.py
-        legacy/scrape_clean/html_cleaner.py
-        legacy/scrape_clean/parser.py
-        legacy/scrape_clean/scraper_rules.json
+    for index, item in enumerate(raw_items, start=1):
+        chapter_id = f"ch{index}"
 
-    RULES:
-        - NO network calls.
-        - NO HTML cleaning.
-        - NO normalization.
-        - MUST detect ALL chapters first.
-        - MUST extract raw text ONLY for selected chapters.
-        - DO NOT apply chapter_range filtering here. The main processor handles filtering.
-        - chapter_id MUST be deterministic (e.g., 'ch1', 'ch2', ...).
-        - MUST be deterministic and pure.
+        if isinstance(item, dict):
+            title = (
+                item.get("title")
+                or item.get("name")
+                or item.get("heading")
+                or f"Chapter {index}"
+            )
+            payload = (
+                item.get("content")
+                or item.get("html")
+                or item.get("text")
+                or item.get("body")
+                or item.get("raw")
+                or ""
+            )
+            source_ref = (
+                item.get("source")
+                or item.get("url")
+                or item.get("href")
+                or source.get("url")
+                or ""
+            )
+        elif isinstance(item, str):
+            title = item.strip() or f"Chapter {index}"
+            payload = item
+            source_ref = source.get("url") or ""
+        else:
+            title = f"Chapter {index}"
+            payload = str(item)
+            source_ref = source.get("url") or ""
 
-    """
-    return [], {}
+        chapter_index.append({
+            "chapter_id": chapter_id,
+            "title": title,
+            "order": index,
+            "source_type": "web",
+            "source": source_ref,
+        })
 
+        raw_payloads[chapter_id] = payload if isinstance(payload, str) else str(payload)
 
-def _load_epub_source(source: dict) -> tuple:
-    """
-    PURPOSE:
-        Extract chapter index + raw HTML/text from an EPUB file.
-
-    INPUT:
-        source = {
-            "type": "epub",
-            "file_path": "...",
-            "chapter_range": [...]
-        }
-
-    LEGACY REFERENCES:
-        legacy/scrape_clean/epub_importer.py
-        legacy/scrape_clean/parser.py
-        legacy/scrape_clean/chapter_detection.py
-        legacy/scrape_clean/html_cleaner.py
-
-    RULES:
-        - MUST parse EPUB structure deterministically.
-        - MUST detect ALL chapters first.
-        - raw_payloads MUST contain only selected chapters.
-        - DO NOT apply chapter_range filtering here. The main processor handles filtering.
-        - chapter_id MUST be deterministic.
-        - NO filesystem reads (simulate logic only).
-
-    """
-    return [], {}
+    return chapter_index, raw_payloads
 
 
-def _load_pdf_source(source: dict) -> tuple:
-    """
-    PURPOSE:
-        Extract chapter index + raw text from a PDF source.
+def _load_epub_source(source: dict) -> (list, dict):
+    raw_items = (
+        source.get("chapters")
+        or source.get("chapter_items")
+        or source.get("items")
+        or source.get("spine")
+        or source.get("pages")
+        or None
+    )
 
-    LEGACY REFERENCES:
-        legacy/scrape_clean/pdf_importer.py
-        legacy/scrape_clean/parser.py
-        legacy/scrape_clean/chapter_detection.py
+    if raw_items is None:
+        direct = (
+            source.get("content")
+            or source.get("text")
+            or source.get("html")
+            or ""
+        )
+        raw_items = [{
+            "title": source.get("title") or "Chapter 1",
+            "content": direct,
+            "source": source.get("file_path") or "",
+        }]
 
-    RULES:
-        - MUST simulate PDF → text extraction deterministically.
-        - MUST detect ALL chapters first.
-        - raw_payloads MUST contain only selected chapters.
-        - DO NOT apply chapter_range filtering here. The main processor handles filtering.
-        - chapter_id MUST be deterministic.
-        - NO PDF library usage.
-        - NO filesystem reads.
+    chapter_index = []
+    raw_payloads = {}
 
-    """
-    return [], {}
+    for index, item in enumerate(raw_items, start=1):
+        chapter_id = f"ch{index}"
 
+        if isinstance(item, dict):
+            title = (
+                item.get("title")
+                or item.get("name")
+                or item.get("heading")
+                or f"Chapter {index}"
+            )
+            payload = (
+                item.get("content")
+                or item.get("text")
+                or item.get("html")
+                or item.get("body")
+                or ""
+            )
+            source_ref = (
+                item.get("source")
+                or item.get("href")
+                or item.get("url")
+                or source.get("file_path")
+                or ""
+            )
+        elif isinstance(item, str):
+            title = item.strip() or f"Chapter {index}"
+            payload = item
+            source_ref = source.get("file_path") or ""
+        else:
+            title = f"Chapter {index}"
+            payload = str(item)
+            source_ref = source.get("file_path") or ""
 
-def _load_ocr_source(source: dict) -> tuple:
-    """
-    PURPOSE:
-        Extract chapter index + raw OCR text from images.
+        chapter_index.append({
+            "chapter_id": chapter_id,
+            "title": title,
+            "order": index,
+            "source_type": "epub",
+            "source": source_ref,
+        })
 
-    LEGACY REFERENCES:
-        legacy/scrape_clean/ocr_importer.py
-        legacy/scrape_clean/text_normalizer.py
-        legacy/scrape_clean/chapter_detection.py
+        raw_payloads[chapter_id] = payload if isinstance(payload, str) else str(payload)
 
-    RULES:
-        - MUST simulate OCR extraction deterministically.
-        - MUST detect ALL chapters first.
-        - raw_payloads MUST contain only selected chapters.
-        - DO NOT apply chapter_range filtering here. The main processor handles filtering.
-        - chapter_id MUST be deterministic.
-        - NO OCR engine calls.
-        - NO filesystem reads.
-
-    """
-    return [], {}
-
-
-def _load_text_source(source: dict) -> tuple:
-    """
-    PURPOSE:
-        Extract chapter index + raw text from a plain text file.
-
-    LEGACY REFERENCES:
-        legacy/scrape_clean/file_importer.py
-        legacy/scrape_clean/text_normalizer.py
-        legacy/scrape_clean/chapter_detection.py
-
-    RULES:
-        - MUST simulate text loading deterministically.
-        - MUST detect ALL chapters first.
-        - raw_payloads MUST contain only selected chapters.
-        - DO NOT apply chapter_range filtering here. The main processor handles filtering.
-        - chapter_id MUST be deterministic.
-        - NO filesystem reads.
-
-    """
-    return [], {}
+    return chapter_index, raw_payloads
 
 
-# ------------------------------------------------------------
-# Main processor
-# ------------------------------------------------------------
+def _load_pdf_source(source: dict) -> (list, dict):
+    raw_items = (
+        source.get("pages")
+        or source.get("chapters")
+        or source.get("chapter_items")
+        or source.get("items")
+        or None
+    )
+
+    if raw_items is None:
+        direct = (
+            source.get("content")
+            or source.get("text")
+            or source.get("html")
+            or ""
+        )
+        raw_items = [{
+            "title": source.get("title") or "Page 1",
+            "content": direct,
+            "source": source.get("file_path") or "",
+        }]
+
+    chapter_index = []
+    raw_payloads = {}
+
+    for index, item in enumerate(raw_items, start=1):
+        chapter_id = f"ch{index}"
+
+        if isinstance(item, dict):
+            title = item.get("title") or item.get("name") or f"Page {index}"
+            payload = (
+                item.get("content")
+                or item.get("text")
+                or item.get("html")
+                or item.get("body")
+                or ""
+            )
+            source_ref = (
+                item.get("source")
+                or item.get("url")
+                or item.get("path")
+                or source.get("file_path")
+                or ""
+            )
+        elif isinstance(item, str):
+            title = item.strip() or f"Page {index}"
+            payload = item
+            source_ref = source.get("file_path") or ""
+        else:
+            title = f"Page {index}"
+            payload = str(item)
+            source_ref = source.get("file_path") or ""
+
+        chapter_index.append({
+            "chapter_id": chapter_id,
+            "title": title,
+            "order": index,
+            "source_type": "pdf",
+            "source": source_ref,
+        })
+
+        raw_payloads[chapter_id] = payload if isinstance(payload, str) else str(payload)
+
+    return chapter_index, raw_payloads
+
+
+def _load_ocr_source(source: dict) -> (list, dict):
+    raw_items = (
+        source.get("pages")
+        or source.get("chapters")
+        or source.get("items")
+        or source.get("images")
+        or None
+    )
+
+    if raw_items is None:
+        direct = (
+            source.get("content")
+            or source.get("text")
+            or source.get("ocr")
+            or source.get("raw")
+            or ""
+        )
+        raw_items = [{
+            "title": source.get("title") or "Page 1",
+            "content": direct,
+            "source": source.get("file_path") or "",
+        }]
+
+    chapter_index = []
+    raw_payloads = {}
+
+    for index, item in enumerate(raw_items, start=1):
+        chapter_id = f"ch{index}"
+
+        if isinstance(item, dict):
+            title = item.get("title") or item.get("name") or f"Page {index}"
+            payload = (
+                item.get("content")
+                or item.get("text")
+                or item.get("ocr")
+                or item.get("raw")
+                or item.get("body")
+                or ""
+            )
+            source_ref = (
+                item.get("source")
+                or item.get("path")
+                or source.get("file_path")
+                or ""
+            )
+        elif isinstance(item, str):
+            title = item.strip() or f"Page {index}"
+            payload = item
+            source_ref = source.get("file_path") or ""
+        else:
+            title = f"Page {index}"
+            payload = str(item)
+            source_ref = source.get("file_path") or ""
+
+        chapter_index.append({
+            "chapter_id": chapter_id,
+            "title": title,
+            "order": index,
+            "source_type": "ocr",
+            "source": source_ref,
+        })
+
+        raw_payloads[chapter_id] = payload if isinstance(payload, str) else str(payload)
+
+    return chapter_index, raw_payloads
+
+
+def _load_text_source(source: dict) -> (list, dict):
+    raw_items = (
+        source.get("chapters")
+        or source.get("chapter_items")
+        or source.get("pages")
+        or source.get("items")
+        or None
+    )
+
+    if raw_items is None:
+        direct = (
+            source.get("content")
+            or source.get("text")
+            or source.get("raw")
+            or source.get("body")
+            or ""
+        )
+        raw_items = [{
+            "title": source.get("title") or "Chapter 1",
+            "content": direct,
+            "source": source.get("file_path") or source.get("path") or "",
+        }]
+
+    chapter_index = []
+    raw_payloads = {}
+
+    for index, item in enumerate(raw_items, start=1):
+        chapter_id = f"ch{index}"
+
+        if isinstance(item, dict):
+            title = item.get("title") or item.get("name") or f"Chapter {index}"
+            payload = (
+                item.get("content")
+                or item.get("text")
+                or item.get("html")
+                or item.get("body")
+                or item.get("raw")
+                or ""
+            )
+            source_ref = (
+                item.get("source")
+                or item.get("path")
+                or item.get("url")
+                or source.get("file_path")
+                or ""
+            )
+        elif isinstance(item, str):
+            title = item.strip() or f"Chapter {index}"
+            payload = item
+            source_ref = source.get("file_path") or source.get("path") or ""
+        else:
+            title = f"Chapter {index}"
+            payload = str(item)
+            source_ref = source.get("file_path") or source.get("path") or ""
+
+        chapter_index.append({
+            "chapter_id": chapter_id,
+            "title": title,
+            "order": index,
+            "source_type": "text",
+            "source": source_ref,
+        })
+
+        raw_payloads[chapter_id] = payload if isinstance(payload, str) else str(payload)
+
+    return chapter_index, raw_payloads
+
+
+# ---------------------------------------------------------------------------
+# Main processor — deterministic, chapter_range applied ONLY here
+# ---------------------------------------------------------------------------
 
 def process(input_data: Phase01Input) -> Phase01Output:
-    start = time.time()
-
     source = input_data.source
-    stype = source.get("type")
+    source_type = source.get("type")
 
-    if stype == "web":
+    # Dispatch
+    if source_type == "web":
         chapter_index, raw_payloads = _load_web_source(source)
-    elif stype == "epub":
+    elif source_type == "epub":
         chapter_index, raw_payloads = _load_epub_source(source)
-    elif stype == "pdf":
+    elif source_type == "pdf":
         chapter_index, raw_payloads = _load_pdf_source(source)
-    elif stype == "ocr":
+    elif source_type == "ocr":
         chapter_index, raw_payloads = _load_ocr_source(source)
-    elif stype == "text":
+    elif source_type == "text":
         chapter_index, raw_payloads = _load_text_source(source)
     else:
         chapter_index, raw_payloads = [], {}
 
-    # ------------------------------------------------------------
-    # Apply chapter_range filtering
-    # ------------------------------------------------------------
+    # Apply chapter_range deterministically (ONLY here)
     chapter_range = source.get("chapter_range")
-    if chapter_range:
+    if isinstance(chapter_range, (list, tuple)) and len(chapter_range) == 2:
         start_idx, end_idx = chapter_range
         selected_ids = [
             ch["chapter_id"]
             for ch in chapter_index
             if start_idx <= ch["order"] <= end_idx
         ]
-        raw_payloads = {cid: raw_payloads[cid] for cid in selected_ids if cid in raw_payloads}
+        raw_payloads = {
+            cid: raw_payloads[cid]
+            for cid in selected_ids
+            if cid in raw_payloads
+        }
 
     output = Phase01Output(
         chapter_index=chapter_index,
         raw_payloads=raw_payloads,
-        meta={"phase": "01_source", "timestamp": time.time()},
-        input_summary={"source_type": stype},
-        output_summary={"chapter_count": len(chapter_index)},
+        meta={
+            "phase": "01_source",
+            "version": "1.0.0",
+            "timestamp": 0.0,
+        },
+        input_summary={
+            "source_type": source_type,
+            "source_fields": list(source.keys()),
+        },
+        output_summary={
+            "chapter_count": len(chapter_index),
+        },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output
