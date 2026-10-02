@@ -1,0 +1,4 @@
+from Legacy.llm_process.segmenter import DialogueSegmentationService
+from Legacy.llm_process.segment_models import Segment, DetectedCharacter, SegmentationResult
+from Legacy.llm_process.dialogue_detector import DialogueDetector
+from Legacy.llm_process.thought_detector import ThoughtDetector

@@ -1,0 +1,196 @@
+⭐ PHASE 01 — MASTER COPILOT TASK LIST
+This is the complete set of instructions you will give Copilot when generating Phase 01.
+
+Use these tasks in Copilot Chat one at a time, in order.
+
+🧩 Task 1 — Generate the Phase 01 folder structure
+Copilot Prompt:
+
+Code
+Create the folder structure for pipeline/phases/phase_01_source following the exact pattern used in pipeline/phases/phase_00_bootstrap.
+
+Include:
+- input_schema.py
+- output_schema.py
+- processor.py
+- runner.py
+- debug.py
+- __init__.py
+- tests/test_processor.py
+- tests/test_runner.py
+- tests/test_contracts.py
+- tasks.md
+This ensures Copilot mirrors Phase 00 perfectly.
+
+🧩 Task 2 — Generate Phase 01 input schema
+Copilot Prompt (inside input_schema.py):
+
+Code
+Follow the exact structure of Phase 00 input_schema.py.
+Define Phase01Input with fields:
+- source: Dict[str, Any]
+- settings: Dict[str, Any]
+
+Use legacy code ONLY as reference:
+    legacy/ebook_app/text/*
+    legacy/ebook_app/scrape/*
+    legacy/ebook_app/parse/*
+    legacy/ebook_app/epub/*
+    legacy/ebook_app/pdf/*
+    legacy/ebook_app/ocr/*
+
+Do NOT import legacy code.
+Do NOT add extra fields.
+Replicate Phase 00 patterns exactly.
+This keeps the schema strict and predictable.
+
+🧩 Task 3 — Generate Phase 01 output schema
+Copilot Prompt (inside output_schema.py):
+
+Code
+Follow Phase 00 output_schema.py exactly.
+Define Phase01Output with fields:
+- chapter_index: List[Dict[str, Any]]
+- raw_payloads: Dict[str, Any]
+- meta
+- input_summary
+- output_summary
+- errors
+- warnings
+- timings
+
+Do NOT invent new fields.
+Do NOT change naming conventions.
+Replicate Phase 00 patterns exactly.
+This ensures all phases produce identical artifact structures.
+
+🧩 Task 4 — Generate the Phase 01 processor
+This is the most important task.
+
+Copilot Prompt (inside processor.py):
+
+Code
+Follow Phase 00 processor.py exactly.
+
+Implement deterministic source acquisition logic using legacy code ONLY as reference:
+    legacy/ebook_app/text/*
+    legacy/ebook_app/scrape/*
+    legacy/ebook_app/parse/*
+    legacy/ebook_app/epub/*
+    legacy/ebook_app/pdf/*
+    legacy/ebook_app/ocr/*
+
+Rewrite logic cleanly into modular functions.
+Do NOT import legacy code.
+Do NOT perform filesystem writes.
+Do NOT perform logging.
+Do NOT perform network calls.
+Do NOT mutate global state.
+
+Processor must be PURE LOGIC.
+
+Produce:
+- chapter_index: list of chapter descriptors
+- raw_payloads: dict of raw HTML/text per chapter
+
+Populate:
+- meta
+- input_summary
+- output_summary
+- errors
+- warnings
+- timings
+
+Replicate Phase 00 structure exactly.
+This is the instruction that makes Copilot generate correct logic.
+
+🧩 Task 5 — Generate the Phase 01 runner
+Copilot Prompt (inside runner.py):
+
+Code
+Follow Phase 00 runner.py exactly.
+
+Implement:
+run(context, input_artifact) -> dict
+
+Steps:
+1. Validate input schema using Phase01Input
+2. Call process()
+3. Write debug artifacts using write_debug_artifacts()
+4. Return output_model.dict()
+
+Do NOT add extra logic.
+Do NOT modify processor behavior.
+Replicate Phase 00 runner exactly.
+This ensures every phase has identical runner behavior.
+
+🧩 Task 6 — Generate the Phase 01 debug writer
+Copilot Prompt (inside debug.py):
+
+Code
+Follow Phase 00 debug.py exactly.
+
+Write artifacts to:
+pipeline/artifacts/phases/01_source/
+
+Files:
+- index.json
+- raw_payloads.json
+- meta.json
+- summary.json
+
+Do NOT write anything else.
+Do NOT change naming conventions.
+Do NOT add logging.
+Replicate Phase 00 debug writer exactly.
+This ensures artifact consistency across phases.
+
+🧩 Task 7 — Generate Phase 01 tests
+test_processor.py
+Code
+Follow Phase 00 test_processor.py exactly.
+Test that:
+- process() returns a Phase01Output
+- chapter_index and raw_payloads exist
+- meta, summaries, timings exist
+test_runner.py
+Code
+Follow Phase 00 test_runner.py exactly.
+Test that:
+- run() returns a dict
+- meta exists
+- debug artifacts are written
+test_contracts.py
+Code
+Follow Phase 00 test_contracts.py exactly.
+Test that Phase01Output contains all required fields.
+🧩 Task 8 — Generate tasks.md
+This file guides Copilot during future edits.
+
+Copilot Prompt (inside tasks.md):
+
+Code
+This file contains instructions for Copilot when generating or modifying Phase 01.
+
+Follow Phase 00 patterns exactly.
+Use legacy code ONLY as reference.
+Never import legacy code.
+Processor must be pure logic.
+Runner must follow the universal contract.
+Debug writer must write JSON artifacts only.
+Tests must follow Phase 00 patterns.
+⭐ How to use this task list
+You will:
+
+Open each file in Phase 01.
+
+Paste the corresponding Copilot prompt at the top.
+
+Ask Copilot Chat:
+“Generate this file following the instructions inside it.”
+
+Review the output.
+
+Repeat for each file.
+
+Copilot will produce clean, modular, deterministic Phase 01 code that matches Phase 00 perfectly.

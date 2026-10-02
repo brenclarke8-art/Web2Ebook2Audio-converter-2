@@ -1,0 +1,4 @@
+from Legacy.llm_process.role_tagger import Pass1Extractor
+from Legacy.llm_process.speaker_llm import OllamaChatClient
+from Legacy.llm_process.type_classifier import Pass2Classifier
+from Legacy.llm_process.character_db_updater import CharacterMerger
