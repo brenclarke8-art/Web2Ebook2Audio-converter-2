@@ -1,72 +1,63 @@
 Phase 01 — Source Acquisition
 Copilot Instructions (READ THIS BEFORE GENERATING ANY CODE)
 
-Your job is to implement Phase 01 — Source Acquisition using Phase 00 as the template. Follow Phase 00’s structure EXACTLY.
+Phase 01 is responsible for acquiring source material and producing a structured chapter_index and raw_payloads. It receives a source descriptor (web, epub, pdf, text, ocr) and extracts all chapter text or HTML from that source. The output of Phase 01 is a deterministic representation of the book’s raw content, organized by chapter_id, ready for normalization in Phase 02.
 
-Inputs
-You receive:
+Phase 01 must always extract the full chapter index from the source, regardless of which chapters the user wants. After building the complete chapter_index, Phase 01 must extract raw text or HTML only for the chapters specified in source.chapter_range. If chapter_range is omitted, Phase 01 extracts all chapters. The output must always include the full chapter_index, but raw_payloads must contain only the selected chapters.
 
-source: {
-type: "web" | "epub" | "pdf" | "text" | "ocr",
-url?: string,
-file_path?: string,
-chapter_range?: [start, end],
-...
-}
+Phase 01 does not perform any cleaning, normalization, segmentation, semantic analysis, or audio preparation; it only extracts raw chapter content and structural chapter boundaries.
 
-settings: normalized_config from Phase 00
+Follow Phase 00 patterns EXACTLY:
+- processor.py must be pure logic
+- runner.py must only call processor()
+- debug.py must only write JSON artifacts
+- schemas must NOT be modified
+- tests must NOT be modified
 
-Outputs
-You must produce:
+NEVER import legacy code.
+Use legacy code ONLY as reference.
 
-chapter_index: [
-{ chapter_id, title, source_offsets, ... }
-]
+Implement the helper functions inside processor.py:
+    _load_web_source
+    _load_epub_source
+    _load_pdf_source
+    _load_ocr_source
+    _load_text_source
 
-raw_payloads: {
-chapter_id: "<raw html or text>"
-}
+All logic must be:
+- deterministic
+- pure
+- side‑effect‑free
+- no filesystem writes
+- no logging
+- no network calls
+- no global state
 
-Plus the standard fields:
-meta
-input_summary
-output_summary
-errors[]
-warnings[]
-timings{}
+Use ONLY the following legacy files as reference:
 
-Rules
-Do NOT import legacy code. Use it ONLY as reference:
+legacy/scrape_clean/api_importer.py  
+legacy/scrape_clean/base_scraper.py  
+legacy/scrape_clean/browser_scraper.py  
+legacy/scrape_clean/chapter_detection.py  
+legacy/scrape_clean/epub_importer.py  
+legacy/scrape_clean/file_importer.py  
+legacy/scrape_clean/html_cleaner.py  
+legacy/scrape_clean/ocr_importer.py  
+legacy/scrape_clean/parser.py  
+legacy/scrape_clean/pdf_importer.py  
+legacy/scrape_clean/scraper_rules.json  
+legacy/scrape_clean/text_normalizer.py  
+legacy/scrape_clean/web_scraper.py  
 
-legacy/ebook_app/text/*
-legacy/ebook_app/scrape/*
-legacy/ebook_app/parse/*
-legacy/ebook_app/epub/*
-legacy/ebook_app/pdf/*
-legacy/ebook_app/ocr/*
+Your job:
+- Read ONLY these files
+- Understand how they extract raw text/HTML/chapters
+- Rewrite the logic cleanly and deterministically
+- Produce chapter_index and raw_payloads
+- Do NOT replicate legacy side effects
+- Do NOT replicate legacy I/O
+- Do NOT replicate legacy network calls
+- Only replicate the logic flow and transformations
 
-processor.py must be pure logic.
-No filesystem writes.
-No logging.
-No network calls.
-No side effects.
-No imports from legacy code.
-
-runner.py must follow Phase 00 exactly.
-Validate input schema, call process(), write debug artifacts, return output_model.dict().
-
-debug.py must write the following JSON artifacts to pipeline/artifacts/phases/01_source/:
-index.json
-raw_payloads.json
-meta.json
-summary.json
-
-Tests must follow Phase 00 patterns:
-test_processor.py
-test_runner.py
-test_contracts.py
-
-Global Requirements
-All code must be deterministic.
-All artifacts must be JSON.
-All structures must mirror Phase 00 patterns.
+Generate ONLY the helper function implementations.
+Do NOT modify any other files.
