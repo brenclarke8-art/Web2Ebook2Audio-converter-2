@@ -1,12 +1,11 @@
 """
-Phase 01 — Source Acquisition
+Phase 01 — Output Schema
 
 Copilot Instructions:
-- Follow Phase 00 output_schema.py EXACTLY.
-- Do NOT add or remove fields.
-- Do NOT change naming conventions.
-- This schema defines the required output structure for Phase 01.
-- processor.py MUST produce data that conforms to this schema.
+- Do NOT modify this schema.
+- Do NOT add fields.
+- Do NOT remove fields.
+- The processor MUST return a Phase01Output instance.
 """
 
 from pydantic import BaseModel, Field
@@ -18,7 +17,7 @@ class Phase01Output(BaseModel):
     )
 
     raw_payloads: Dict[str, Any] = Field(
-        ..., description="Raw HTML/text snapshots per chapter."
+        ..., description="Raw HTML or raw text snapshots per chapter (unprocessed)."
     )
 
     meta: Dict[str, Any] = Field(..., description="Phase metadata.")

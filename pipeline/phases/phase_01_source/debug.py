@@ -12,6 +12,7 @@ Copilot Instructions:
 - Do NOT change naming conventions.
 - Do NOT write anything other than JSON.
 - All filesystem writes for Phase 01 MUST occur here, not in processor.py.
+- Do NOT modify output.chapter_index or output.raw_payloads before writing.
 """
 
 import json

@@ -25,3 +25,8 @@ def test_contract_fields_exist():
     assert hasattr(output, "chapter_index")
     assert hasattr(output, "raw_payloads")
     assert hasattr(output, "meta")
+    assert hasattr(output, "input_summary")
+    assert hasattr(output, "output_summary")
+    assert hasattr(output, "errors")
+    assert hasattr(output, "warnings")
+    assert hasattr(output, "timings")

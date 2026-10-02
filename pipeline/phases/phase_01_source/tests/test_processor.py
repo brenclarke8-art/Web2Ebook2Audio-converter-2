@@ -28,3 +28,5 @@ def test_process_basic():
     assert "errors" in output.dict()
     assert "warnings" in output.dict()
     assert "timings" in output.dict()
+    assert isinstance(output.dict(), dict)
+

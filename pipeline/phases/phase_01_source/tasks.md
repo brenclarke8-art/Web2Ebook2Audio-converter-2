@@ -49,15 +49,149 @@ legacy/scrape_clean/scraper_rules.json
 legacy/scrape_clean/text_normalizer.py  
 legacy/scrape_clean/web_scraper.py  
 
+
+====================================================================
+## Output Examples (Copilot MUST follow this structure)
+====================================================================
+
+### Example — Web Source (chapter_range = [2, 3])
+
+chapter_index = [
+  {"chapter_id": "ch1", "title": "Prologue", "order": 1},
+  {"chapter_id": "ch2", "title": "The Journey Begins", "order": 2},
+  {"chapter_id": "ch3", "title": "Crossing the Threshold", "order": 3},
+  {"chapter_id": "ch4", "title": "Into the Wild", "order": 4}
+]
+
+raw_payloads = {
+  "ch2": "<raw html or text for chapter 2>",
+  "ch3": "<raw html or text for chapter 3>"
+}
+
+
+### Example — EPUB Source (all chapters)
+
+chapter_index = [
+  {"chapter_id": "ch1", "title": "Chapter 1", "order": 1},
+  {"chapter_id": "ch2", "title": "Chapter 2", "order": 2},
+  {"chapter_id": "ch3", "title": "Chapter 3", "order": 3}
+]
+
+raw_payloads = {
+  "ch1": "<raw html from spine item 1>",
+  "ch2": "<raw html from spine item 2>",
+  "ch3": "<raw html from spine item 3>"
+}
+
+
+### Example — PDF Source (chapter_range = [1, 1])
+
+chapter_index = [
+  {"chapter_id": "ch1", "title": "Introduction", "order": 1},
+  {"chapter_id": "ch2", "title": "Background", "order": 2},
+  {"chapter_id": "ch3", "title": "Methods", "order": 3}
+]
+
+raw_payloads = {
+  "ch1": "<raw extracted text from PDF pages belonging to chapter 1>"
+}
+
+
+### Example — OCR Source (all chapters)
+
+chapter_index = [
+  {"chapter_id": "ch1", "title": "Scan 1", "order": 1},
+  {"chapter_id": "ch2", "title": "Scan 2", "order": 2}
+]
+
+raw_payloads = {
+  "ch1": "<raw OCR text block>",
+  "ch2": "<raw OCR text block>"
+}
+
+
+### Example — Plain Text Source (chapter_range = [2, 2])
+
+chapter_index = [
+  {"chapter_id": "ch1", "title": "Part I", "order": 1},
+  {"chapter_id": "ch2", "title": "Part II", "order": 2}
+]
+
+raw_payloads = {
+  "ch2": "<raw text block for part II>"
+}
+
+
+====================================================================
+## Validation Checklist (Copilot MUST satisfy ALL items)
+====================================================================
+
+### Structural Rules
+- chapter_index MUST be a list of dicts.
+- Each chapter dict MUST contain:
+  - chapter_id (string)
+  - title (string)
+  - order (integer)
+- raw_payloads MUST be a dict mapping chapter_id → raw text or raw HTML.
+
+### Chapter Index Rules
+- MUST detect ALL chapters from the source.
+- MUST preserve chapter order.
+- MUST generate deterministic chapter_id values.
+- MUST NOT skip chapters even if chapter_range is provided.
+
+### Chapter Range Rules
+- If chapter_range is provided:
+  - raw_payloads MUST contain ONLY chapters in the range.
+- If chapter_range is omitted:
+  - raw_payloads MUST contain ALL chapters.
+- chapter_index MUST always contain ALL chapters.
+
+### Raw Payload Rules
+- MUST contain RAW text or HTML.
+- MUST NOT:
+  - clean HTML
+  - normalize whitespace
+  - segment text
+  - enrich text
+  - extract metadata
+  - remove tags
+  - convert formats
+
+### Determinism Rules
+- MUST NOT use randomness.
+- MUST NOT use timestamps for chapter_id generation.
+- MUST NOT use external scraping libraries.
+- MUST NOT perform network calls.
+- MUST NOT perform filesystem reads.
+
+### Phase Boundary Rules
+Phase 01 MUST NOT:
+- clean or normalize text (Phase 02)
+- segment text (Phase 03)
+- enrich text (Phase 04)
+- generate script (Phase 05)
+- render audio (Phase 06)
+- stitch audio (Phase 07)
+- package (Phase 08)
+- export files (Phase 09)
+
+### Error Handling Rules
+- MUST NOT throw exceptions for missing chapters.
+- MUST return empty structures if the source is invalid.
+- MUST NOT modify schemas.
+
+
+====================================================================
 Your job:
-- Read ONLY these files
-- Understand how they extract raw text/HTML/chapters
-- Rewrite the logic cleanly and deterministically
-- Produce chapter_index and raw_payloads
-- Do NOT replicate legacy side effects
-- Do NOT replicate legacy I/O
-- Do NOT replicate legacy network calls
-- Only replicate the logic flow and transformations
+- Read ONLY the legacy files listed above.
+- Understand how they extract raw text/HTML/chapters.
+- Rewrite the logic cleanly and deterministically.
+- Produce chapter_index and raw_payloads.
+- Do NOT replicate legacy side effects.
+- Do NOT replicate legacy I/O.
+- Do NOT replicate legacy network calls.
+- Only replicate the logic flow and transformations.
 
 Generate ONLY the helper function implementations.
 Do NOT modify any other files.

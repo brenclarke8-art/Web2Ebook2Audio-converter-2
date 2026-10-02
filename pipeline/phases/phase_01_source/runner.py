@@ -8,6 +8,8 @@ Copilot Instructions:
 - Do NOT perform filesystem writes here (debug.py handles artifacts).
 - This file defines the universal pipeline contract:
     run(context, input_artifact) -> output_artifact (dict)
+- runner.py must ONLY call process() and write debug artifacts.
+- Do NOT inspect or modify chapter_range here. Only processor.py handles chapter filtering.
 """
 
 from .input_schema import Phase01Input

@@ -20,3 +20,4 @@ def test_runner_executes():
 
     output = run(context, input_artifact)
     assert "meta" in output
+    assert isinstance(output, dict)
