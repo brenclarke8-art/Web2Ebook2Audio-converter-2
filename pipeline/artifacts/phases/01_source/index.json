@@ -1,0 +1,9 @@
+[
+  {
+    "chapter_id": "ch1",
+    "title": "Chapter 1",
+    "order": 1,
+    "source_type": "web",
+    "source": "https://example.com"
+  }
+]

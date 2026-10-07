@@ -1,0 +1,7 @@
+{
+  "example.com": {
+    "chapter_list_selector": "div.chapter-list a",
+    "title_selector": "h1.chapter-title",
+    "content_selector": "div#chapter-content"
+  }
+}

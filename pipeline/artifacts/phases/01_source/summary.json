@@ -1,0 +1,12 @@
+{
+  "input_summary": {
+    "source_type": "web",
+    "source_fields": [
+      "type",
+      "url"
+    ]
+  },
+  "output_summary": {
+    "chapter_count": 1
+  }
+}
