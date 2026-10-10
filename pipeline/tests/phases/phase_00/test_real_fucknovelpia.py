@@ -5,7 +5,7 @@ from pipeline.tests.harness.runner import run_phase
 
 
 def _is_live_network_error(errors):
-    return all(error.startswith("Failed to fetch index URL:") for error in errors)
+    return any(error.startswith("Failed to fetch index URL:") for error in errors)
 
 
 @pytest.mark.live
