@@ -7,6 +7,8 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -20,10 +22,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r legacy/requirements.txt pytest
+          pip install pytest requests beautifulsoup4 pydantic
 
       - name: Run tests
-        run: pytest -q
+        run: pytest -q -m "not live"
 
       - name: Upload pipeline test logs
         if: always()
