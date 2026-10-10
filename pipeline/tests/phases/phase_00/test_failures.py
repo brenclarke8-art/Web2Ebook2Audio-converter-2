@@ -1,11 +1,6 @@
 from pipeline.phases.phase_00_fetch.runner import run
 from pipeline.tests.harness.runner import run_phase
-from pipeline.tests.harness.utils import tests_root
-
-
-def _read_phase00_fixture(name: str) -> str:
-    path = tests_root() / "fixtures" / "phase_00" / name
-    return path.read_text(encoding="utf-8")
+from pipeline.tests.phases.phase_00.helpers import read_phase00_fixture
 
 
 def test_missing_index_url(tmp_path):
@@ -66,15 +61,15 @@ def test_empty_chapter_list(monkeypatch, tmp_path):
 
 def test_invalid_chapter_range_is_clamped(monkeypatch, tmp_path):
     index_url = "https://fucknovelpia.com/novel/synthetic-episode-novel"
-    index_html = _read_phase00_fixture("index_fucknovelpia.html")
+    index_html = read_phase00_fixture("index_fucknovelpia.html")
     chapter_html = {
-        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1": _read_phase00_fixture(
+        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1": read_phase00_fixture(
             "chapter_fucknovelpia_1.html"
         ),
-        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2": _read_phase00_fixture(
+        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2": read_phase00_fixture(
             "chapter_fucknovelpia_2.html"
         ),
-        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3": _read_phase00_fixture(
+        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3": read_phase00_fixture(
             "chapter_fucknovelpia_3.html"
         ),
     }
@@ -93,6 +88,8 @@ def test_invalid_chapter_range_is_clamped(monkeypatch, tmp_path):
         {"artifact_dir": str(tmp_path)},
         {
             "index_url": index_url,
+            # [99, 2] clamps to [3, 3] with three available chapters:
+            # start -> 3 (upper clamp), end -> 3 (max(start, clamped_end)).
             "chapter_range": [99, 2],
             "settings": {},
             "env": {},

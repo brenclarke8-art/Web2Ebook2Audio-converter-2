@@ -1,7 +1,10 @@
+import pytest
+
 from pipeline.phases.phase_00_fetch.runner import run
 from pipeline.tests.harness.runner import run_phase
 
 
+@pytest.mark.live
 def test_real_fucknovelpia_site(tmp_path):
     output = run_phase(
         run,

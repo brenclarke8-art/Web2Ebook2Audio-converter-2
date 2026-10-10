@@ -4,12 +4,7 @@ from pipeline.phases.phase_00_fetch.chapter_parser import (
     extract_title,
     load_rules_for_domain,
 )
-from pipeline.tests.harness.utils import tests_root
-
-
-def _read_phase00_fixture(name: str) -> str:
-    path = tests_root() / "fixtures" / "phase_00" / name
-    return path.read_text(encoding="utf-8")
+from pipeline.tests.phases.phase_00.helpers import read_phase00_fixture
 
 
 def test_rule_based_extraction_with_synthetic_fixtures():
@@ -20,7 +15,7 @@ def test_rule_based_extraction_with_synthetic_fixtures():
     assert rules["title_selector"] == "h1.episode-title"
     assert rules["content_selector"] == "div.episode-content"
 
-    index_html = _read_phase00_fixture("index_fucknovelpia.html")
+    index_html = read_phase00_fixture("index_fucknovelpia.html")
     urls = extract_chapter_urls(index_html, rules, index_url)
 
     assert urls == [
@@ -29,7 +24,7 @@ def test_rule_based_extraction_with_synthetic_fixtures():
         "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3",
     ]
 
-    chapter_html = _read_phase00_fixture("chapter_fucknovelpia_1.html")
+    chapter_html = read_phase00_fixture("chapter_fucknovelpia_1.html")
     assert extract_title(chapter_html, rules) == "Episode 1: Arrival"
 
     content_html = extract_content(chapter_html, rules)
