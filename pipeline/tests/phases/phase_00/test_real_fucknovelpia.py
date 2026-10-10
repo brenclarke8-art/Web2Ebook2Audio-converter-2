@@ -2,7 +2,10 @@ import pytest
 
 from pipeline.phases.phase_00_fetch.runner import run
 from pipeline.tests.harness.runner import run_phase
-from pipeline.tests.phases.helpers import is_live_fetch_error_message
+from pipeline.tests.phases.helpers import (
+    REAL_FUCKNOVELPIA_INDEX_URL,
+    is_live_fetch_error_message,
+)
 
 
 @pytest.mark.live
@@ -11,7 +14,7 @@ def test_real_fucknovelpia_site(tmp_path):
         run,
         {"artifact_dir": str(tmp_path)},
         {
-            "index_url": "https://fucknovelpia.com/novel/i-became-a-6-gacha-character",
+            "index_url": REAL_FUCKNOVELPIA_INDEX_URL,
             "chapter_range": [1, 3],
             "settings": {},
             "env": {},
