@@ -11,11 +11,9 @@ def write_log(log_name, input_artifact, output_artifact):
     log_directory = logs_dir()
     log_directory.mkdir(parents=True, exist_ok=True)
 
-    log_filename = Path(str(log_name)).name
-    if not log_filename.endswith(".json"):
-        log_filename = f"{log_filename}.json"
-
-    log_base_name = Path(log_filename).stem
+    log_base_name = Path(str(log_name)).stem
+    if not log_base_name:
+        log_base_name = "log"
     for suffix in range(MAX_LOG_FILE_ATTEMPTS):
         candidate_name = (
             f"{log_base_name}.json" if suffix == 0 else f"{log_base_name}_{suffix}.json"
