@@ -3,5 +3,26 @@
     "chapter_list_selector": "div.chapter-list a",
     "title_selector": "h1.chapter-title",
     "content_selector": "div#chapter-content"
+  },
+
+  "wuxiaworld.com": {
+    "chapter_list_selector": "ul.chapter-list a",
+    "title_selector": "h4",
+    "content_selector": "div#chapter-content",
+    "content_remove_selectors": ["div.ad", "div.share-buttons"]
+  },
+
+  "royalroad.com": {
+    "chapter_list_selector": "a.chapter-link",
+    "title_selector": "h1",
+    "content_selector": "div.chapter-content",
+    "content_remove_selectors": ["div.advertisement", "div.footer"]
+  },
+
+  "scribblehub.com": {
+    "chapter_list_selector": "a.toc_a",
+    "title_selector": "div.chapter-title",
+    "content_selector": "div.chapter-content",
+    "content_remove_selectors": ["div.ads", "div.nav-buttons"]
   }
 }
