@@ -15,8 +15,6 @@ def _is_live_fetch_error(errors):
 def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     harness_logs = logs_dir()
     pre_phase00_logs = len(list(harness_logs.glob("pipeline_real_phase00*.json")))
-    pre_phase01_logs = len(list(harness_logs.glob("pipeline_real_phase01*.json")))
-    pre_phase02_logs = len(list(harness_logs.glob("pipeline_real_phase02*.json")))
 
     phase00_output = run_phase(
         run_phase00,
@@ -29,21 +27,25 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
         },
         "pipeline_real_phase00",
     )
+    assert len(list(harness_logs.glob("pipeline_real_phase00*.json"))) > pre_phase00_logs
 
     if phase00_output["errors"] and _is_live_fetch_error(phase00_output["errors"]):
         pytest.xfail(f"Live site unavailable: {phase00_output['errors']}")
     if phase00_output["errors"]:
         pytest.fail(f"Unexpected Phase 00 errors: {phase00_output['errors']}")
 
+    pre_phase01_logs = len(list(harness_logs.glob("pipeline_real_phase01*.json")))
     phase01_output = run_phase(
         run_phase01,
         {"artifact_root": str(tmp_path)},
         {"source": phase00_output["source"], "settings": {}},
         "pipeline_real_phase01",
     )
+    assert len(list(harness_logs.glob("pipeline_real_phase01*.json"))) > pre_phase01_logs
     if phase01_output["errors"]:
         pytest.xfail(f"Live site produced non-deterministic Phase 01 errors: {phase01_output['errors']}")
 
+    pre_phase02_logs = len(list(harness_logs.glob("pipeline_real_phase02*.json")))
     phase02_output = run_phase(
         run_phase02,
         {"artifact_root": str(tmp_path)},
@@ -54,6 +56,7 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
         },
         "pipeline_real_phase02",
     )
+    assert len(list(harness_logs.glob("pipeline_real_phase02*.json"))) > pre_phase02_logs
     if phase02_output["errors"]:
         pytest.xfail(f"Live site produced non-deterministic Phase 02 errors: {phase02_output['errors']}")
 
@@ -62,13 +65,7 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     assert phase02_output["output_summary"]["normalized_count"] == 3
 
     assert phase00_output["errors"] == []
-    assert phase01_output["errors"] == []
-    assert phase02_output["errors"] == []
 
     cleaned = phase02_output["normalized_chapters"]
     assert sorted(cleaned.keys()) == ["ch1", "ch2", "ch3"]
     assert all(isinstance(cleaned[ch], str) and cleaned[ch].strip() for ch in cleaned)
-
-    assert len(list(harness_logs.glob("pipeline_real_phase00*.json"))) > pre_phase00_logs
-    assert len(list(harness_logs.glob("pipeline_real_phase01*.json"))) > pre_phase01_logs
-    assert len(list(harness_logs.glob("pipeline_real_phase02*.json"))) > pre_phase02_logs

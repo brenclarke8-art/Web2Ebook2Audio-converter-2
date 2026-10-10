@@ -88,6 +88,7 @@ def test_out_of_bounds_chapter_range_is_clamped(monkeypatch, tmp_path):
         {"artifact_dir": str(tmp_path)},
         {
             "index_url": index_url,
+            # Intentional edge case: start is out of bounds and greater than end.
             "chapter_range": [99, 2],
             "settings": {},
             "env": {},
