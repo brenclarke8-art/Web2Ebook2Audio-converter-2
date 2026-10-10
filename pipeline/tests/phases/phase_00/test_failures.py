@@ -96,5 +96,6 @@ def test_out_of_bounds_chapter_range_is_clamped(monkeypatch, tmp_path):
     )
 
     assert output["errors"] == []
+    # With 3 available chapters, [99, 2] is clamped by processor math to [3, 3].
     assert output["source"]["chapter_range"] == [3, 3]
     assert output["output_summary"]["chapter_count"] == 1

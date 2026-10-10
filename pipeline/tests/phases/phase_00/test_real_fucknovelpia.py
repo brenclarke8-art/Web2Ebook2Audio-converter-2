@@ -5,17 +5,7 @@ from pipeline.tests.harness.runner import run_phase
 
 
 def _is_live_network_error(errors):
-    joined = " | ".join(errors)
-    network_indicators = [
-        "Failed to fetch index URL",
-        "Connection",
-        "timed out",
-        "SSL",
-        "Name or service not known",
-        "Temporary failure in name resolution",
-        "HTTP 5",
-    ]
-    return any(indicator in joined for indicator in network_indicators)
+    return all(error.startswith("Failed to fetch index URL:") for error in errors)
 
 
 @pytest.mark.live
