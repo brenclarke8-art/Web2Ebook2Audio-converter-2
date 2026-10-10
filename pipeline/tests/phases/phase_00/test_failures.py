@@ -88,6 +88,9 @@ def test_invalid_chapter_range_is_clamped(monkeypatch, tmp_path):
         {"artifact_dir": str(tmp_path)},
         {
             "index_url": index_url,
+            # Processor behavior:
+            # requested_start=99 -> start_idx=min(99, total=3)=3
+            # requested_end=2 -> end_idx=min(2, total=3)=2 -> max(start_idx=3, 2)=3
             "chapter_range": [99, 2],
             "settings": {},
             "env": {},
