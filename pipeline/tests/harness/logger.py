@@ -7,11 +7,12 @@ MAX_LOG_FILE_ATTEMPTS = 1000
 
 
 def write_log(log_name, input_artifact, output_artifact):
+    """Write a JSON log file and return the created log path."""
     base = logs_dir()
     base.mkdir(parents=True, exist_ok=True)
 
     log_stem = Path(str(log_name)).name
-    base_name = Path(log_stem).stem if log_stem.endswith(".json") else log_stem
+    base_name = log_stem.removesuffix(".json")
     suffix = 0
     while suffix < MAX_LOG_FILE_ATTEMPTS:
         filename = f"{base_name}.json" if suffix == 0 else f"{base_name}_{suffix}.json"
