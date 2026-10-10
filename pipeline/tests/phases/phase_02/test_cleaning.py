@@ -36,6 +36,7 @@ def test_cleaning_removes_boilerplate_navigation_and_formats_consistently(tmp_pa
 
     ch1 = output["normalized_chapters"]["ch1"]
     ch2 = output["normalized_chapters"]["ch2"]
+    ch3 = output["normalized_chapters"]["ch3"]
 
     # Boilerplate removal
     assert "Sponsored Content" not in ch1
@@ -47,3 +48,4 @@ def test_cleaning_removes_boilerplate_navigation_and_formats_consistently(tmp_pa
     # Consistent formatting
     assert "  " not in ch2
     assert "\n\n\n" not in ch2
+    assert ch3 == "Only body text."
