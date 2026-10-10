@@ -11,7 +11,7 @@ def write_log(log_name, input_artifact, output_artifact):
     base.mkdir(parents=True, exist_ok=True)
 
     log_stem = Path(str(log_name)).name
-    base_name = log_stem[:-5] if log_stem.endswith(".json") else log_stem
+    base_name = Path(log_stem).stem if log_stem.endswith(".json") else log_stem
     suffix = 0
     while suffix < MAX_LOG_FILE_ATTEMPTS:
         filename = f"{base_name}.json" if suffix == 0 else f"{base_name}_{suffix}.json"
@@ -26,6 +26,7 @@ def write_log(log_name, input_artifact, output_artifact):
                     f,
                     indent=2,
                     ensure_ascii=False,
+                    default=str,
                 )
             return log_path
         except FileExistsError:
