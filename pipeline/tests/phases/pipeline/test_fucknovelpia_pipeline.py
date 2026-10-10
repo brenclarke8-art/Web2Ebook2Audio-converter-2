@@ -13,6 +13,11 @@ def _is_live_fetch_error(errors):
 
 @pytest.mark.live
 def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
+    harness_logs = logs_dir()
+    pre_phase00_logs = len(list(harness_logs.glob("pipeline_real_phase00*.json")))
+    pre_phase01_logs = len(list(harness_logs.glob("pipeline_real_phase01*.json")))
+    pre_phase02_logs = len(list(harness_logs.glob("pipeline_real_phase02*.json")))
+
     phase00_output = run_phase(
         run_phase00,
         {"artifact_dir": str(tmp_path)},
@@ -59,7 +64,6 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     assert sorted(cleaned.keys()) == ["ch1", "ch2", "ch3"]
     assert all(isinstance(cleaned[ch], str) and cleaned[ch].strip() for ch in cleaned)
 
-    harness_logs = logs_dir()
-    assert any(harness_logs.glob("pipeline_real_phase00*.json"))
-    assert any(harness_logs.glob("pipeline_real_phase01*.json"))
-    assert any(harness_logs.glob("pipeline_real_phase02*.json"))
+    assert len(list(harness_logs.glob("pipeline_real_phase00*.json"))) > pre_phase00_logs
+    assert len(list(harness_logs.glob("pipeline_real_phase01*.json"))) > pre_phase01_logs
+    assert len(list(harness_logs.glob("pipeline_real_phase02*.json"))) > pre_phase02_logs
