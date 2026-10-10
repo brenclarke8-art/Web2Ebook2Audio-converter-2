@@ -27,6 +27,8 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
 
     if phase00_output["errors"] and _is_live_fetch_error(phase00_output["errors"]):
         pytest.xfail(f"Live site unavailable: {phase00_output['errors']}")
+    if phase00_output["errors"]:
+        pytest.fail(f"Unexpected Phase 00 errors: {phase00_output['errors']}")
 
     phase01_output = run_phase(
         run_phase01,
