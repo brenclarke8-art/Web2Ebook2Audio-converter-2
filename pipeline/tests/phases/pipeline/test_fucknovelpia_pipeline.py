@@ -60,6 +60,7 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     )
     assert len(list(harness_logs.glob("pipeline_real_phase02*.json"))) > pre_phase02_logs
     if phase02_output["errors"]:
+        # Phase 02 is pure cleaning (no live/network I/O), so any error is a hard failure.
         pytest.fail(f"Unexpected Phase 02 errors: {phase02_output['errors']}")
     assert phase02_output["output_summary"]["normalized_count"] == 3
 

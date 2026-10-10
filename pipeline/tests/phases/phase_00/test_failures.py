@@ -59,7 +59,7 @@ def test_empty_chapter_list(monkeypatch, tmp_path):
     assert output["source"] == {}
 
 
-def test_inverted_and_out_of_bounds_chapter_range_is_normalized(monkeypatch, tmp_path):
+def test_out_of_bounds_and_inverted_chapter_range_is_clamped_and_normalized(monkeypatch, tmp_path):
     index_url = "https://fucknovelpia.com/novel/synthetic-episode-novel"
     index_html = read_phase00_fixture("index_fucknovelpia.html")
     chapter_html = {
