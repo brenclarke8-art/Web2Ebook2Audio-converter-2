@@ -1,0 +1,38 @@
+{
+  "normalized_chapters": {
+    "ch1": "The rain stopped as Hana reached the gate.\n\nShe read the faded sign and stepped inside.",
+    "ch2": "By dawn the old map had changed its marks.\n\nEach line now pointed toward the river road.",
+    "ch3": "The council waited in silence for her final word.\n\nHana chose the northern route and sealed the pact."
+  },
+  "chapter_stats": {
+    "ch1": {
+      "length": 87,
+      "word_count": 16
+    },
+    "ch2": {
+      "length": 88,
+      "word_count": 17
+    },
+    "ch3": {
+      "length": 101,
+      "word_count": 18
+    }
+  },
+  "meta": {
+    "phase": "02_normalize",
+    "version": "1.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "chapter_count": 3,
+    "payload_count": 3
+  },
+  "output_summary": {
+    "normalized_count": 3
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

@@ -1,0 +1,31 @@
+import pytest
+
+from pipeline.phases.phase_00_fetch.runner import run
+from pipeline.tests.harness.runner import run_phase
+from pipeline.tests.phases.helpers import (
+    REAL_FUCKNOVELPIA_INDEX_URL,
+    is_live_fetch_error_message,
+)
+
+
+@pytest.mark.live
+def test_real_fucknovelpia_site(tmp_path):
+    output = run_phase(
+        run,
+        {"artifact_dir": str(tmp_path)},
+        {
+            "index_url": REAL_FUCKNOVELPIA_INDEX_URL,
+            "chapter_range": [1, 3],
+            "settings": {},
+            "env": {},
+        },
+        "phase00_real_fucknovelpia_live",
+    )
+
+    if output["errors"] and all(is_live_fetch_error_message(error) for error in output["errors"]):
+        pytest.skip(f"Live site/network unavailable for real-world test run: {output['errors']}")
+
+    assert output["output_summary"]["chapter_count"] == 3
+    assert output["errors"] == []
+    assert output["source"]["chapter_range"] == [1, 3]
+    assert output["output_summary"]["final_range"] == [1, 3]

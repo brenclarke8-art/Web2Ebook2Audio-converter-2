@@ -24,5 +24,11 @@
     "title_selector": "div.chapter-title",
     "content_selector": "div.chapter-content",
     "content_remove_selectors": ["div.ads", "div.nav-buttons"]
+  },
+
+  "fucknovelpia.com": {
+    "chapter_list_selector": "div.episode-list a.episode-item",
+    "title_selector": "h1.episode-title",
+    "content_selector": "div.episode-content"
   }
 }

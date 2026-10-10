@@ -1,0 +1,25 @@
+{
+  "type": "web",
+  "url": "https://fucknovelpia.com/novel/synthetic-episode-novel",
+  "chapter_range": [
+    1,
+    3
+  ],
+  "chapters": [
+    {
+      "title": "Episode 1: Arrival",
+      "content": "<div class=\"episode-content\"><p>The rain stopped as Hana reached the gate.</p><p>She read the faded sign and stepped inside.</p></div>",
+      "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1"
+    },
+    {
+      "title": "Episode 2: Shift",
+      "content": "<div class=\"episode-content\"><p>By dawn the old map had changed its marks.</p><p>Each line now pointed toward the river road.</p></div>",
+      "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2"
+    },
+    {
+      "title": "Episode 3: Decision",
+      "content": "<div class=\"episode-content\"><p>The council waited in silence for her final word.</p><p>Hana chose the northern route and sealed the pact.</p></div>",
+      "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3"
+    }
+  ]
+}
