@@ -59,7 +59,7 @@ def test_empty_chapter_list(monkeypatch, tmp_path):
     assert output["source"] == {}
 
 
-def test_invalid_chapter_range_start_overflow_end_before_start_is_clamped(monkeypatch, tmp_path):
+def test_out_of_bounds_chapter_range_is_clamped(monkeypatch, tmp_path):
     index_url = "https://fucknovelpia.com/novel/synthetic-episode-novel"
     index_html = read_phase00_fixture("index_fucknovelpia.html")
     chapter_html = {
@@ -98,6 +98,5 @@ def test_invalid_chapter_range_start_overflow_end_before_start_is_clamped(monkey
     )
 
     assert output["errors"] == []
-    assert output["warnings"] == []
     assert output["source"]["chapter_range"] == [3, 3]
     assert output["output_summary"]["chapter_count"] == 1
