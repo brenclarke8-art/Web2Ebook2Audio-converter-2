@@ -15,7 +15,7 @@ def write_log(log_name, input_artifact, output_artifact):
     if not log_filename.endswith(".json"):
         log_filename = f"{log_filename}.json"
 
-    log_base_name = log_filename[:-5] if log_filename.endswith(".json") else log_filename
+    log_base_name = Path(log_filename).stem
     for suffix in range(MAX_LOG_FILE_ATTEMPTS):
         candidate_name = (
             f"{log_base_name}.json" if suffix == 0 else f"{log_base_name}_{suffix}.json"
