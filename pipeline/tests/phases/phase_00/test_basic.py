@@ -1,28 +1,18 @@
-from pathlib import Path
-
 from pipeline.phases.phase_00_fetch.runner import run
 from pipeline.tests.harness.runner import run_phase
-from pipeline.tests.harness.utils import tests_root
-
-
-def _phase00_fixtures_dir() -> Path:
-    return tests_root() / "fixtures" / "phase_00"
-
-
-def _read_fixture(name: str) -> str:
-    return (_phase00_fixtures_dir() / name).read_text(encoding="utf-8")
+from pipeline.tests.phases.phase_00.helpers import read_phase00_fixture
 
 
 def test_basic_extraction_with_synthetic_fixtures(monkeypatch, tmp_path):
     index_url = "https://fucknovelpia.com/novel/synthetic-episode-novel"
     chapter_urls = {
-        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1": _read_fixture(
+        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1": read_phase00_fixture(
             "chapter_fucknovelpia_1.html"
         ),
-        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2": _read_fixture(
+        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2": read_phase00_fixture(
             "chapter_fucknovelpia_2.html"
         ),
-        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3": _read_fixture(
+        "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3": read_phase00_fixture(
             "chapter_fucknovelpia_3.html"
         ),
     }
@@ -32,7 +22,7 @@ def test_basic_extraction_with_synthetic_fixtures(monkeypatch, tmp_path):
             return {
                 "ok": True,
                 "status": 200,
-                "html": _read_fixture("index_fucknovelpia.html"),
+                "html": read_phase00_fixture("index_fucknovelpia.html"),
                 "error": None,
             }
         if url in chapter_urls:

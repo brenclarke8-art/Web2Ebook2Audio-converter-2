@@ -29,3 +29,5 @@ def test_rule_based_extraction_with_synthetic_fixtures():
 
     content_html = extract_content(chapter_html, rules)
     assert content_html.startswith('<div class="episode-content">')
+    assert "The rain stopped as Hana reached the gate." in content_html
+    assert content_html.endswith("</div>")
