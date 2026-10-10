@@ -5,10 +5,7 @@ from pipeline.phases.phase_01_source.runner import run as run_phase01
 from pipeline.phases.phase_02_cleaning.runner import run as run_phase02
 from pipeline.tests.harness.runner import run_phase
 from pipeline.tests.harness.utils import logs_dir
-
-
-def _is_live_fetch_error(errors):
-    return any(error.startswith("Failed to fetch index URL:") for error in errors)
+from pipeline.tests.phases.helpers import is_live_fetch_error_message
 
 
 @pytest.mark.live
@@ -29,9 +26,9 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     )
     assert len(list(harness_logs.glob("pipeline_real_phase00*.json"))) > pre_phase00_logs
 
-    if phase00_output["errors"] and _is_live_fetch_error(phase00_output["errors"]):
-        pytest.skip(f"Live site unavailable: {phase00_output['errors']}")
     if phase00_output["errors"]:
+        if all(is_live_fetch_error_message(error) for error in phase00_output["errors"]):
+            pytest.skip(f"Live site unavailable: {phase00_output['errors']}")
         pytest.fail(f"Unexpected Phase 00 errors: {phase00_output['errors']}")
     assert phase00_output["output_summary"]["chapter_count"] == 3
 

@@ -2,10 +2,7 @@ import pytest
 
 from pipeline.phases.phase_00_fetch.runner import run
 from pipeline.tests.harness.runner import run_phase
-
-
-def _is_live_network_error(errors):
-    return any(error.startswith("Failed to fetch index URL:") for error in errors)
+from pipeline.tests.phases.helpers import is_live_fetch_error_message
 
 
 @pytest.mark.live
@@ -22,7 +19,7 @@ def test_real_fucknovelpia_site(tmp_path):
         "phase00_real_fucknovelpia_live",
     )
 
-    if output["errors"] and _is_live_network_error(output["errors"]):
+    if output["errors"] and all(is_live_fetch_error_message(error) for error in output["errors"]):
         pytest.skip(f"Live site/network unavailable for real-world test run: {output['errors']}")
 
     assert output["output_summary"]["chapter_count"] == 3
