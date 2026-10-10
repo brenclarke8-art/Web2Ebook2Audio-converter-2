@@ -13,8 +13,7 @@ def write_log(log_name, input_artifact, output_artifact):
 
     log_stem = Path(str(log_name)).name
     base_name = log_stem.removesuffix(".json")
-    suffix = 0
-    while suffix < MAX_LOG_FILE_ATTEMPTS:
+    for suffix in range(MAX_LOG_FILE_ATTEMPTS):
         filename = f"{base_name}.json" if suffix == 0 else f"{base_name}_{suffix}.json"
         log_path = base / filename
         try:
@@ -31,7 +30,7 @@ def write_log(log_name, input_artifact, output_artifact):
                 )
             return log_path
         except FileExistsError:
-            suffix += 1
+            continue
 
     raise RuntimeError(
         f"Unable to create a unique log file for '{base_name}' after {MAX_LOG_FILE_ATTEMPTS} attempts."
