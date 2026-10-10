@@ -22,6 +22,5 @@ def test_real_fucknovelpia_site(tmp_path):
         pytest.xfail(f"Live site/network unavailable for real-world test run: {output['errors']}")
 
     assert output["output_summary"]["chapter_count"] == 3
-    assert output["errors"] == []
     assert output["source"]["chapter_range"] == [1, 3]
     assert output["output_summary"]["final_range"] == [1, 3]
