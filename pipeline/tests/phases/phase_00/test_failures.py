@@ -89,7 +89,7 @@ def test_invalid_chapter_range_is_clamped(monkeypatch, tmp_path):
         {
             "index_url": index_url,
             # [99, 2] clamps to [3, 3] with three available chapters:
-            # start -> 3 (upper clamp), end -> 3 (max(start, clamped_end)).
+            # start=99 -> min(99, 3)=3; end=2 -> min(2, 3)=2; then end=max(start=3, 2)=3.
             "chapter_range": [99, 2],
             "settings": {},
             "env": {},
