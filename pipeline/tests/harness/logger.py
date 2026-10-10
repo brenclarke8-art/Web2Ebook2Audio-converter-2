@@ -11,7 +11,8 @@ def write_log(log_name, input_artifact, output_artifact):
     log_directory = logs_dir()
     log_directory.mkdir(parents=True, exist_ok=True)
 
-    log_base_name = Path(str(log_name)).stem
+    raw_log_name = Path(str(log_name)).name
+    log_base_name = Path(raw_log_name).stem.lstrip(".").strip()
     if not log_base_name:
         log_base_name = "log"
     for suffix in range(MAX_LOG_FILE_ATTEMPTS):
