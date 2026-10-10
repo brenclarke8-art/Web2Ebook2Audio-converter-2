@@ -9,7 +9,7 @@ def write_log(log_name, input_artifact, output_artifact):
     base.mkdir(parents=True, exist_ok=True)
 
     filename = log_name if str(log_name).endswith(".json") else f"{log_name}.json"
-    log_path = Path(base) / filename
+    log_path = base / filename
 
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(
