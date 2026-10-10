@@ -23,7 +23,7 @@ def test_real_fucknovelpia_site(tmp_path):
     )
 
     if output["errors"] and _is_live_network_error(output["errors"]):
-        pytest.xfail(f"Live site/network unavailable for real-world test run: {output['errors']}")
+        pytest.skip(f"Live site/network unavailable for real-world test run: {output['errors']}")
 
     assert output["output_summary"]["chapter_count"] == 3
     assert output["errors"] == []
