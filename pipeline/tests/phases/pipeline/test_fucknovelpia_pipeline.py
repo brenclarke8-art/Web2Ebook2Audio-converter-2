@@ -33,6 +33,7 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
         pytest.xfail(f"Live site unavailable: {phase00_output['errors']}")
     if phase00_output["errors"]:
         pytest.fail(f"Unexpected Phase 00 errors: {phase00_output['errors']}")
+    assert phase00_output["output_summary"]["chapter_count"] == 3
 
     pre_phase01_logs = len(list(harness_logs.glob("pipeline_real_phase01*.json")))
     phase01_output = run_phase(
@@ -44,6 +45,7 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     assert len(list(harness_logs.glob("pipeline_real_phase01*.json"))) > pre_phase01_logs
     if phase01_output["errors"]:
         pytest.xfail(f"Live site produced non-deterministic Phase 01 errors: {phase01_output['errors']}")
+    assert phase01_output["output_summary"]["chapter_count"] == 3
 
     pre_phase02_logs = len(list(harness_logs.glob("pipeline_real_phase02*.json")))
     phase02_output = run_phase(
@@ -59,12 +61,7 @@ def test_real_fucknovelpia_pipeline_end_to_end(tmp_path):
     assert len(list(harness_logs.glob("pipeline_real_phase02*.json"))) > pre_phase02_logs
     if phase02_output["errors"]:
         pytest.xfail(f"Live site produced non-deterministic Phase 02 errors: {phase02_output['errors']}")
-
-    assert phase00_output["output_summary"]["chapter_count"] == 3
-    assert phase01_output["output_summary"]["chapter_count"] == 3
     assert phase02_output["output_summary"]["normalized_count"] == 3
-
-    assert phase00_output["errors"] == []
 
     cleaned = phase02_output["normalized_chapters"]
     assert sorted(cleaned.keys()) == ["ch1", "ch2", "ch3"]
