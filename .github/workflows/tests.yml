@@ -24,6 +24,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r legacy/requirements.txt
 
+      - name: Configure import path
+        run: echo "PYTHONPATH=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: pytest -q -m "not live"
 
