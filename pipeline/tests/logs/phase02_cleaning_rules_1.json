@@ -1,0 +1,71 @@
+{
+  "input_artifact": {
+    "chapter_index": [
+      {
+        "chapter_id": "ch1",
+        "title": "Episode 1",
+        "order": 1
+      },
+      {
+        "chapter_id": "ch2",
+        "title": "Episode 2",
+        "order": 2
+      },
+      {
+        "chapter_id": "ch3",
+        "title": "Episode 3",
+        "order": 3
+      }
+    ],
+    "raw_payloads": {
+      "ch1": "<div class='episode-content'><p>Sponsored Content</p><p>Episode text first paragraph.</p><p>Next Chapter</p><p>Episode text second paragraph.</p><p>Previous Chapter</p></div>",
+      "ch2": "<div class='episode-content'><p>   Line one with   extra spacing.   </p><p>\n\nLine two after blank lines.\n</p></div>",
+      "ch3": "<div class='episode-content'><p>Only body text.</p></div>"
+    },
+    "settings": {}
+  },
+  "output_artifact": {
+    "normalized_chapters": {
+      "ch1": "Episode text first paragraph.\n\nEpisode text second paragraph.",
+      "ch2": "Line one with extra spacing.\n\nLine two after blank lines.",
+      "ch3": "Only body text."
+    },
+    "chapter_stats": {
+      "ch1": {
+        "length": 61,
+        "word_count": 8,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      },
+      "ch2": {
+        "length": 57,
+        "word_count": 10,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      },
+      "ch3": {
+        "length": 15,
+        "word_count": 3,
+        "paragraph_count": 1,
+        "sentence_count": 1
+      }
+    },
+    "meta": {
+      "phase": "02_cleaning",
+      "version": "1.0.0",
+      "timestamp": 1791837848.4306045
+    },
+    "input_summary": {
+      "chapter_count": 3,
+      "payload_count": 3
+    },
+    "output_summary": {
+      "normalized_count": 3
+    },
+    "errors": [],
+    "warnings": [],
+    "timings": {
+      "total_ms": 0.8392333984375
+    }
+  }
+}
