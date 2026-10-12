@@ -15,6 +15,10 @@ Copilot Instructions:
 """
 
 import time
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 from .input_schema import Phase02Input
 from .output_schema import Phase02Output
 

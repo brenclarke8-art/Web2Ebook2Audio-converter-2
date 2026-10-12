@@ -14,6 +14,9 @@ Copilot Instructions:
 - Helpers MUST return the full chapter_index and full raw_payloads.
 - chapter_range MUST be applied ONLY inside process().
 """
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 from .input_schema import Phase01Input
 from .output_schema import Phase01Output

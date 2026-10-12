@@ -2,33 +2,73 @@
   "example.com": {
     "chapter_list_selector": "div.chapter-list a",
     "title_selector": "h1.chapter-title",
-    "content_selector": "div#chapter-content"
+    "content_selector": "div#chapter-content",
+
+    "chapter_url_regex": "^/chapter/\\d+$",
+    "chapter_url_allowlist": ["chapter"],
+    "chapter_url_denylist": ["login", "register", "download", "upload"],
+    "anchor_denylist": ["login", "register", "download", "upload"],
+    "ignore_parents": ["nav", "header", "footer", "aside"],
+    "use_numeric_fallback": true,
+    "use_chapter_keyword_fallback": true
   },
 
   "wuxiaworld.com": {
     "chapter_list_selector": "ul.chapter-list a",
     "title_selector": "h4",
     "content_selector": "div#chapter-content",
-    "content_remove_selectors": ["div.ad", "div.share-buttons"]
+    "content_remove_selectors": ["div.ad", "div.share-buttons"],
+
+    "chapter_url_regex": "^/novel/[^/]+/chapter-\\d+$",
+    "chapter_url_allowlist": ["chapter"],
+    "chapter_url_denylist": ["login", "register", "account"],
+    "anchor_denylist": ["login", "register", "account"],
+    "ignore_parents": ["nav", "header", "footer", "aside"],
+    "use_numeric_fallback": false,
+    "use_chapter_keyword_fallback": true
   },
 
   "royalroad.com": {
     "chapter_list_selector": "a.chapter-link",
     "title_selector": "h1",
     "content_selector": "div.chapter-content",
-    "content_remove_selectors": ["div.advertisement", "div.footer"]
+    "content_remove_selectors": ["div.advertisement", "div.footer"],
+
+    "chapter_url_regex": "^/fiction/[^/]+/chapter/\\d+$",
+    "chapter_url_allowlist": ["chapter"],
+    "chapter_url_denylist": ["login", "register"],
+    "anchor_denylist": ["login", "register"],
+    "ignore_parents": ["nav", "header", "footer", "aside"],
+    "use_numeric_fallback": true,
+    "use_chapter_keyword_fallback": true
   },
 
   "scribblehub.com": {
     "chapter_list_selector": "a.toc_a",
     "title_selector": "div.chapter-title",
     "content_selector": "div.chapter-content",
-    "content_remove_selectors": ["div.ads", "div.nav-buttons"]
+    "content_remove_selectors": ["div.ads", "div.nav-buttons"],
+
+    "chapter_url_regex": "^/read/\\d+/\\d+/$",
+    "chapter_url_allowlist": ["chapter", "read"],
+    "chapter_url_denylist": ["login", "register", "account"],
+    "anchor_denylist": ["login", "register", "account"],
+    "ignore_parents": ["nav", "header", "footer", "aside"],
+    "use_numeric_fallback": true,
+    "use_chapter_keyword_fallback": true
   },
 
   "fucknovelpia.com": {
     "chapter_list_selector": "div.episode-list a.episode-item",
     "title_selector": "h1.episode-title",
-    "content_selector": "div.episode-content"
+    "content_selector": "div.episode-content",
+
+    "chapter_url_regex": "^/novel/[^/]+/\\d+$",
+    "chapter_url_allowlist": ["episode", "chapter"],
+    "chapter_url_denylist": ["login", "register", "account", "search", "raws"],
+    "anchor_denylist": ["login", "register", "account", "search", "raws"],
+    "ignore_parents": ["nav", "header", "footer", "aside"],
+    "use_numeric_fallback": true,
+    "use_chapter_keyword_fallback": true
   }
 }

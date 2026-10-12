@@ -1,0 +1,20 @@
+{
+  "python.defaultInterpreterPath": "C:/Users/dangl/miniconda3/envs/web2ebook/python.exe",
+
+  "terminal.integrated.env.windows": {
+    "PYTHONPATH": "C:/Users/dangl/Web2Ebook2Audio-converter-2-1"
+  },
+
+  "terminal.integrated.profiles.windows": {
+    "PowerShell": {
+      "source": "PowerShell",
+      "args": ["-NoExit", "-Command", "conda activate web2ebook"]
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["-q"],
+  "python.testing.cwd": "C:/Users/dangl/Web2Ebook2Audio-converter-2-1",
+  "python.testing.autoTestDiscoverOnSaveEnabled": true
+}

@@ -1,4 +1,8 @@
 import time
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 from urllib.parse import urljoin
 
 from .input_schema import Phase00FetchInput
