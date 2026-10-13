@@ -1,0 +1,71 @@
+{
+  "input_artifact": {
+    "chapter_index": [
+      {
+        "chapter_id": "ch1",
+        "title": "Episode 1",
+        "order": 1
+      },
+      {
+        "chapter_id": "ch2",
+        "title": "Episode 2",
+        "order": 2
+      },
+      {
+        "chapter_id": "ch3",
+        "title": "Episode 3",
+        "order": 3
+      }
+    ],
+    "raw_payloads": {
+      "ch1": "<div class=\"episode-content\"><p>The rain stopped as Hana reached the gate.</p><p>She read the faded sign and stepped inside.</p></div>",
+      "ch2": "<div class=\"episode-content\"><p>By dawn the old map had changed its marks.</p><p>Each line now pointed toward the river road.</p></div>",
+      "ch3": "<div class=\"episode-content\"><p>The council waited in silence for her final word.</p><p>Hana chose the northern route and sealed the pact.</p></div>"
+    },
+    "settings": {}
+  },
+  "output_artifact": {
+    "normalized_chapters": {
+      "ch1": "The rain stopped as Hana reached the gate.\n\nShe read the faded sign and stepped inside.",
+      "ch2": "By dawn the old map had changed its marks.\n\nEach line now pointed toward the river road.",
+      "ch3": "The council waited in silence for her final word.\n\nHana chose the northern route and sealed the pact."
+    },
+    "chapter_stats": {
+      "ch1": {
+        "length": 87,
+        "word_count": 16,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      },
+      "ch2": {
+        "length": 88,
+        "word_count": 17,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      },
+      "ch3": {
+        "length": 101,
+        "word_count": 18,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      }
+    },
+    "meta": {
+      "phase": "02_cleaning",
+      "version": "1.0.0",
+      "timestamp": 1791837848.4331906
+    },
+    "input_summary": {
+      "chapter_count": 3,
+      "payload_count": 3
+    },
+    "output_summary": {
+      "normalized_count": 3
+    },
+    "errors": [],
+    "warnings": [],
+    "timings": {
+      "total_ms": 0.23603439331054688
+    }
+  }
+}

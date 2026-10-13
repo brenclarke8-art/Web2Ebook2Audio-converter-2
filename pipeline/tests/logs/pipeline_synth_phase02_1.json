@@ -1,0 +1,77 @@
+{
+  "input_artifact": {
+    "chapter_index": [
+      {
+        "chapter_id": "ch1",
+        "title": "Episode 1: Arrival",
+        "order": 1,
+        "source_type": "web",
+        "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1"
+      },
+      {
+        "chapter_id": "ch2",
+        "title": "Episode 2: Shift",
+        "order": 2,
+        "source_type": "web",
+        "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2"
+      },
+      {
+        "chapter_id": "ch3",
+        "title": "Episode 3: Decision",
+        "order": 3,
+        "source_type": "web",
+        "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3"
+      }
+    ],
+    "raw_payloads": {
+      "ch1": "<div class=\"episode-content\">\n<p>The rain stopped as Hana reached the gate.</p>\n<p>She read the faded sign and stepped inside.</p>\n</div>",
+      "ch2": "<div class=\"episode-content\">\n<p>By dawn the old map had changed its marks.</p>\n<p>Each line now pointed toward the river road.</p>\n</div>",
+      "ch3": "<div class=\"episode-content\">\n<p>The council waited in silence for her final word.</p>\n<p>Hana chose the northern route and sealed the pact.</p>\n</div>"
+    },
+    "settings": {}
+  },
+  "output_artifact": {
+    "normalized_chapters": {
+      "ch1": "The rain stopped as Hana reached the gate.\n\nShe read the faded sign and stepped inside.",
+      "ch2": "By dawn the old map had changed its marks.\n\nEach line now pointed toward the river road.",
+      "ch3": "The council waited in silence for her final word.\n\nHana chose the northern route and sealed the pact."
+    },
+    "chapter_stats": {
+      "ch1": {
+        "length": 87,
+        "word_count": 16,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      },
+      "ch2": {
+        "length": 88,
+        "word_count": 17,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      },
+      "ch3": {
+        "length": 101,
+        "word_count": 18,
+        "paragraph_count": 2,
+        "sentence_count": 2
+      }
+    },
+    "meta": {
+      "phase": "02_cleaning",
+      "version": "1.0.0",
+      "timestamp": 1791837860.7510478
+    },
+    "input_summary": {
+      "chapter_count": 3,
+      "payload_count": 3
+    },
+    "output_summary": {
+      "normalized_count": 3
+    },
+    "errors": [],
+    "warnings": [],
+    "timings": {
+      "total_ms": 0.8170604705810547
+    }
+  }
+}
