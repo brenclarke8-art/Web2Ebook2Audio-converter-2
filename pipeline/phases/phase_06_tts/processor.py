@@ -19,6 +19,7 @@ _DEFAULT_VOICES = [
 def _build_voice_registry(character_registry: list[dict], settings: dict) -> list[dict]:
     provider = settings.get("tts_provider", "edge")
     configured = settings.get("character_voice_map", {})
+    character_voice_pool = _DEFAULT_VOICES[1:] or _DEFAULT_VOICES
 
     registry = [
         {
@@ -31,7 +32,9 @@ def _build_voice_registry(character_registry: list[dict], settings: dict) -> lis
 
     for idx, character in enumerate(character_registry, start=1):
         character_id = character["character_id"]
-        voice_name = configured.get(character_id) or _DEFAULT_VOICES[idx % len(_DEFAULT_VOICES)]
+        voice_name = configured.get(character_id) or character_voice_pool[
+            (idx - 1) % len(character_voice_pool)
+        ]
         registry.append(
             {
                 "voice_id": f"voice_{character_id}",
