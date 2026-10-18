@@ -100,3 +100,51 @@ def test_out_of_bounds_and_inverted_chapter_range_is_clamped_and_normalized(monk
     # With total=3: start=min(99,3)=3, end=min(2,3)=2, then end=max(start,end)=3.
     assert output["source"]["chapter_range"] == [3, 3]
     assert output["output_summary"]["chapter_count"] == 1
+
+
+def test_training_examples_must_be_same_domain(monkeypatch, tmp_path):
+    def fake_fetch(_url):
+        return {"ok": True, "status": 200, "html": "<html><body><p>Index</p></body></html>", "error": None}
+
+    monkeypatch.setattr("pipeline.phases.phase_00_fetch.processor.fetch_html", fake_fetch)
+
+    output = run_phase(
+        run,
+        {"artifact_dir": str(tmp_path)},
+        {
+            "index_url": "https://example.com/novel/book/",
+            "chapter_range": [1, 3],
+            "chapter_example_1": "https://example.com/novel/book/chapter-1/",
+            "chapter_example_2": "https://other.com/novel/book/chapter-2/",
+            "chapter_example_3": "https://example.com/novel/book/chapter-3/",
+            "settings": {},
+            "env": {},
+        },
+        "phase00_failure_training_domain",
+    )
+
+    assert any("Invalid chapter training data" in error for error in output["errors"])
+
+
+def test_training_examples_must_be_consecutive(monkeypatch, tmp_path):
+    def fake_fetch(_url):
+        return {"ok": True, "status": 200, "html": "<html><body><p>Index</p></body></html>", "error": None}
+
+    monkeypatch.setattr("pipeline.phases.phase_00_fetch.processor.fetch_html", fake_fetch)
+
+    output = run_phase(
+        run,
+        {"artifact_dir": str(tmp_path)},
+        {
+            "index_url": "https://example.com/novel/book/",
+            "chapter_range": [1, 3],
+            "chapter_example_1": "https://example.com/novel/book/chapter-100/",
+            "chapter_example_2": "https://example.com/novel/book/chapter-105/",
+            "chapter_example_3": "https://example.com/novel/book/chapter-110/",
+            "settings": {},
+            "env": {},
+        },
+        "phase00_failure_training_consecutive",
+    )
+
+    assert any("Invalid chapter training data" in error for error in output["errors"])

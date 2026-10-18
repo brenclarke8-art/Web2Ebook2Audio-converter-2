@@ -52,3 +52,20 @@ def write_debug_artifacts(context: dict, output_model):
             html,
             encoding="utf-8"
         )
+
+    learning_debug = output_model.meta.get("learning_debug")
+    if isinstance(learning_debug, dict):
+        debug_dir = base / "debug"
+        debug_dir.mkdir(exist_ok=True)
+
+        for name in [
+            "inferred_pattern",
+            "generated_rule",
+            "learned_examples",
+            "final_chapter_template",
+        ]:
+            payload = learning_debug.get(name, {})
+            (debug_dir / f"{name}.json").write_text(
+                json.dumps(payload, indent=2),
+                encoding="utf-8"
+            )

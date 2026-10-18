@@ -1,119 +1,202 @@
 import json
 import re
 from pathlib import Path
+from typing import Dict, List, Tuple
 from urllib.parse import urlparse
-from bs4 import BeautifulSoup
-import requests
 
-RULES_PATH = Path(__file__).parent.parent / "rules" / "scraper_rules.json"
-
-DEFAULT_DENYLIST = [
-    "login", "register", "account", "search", "raws",
-    "download", "upload", "comment", "share"
-]
-
-DEFAULT_IGNORE_PARENTS = ["nav", "header", "footer", "aside"]
+RULES_PATH = Path(__file__).parent / "rules" / "scraper_rules.json"
 
 
-def infer_regex_from_paths(p1: str, p2: str) -> str:
-    a_parts = p1.strip("/").split("/")
-    b_parts = p2.strip("/").split("/")
-    out = []
-
-    for ap, bp in zip(a_parts, b_parts):
-        if ap.isdigit() and bp.isdigit():
-            out.append(r"\d+")
-        else:
-            out.append(re.escape(ap))
-
-    return "^/" + "/".join(out) + "$"
+class RuleInferenceError(ValueError):
+    """Raised when chapter example URLs cannot be used to infer a rule."""
 
 
-def infer_selectors_from_index_html(index_html: str, chapter1_url: str):
-    soup = BeautifulSoup(index_html, "html.parser")
-
-    # Find anchor matching chapter1_url
-    def matches(h):
-        if not h:
-            return False
-        # match relative or absolute
-        return chapter1_url.endswith(h) or h in chapter1_url
-
-    a = soup.find("a", href=matches)
-    if not a:
-        return None
-
-    parent = a.find_parent()
-    if not parent:
-        return None
-
-    tag = parent.name
-    classes = parent.get("class", [])
-
-    if classes:
-        return f"{tag}.{classes[0]} a"
-    else:
-        return f"{tag} a"
-
-
-def infer_rules_from_urls(index_url: str, chapter1_url: str, chapter2_url: str):
-    domain = urlparse(chapter1_url).netloc.lower()
+def normalize_domain(url: str) -> str:
+    domain = urlparse(url).netloc.lower()
     if domain.startswith("www."):
         domain = domain[4:]
+    return domain
 
-    p1 = urlparse(chapter1_url).path
-    p2 = urlparse(chapter2_url).path
 
-    # Infer regex
-    chapter_url_regex = infer_regex_from_paths(p1, p2)
+def _tokenize_numeric_parts(value: str) -> List[str]:
+    return re.split(r"(\d+)", value)
 
-    # Allowlist = stable path segments except numeric
-    allowlist = [seg for seg in p1.strip("/").split("/") if not seg.isdigit()]
 
-    # Fallback behavior
-    last_segment = p1.strip("/").split("/")[-1]
-    use_numeric_fallback = last_segment.isdigit()
-    use_keyword_fallback = "chapter" in p1.lower()
+def _is_consecutive(nums: List[int]) -> bool:
+    return len(nums) == 3 and nums[1] == nums[0] + 1 and nums[2] == nums[1] + 1
 
-    # Fetch index HTML
-    try:
-        index_html = requests.get(index_url, timeout=10).text
-    except Exception:
-        index_html = None
 
-    chapter_list_selector = None
-    if index_html:
-        chapter_list_selector = infer_selectors_from_index_html(index_html, chapter1_url)
+def _find_sequence_slot(urls: List[str]) -> Tuple[List[str], int, List[int], int]:
+    tokens_per_url = [_tokenize_numeric_parts(url) for url in urls]
+    first = tokens_per_url[0]
 
-    rules = {
-        "chapter_url_regex": chapter_url_regex,
-        "chapter_url_allowlist": allowlist,
-        "chapter_url_denylist": DEFAULT_DENYLIST,
-        "anchor_denylist": DEFAULT_DENYLIST,
-        "ignore_parents": DEFAULT_IGNORE_PARENTS,
-        "use_numeric_fallback": use_numeric_fallback,
-        "use_chapter_keyword_fallback": use_keyword_fallback
+    if not all(len(tokens) == len(first) for tokens in tokens_per_url):
+        raise RuleInferenceError("Could not infer a stable chapter number position from the provided examples.")
+
+    candidate_indices: List[Tuple[int, List[int], int]] = []
+
+    for idx in range(1, len(first), 2):
+        if not all(tokens[idx].isdigit() for tokens in tokens_per_url):
+            continue
+
+        numbers = [int(tokens[idx]) for tokens in tokens_per_url]
+        if len(set(numbers)) <= 1:
+            continue
+
+        if _is_consecutive(numbers):
+            widths = [len(tokens[idx]) for tokens in tokens_per_url]
+            has_leading_zero = any(tokens[idx].startswith("0") for tokens in tokens_per_url)
+            padding = widths[0] if has_leading_zero and len(set(widths)) == 1 else 0
+            candidate_indices.append((idx, numbers, padding))
+
+    if not candidate_indices:
+        raise RuleInferenceError("Chapter examples must be three consecutive chapters with a detectable numeric sequence.")
+
+    # Prefer the last changing numeric segment (usually the chapter segment).
+    slot_index, numbers, padding = candidate_indices[-1]
+
+    static_tokens = list(first)
+    static_tokens[slot_index] = "{n}"
+
+    for tokens in tokens_per_url[1:]:
+        compare = list(tokens)
+        compare[slot_index] = "{n}"
+        if compare != static_tokens:
+            raise RuleInferenceError("Could not infer a stable chapter URL pattern from the provided examples.")
+
+    return first, slot_index, numbers, padding
+
+
+def _format_placeholder(padding: int) -> str:
+    return "{n}" if padding <= 0 else f"{{n:0{padding}}}"
+
+
+def infer_chapter_pattern(chapter_example_1: str, chapter_example_2: str, chapter_example_3: str) -> Dict[str, object]:
+    examples = [chapter_example_1.strip(), chapter_example_2.strip(), chapter_example_3.strip()]
+
+    if not all(examples):
+        raise RuleInferenceError("All three chapter example URLs are required.")
+
+    domains = {normalize_domain(url) for url in examples}
+    if len(domains) != 1:
+        raise RuleInferenceError("Chapter example URLs must belong to the same domain.")
+
+    token_list, slot_index, numbers, padding = _find_sequence_slot(examples)
+
+    static_prefix = "".join(token_list[:slot_index])
+    static_suffix = "".join(token_list[slot_index + 1 :])
+
+    return {
+        "examples": examples,
+        "domain": next(iter(domains)),
+        "static_prefix": static_prefix,
+        "static_suffix": static_suffix,
+        "padding": padding,
+        "first_known_chapter": numbers[0],
+        "number_position": slot_index,
     }
 
-    if chapter_list_selector:
-        rules["chapter_list_selector"] = chapter_list_selector
 
-    return domain, rules
+def extract_chapter_number(url: str, chapter_regex: str) -> int | None:
+    match = re.search(chapter_regex, urlparse(url).path)
+    if not match:
+        return None
+
+    if match.groups():
+        value = match.group(1)
+    else:
+        digits = re.findall(r"\d+", match.group(0))
+        value = digits[-1] if digits else None
+
+    return int(value) if value and value.isdigit() else None
 
 
-def write_rules_to_json(domain: str, rules: dict):
+def build_chapter_template(inference: Dict[str, object]) -> str:
+    padding = int(inference["padding"])
+    return f"{inference['static_prefix']}{_format_placeholder(padding)}{inference['static_suffix']}"
+
+
+def build_chapter_regex(inference: Dict[str, object]) -> str:
+    padding = int(inference["padding"])
+    numeric_pattern = r"([0-9]+)" if padding <= 0 else rf"([0-9]{{{padding}}})"
+
+    prefix_path = re.escape(urlparse(str(inference["static_prefix"])).path)
+    suffix_path = re.escape(urlparse(str(inference["static_suffix"])).path)
+
+    regex = f"^{prefix_path}{numeric_pattern}{suffix_path}$"
+    if regex.endswith(r"/$"):
+        regex = regex[:-2] + r"/?$"
+
+    return regex
+
+
+def load_learned_rule(domain: str) -> Dict[str, object]:
+    normalized = domain.lower().strip()
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+
+    if not RULES_PATH.exists():
+        return {}
+
+    data = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    return data.get(normalized, {})
+
+
+def save_learned_rule(domain: str, rule: Dict[str, object]) -> Dict[str, object]:
+    normalized = domain.lower().strip()
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+
     if RULES_PATH.exists():
-        data = json.loads(RULES_PATH.read_text())
+        data = json.loads(RULES_PATH.read_text(encoding="utf-8"))
     else:
         data = {}
 
-    data[domain] = rules
-    RULES_PATH.write_text(json.dumps(data, indent=2))
-    return True
+    existing = data.get(normalized, {})
+    updated = {**existing, **rule}
+    data[normalized] = updated
+
+    RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RULES_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    return updated
 
 
-# CLI entrypoint
-def generate_rules(index_url: str, chapter1_url: str, chapter2_url: str):
-    domain, rules = infer_rules_from_urls(index_url, chapter1_url, chapter2_url)
-    write_rules_to_json(domain, rules)
-    return domain, rules
+def generate_learned_rule(index_url: str, chapter_example_1: str, chapter_example_2: str, chapter_example_3: str) -> Tuple[str, Dict[str, object], Dict[str, object]]:
+    inference = infer_chapter_pattern(chapter_example_1, chapter_example_2, chapter_example_3)
+
+    index_domain = normalize_domain(index_url)
+    if inference["domain"] != index_domain:
+        raise RuleInferenceError("Chapter examples must belong to the same domain as the index URL.")
+
+    template = build_chapter_template(inference)
+    chapter_regex = build_chapter_regex(inference)
+
+    rule = {
+        "learned": True,
+        "index_url": index_url,
+        "chapter_pattern": template,
+        "chapter_regex": chapter_regex,
+        "padding": int(inference["padding"]),
+        "first_known_chapter": int(inference["first_known_chapter"]),
+        "rule_version": 1,
+    }
+
+    debug = {
+        "learned_examples": {"examples": inference["examples"]},
+        "inferred_pattern": {
+            "static_prefix": inference["static_prefix"],
+            "static_suffix": inference["static_suffix"],
+            "padding": int(inference["padding"]),
+            "first_known_chapter": int(inference["first_known_chapter"]),
+        },
+        "generated_rule": rule,
+        "final_chapter_template": {
+            "examples": inference["examples"],
+            "template": template,
+            "regex": chapter_regex,
+            "padding": int(inference["padding"]),
+        },
+    }
+
+    return str(inference["domain"]), rule, debug
