@@ -13,10 +13,14 @@ class RuleInferenceError(ValueError):
 
 def normalize_domain(url: str) -> str:
     domain = urlparse(url).netloc.lower()
+
+    if ":" in domain:
+        domain = domain.split(":")[0]
+
     if domain.startswith("www."):
         domain = domain[4:]
-    return domain
 
+    return domain
 
 def _tokenize_numeric_parts(value: str) -> List[str]:
     return re.split(r"(\d+)", value)
