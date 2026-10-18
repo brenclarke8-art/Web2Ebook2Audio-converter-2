@@ -41,8 +41,7 @@ def _find_speaker_id(text: str, alias_map: dict[str, str]) -> str | None:
                 rf"\b{verb}\s+\b{re.escape(alias)}\b", lowered
             ):
                 return cid
-    refs = _find_referenced_characters(text, alias_map)
-    return refs[0] if refs else None
+    return None
 
 
 def _find_thought_owner_id(text: str, alias_map: dict[str, str]) -> str | None:
