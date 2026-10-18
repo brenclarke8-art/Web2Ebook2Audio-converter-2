@@ -19,7 +19,7 @@ _DEFAULT_VOICES = [
 def _build_voice_registry(character_registry: list[dict], settings: dict) -> list[dict]:
     provider = settings.get("tts_provider", "edge")
     configured = settings.get("character_voice_map", {})
-    character_voice_pool = _DEFAULT_VOICES[1:] or _DEFAULT_VOICES
+    character_voice_pool = _DEFAULT_VOICES[1:] if len(_DEFAULT_VOICES) > 1 else _DEFAULT_VOICES
 
     registry = [
         {

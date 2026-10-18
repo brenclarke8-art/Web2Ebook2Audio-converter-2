@@ -38,7 +38,7 @@ def _find_speaker_id(text: str, alias_map: dict[str, str]) -> str | None:
     for verb in _DIALOGUE_VERBS:
         for alias, cid in alias_map.items():
             if re.search(rf"\b{re.escape(alias)}\b\s+{verb}\b", lowered) or re.search(
-                rf"{verb}\s+\b{re.escape(alias)}\b", lowered
+                rf"\b{verb}\s+\b{re.escape(alias)}\b", lowered
             ):
                 return cid
     refs = _find_referenced_characters(text, alias_map)
