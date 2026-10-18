@@ -1,0 +1,69 @@
+{
+  "input_artifact": {
+    "index_url": "https://fucknovelpia.com/novel/synthetic-episode-novel",
+    "chapter_range": [
+      1,
+      3
+    ],
+    "settings": {},
+    "env": {}
+  },
+  "output_artifact": {
+    "source": {
+      "type": "web",
+      "url": "https://fucknovelpia.com/novel/synthetic-episode-novel",
+      "chapters": [
+        {
+          "title": "Episode 1: Arrival",
+          "content": "<div class=\"episode-content\">\n<p>The rain stopped as Hana reached the gate.</p>\n<p>She read the faded sign and stepped inside.</p>\n</div>",
+          "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-1"
+        },
+        {
+          "title": "Episode 2: Shift",
+          "content": "<div class=\"episode-content\">\n<p>By dawn the old map had changed its marks.</p>\n<p>Each line now pointed toward the river road.</p>\n</div>",
+          "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-2"
+        },
+        {
+          "title": "Episode 3: Decision",
+          "content": "<div class=\"episode-content\">\n<p>The council waited in silence for her final word.</p>\n<p>Hana chose the northern route and sealed the pact.</p>\n</div>",
+          "source": "https://fucknovelpia.com/novel/synthetic-episode-novel/episode-3"
+        }
+      ],
+      "chapter_range": [
+        1,
+        3
+      ]
+    },
+    "meta": {
+      "phase": "00_fetch",
+      "version": "1.0.0",
+      "timestamp": 1792289309.1370876
+    },
+    "input_summary": {
+      "index_url": "https://fucknovelpia.com/novel/synthetic-episode-novel",
+      "chapter_range": [
+        1,
+        3
+      ],
+      "chapter_examples_provided": false
+    },
+    "output_summary": {
+      "total_available_chapters": 3,
+      "requested_range": [
+        1,
+        3
+      ],
+      "final_range": [
+        1,
+        3
+      ],
+      "chapter_count": 3,
+      "rule_learned": false
+    },
+    "errors": [],
+    "warnings": [],
+    "timings": {
+      "total_ms": 3.5996437072753906
+    }
+  }
+}

@@ -17,14 +17,11 @@ def test_processor_runs_minimal(monkeypatch):
 
     # Mock fetch_html to avoid network calls
     def fake_fetch(url):
-        if "example.com" in url:
+        if url == "https://example.com":
             return {"ok": True, "status": 200, "html": fake_index_html, "error": None}
         return {"ok": True, "status": 200, "html": fake_chapter_html, "error": None}
 
-    monkeypatch.setattr(
-        "pipeline.phases.phase_00_fetch.fetcher.fetch_html",
-        fake_fetch
-    )
+    monkeypatch.setattr("pipeline.phases.phase_00_fetch.processor.fetch_html", fake_fetch)
 
     inp = Phase00FetchInput(
         index_url="https://example.com",

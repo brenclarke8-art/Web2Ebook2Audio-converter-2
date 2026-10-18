@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+from .infer_rules import extract_chapter_number, normalize_domain
+
 RULES_PATH = Path(__file__).parent / "rules" / "scraper_rules.json"
 
 BAD_WORDS = [
@@ -16,33 +18,14 @@ COMMON_CONTENT_IDS = [
     "text", "chapterBody", "chapter-body"
 ]
 
-# ─────────────────────────────────────────────────────────────────────
-# Domain normalization
-# ─────────────────────────────────────────────────────────────────────
-
-def normalize_domain(url: str) -> str:
-    parsed = urlparse(url)
-    domain = parsed.netloc.lower()
-
-    if ":" in domain:
-        domain = domain.split(":")[0]
-
-    if domain.startswith("www."):
-        domain = domain[4:]
-
-    return domain
-
 
 def load_rules_for_domain(url: str) -> dict:
     domain = normalize_domain(url)
     if RULES_PATH.exists():
-        rules = json.loads(RULES_PATH.read_text())
+        rules = json.loads(RULES_PATH.read_text(encoding="utf-8"))
         return rules.get(domain, {})
     return {}
 
-# ─────────────────────────────────────────────────────────────────────
-# Chapter detection helpers
-# ─────────────────────────────────────────────────────────────────────
 
 def _path(url: str) -> str:
     return urlparse(url).path
@@ -91,9 +74,8 @@ def generic_chapter_detection(url: str, rules: dict) -> bool:
     if url_denied(url, rules):
         return False
 
-    if rules.get("use_numeric_fallback", True):
-        if looks_like_chapter_number(url):
-            return True
+    if rules.get("use_numeric_fallback", True) and looks_like_chapter_number(url):
+        return True
 
     if rules.get("use_chapter_keyword_fallback", True):
         if "chapter" in path:
@@ -104,35 +86,79 @@ def generic_chapter_detection(url: str, rules: dict) -> bool:
 
     return False
 
-# ─────────────────────────────────────────────────────────────────────
-# Chapter URL extraction (RULE-ENABLED)
-# ─────────────────────────────────────────────────────────────────────
 
-def extract_chapter_urls(index_html: str, rules: dict, base_url: str) -> list:
-    soup = BeautifulSoup(index_html, "html.parser")
+def _dedupe(urls: list[str]) -> list[str]:
+    return list(dict.fromkeys(urls))
 
-    # 1. Rule-based selector
-    if "chapter_list_selector" in rules:
-        anchors = soup.select(rules["chapter_list_selector"])
-        urls = []
-        for a in anchors:
-            href = a.get("href")
-            if not href:
-                continue
-            full = urljoin(base_url, href)
-            text = a.get_text(strip=True)
 
-            if anchor_is_ui(text, rules):
-                continue
+def _sort_urls_by_chapter_number(urls: list[str], chapter_regex: str) -> list[str]:
+    sortable = []
+    unsorted = []
 
-            urls.append(full)
+    for url in urls:
+        number = extract_chapter_number(url, chapter_regex)
+        if number is None:
+            unsorted.append(url)
+        else:
+            sortable.append((number, url))
 
-        if urls:
-            return list(dict.fromkeys(urls))
+    ordered = [url for _, url in sorted(sortable, key=lambda item: item[0])]
+    return ordered + unsorted
 
+
+def _extract_by_learned_rule(soup: BeautifulSoup, rules: dict, base_url: str) -> list[str]:
+    chapter_regex = rules.get("chapter_regex")
+    if not chapter_regex:
+        return []
+
+    base_domain = normalize_domain(base_url)
     urls = []
 
-    # 2. Fallback scanning
+    for a in soup.find_all("a"):
+        href = a.get("href")
+        if not href:
+            continue
+
+        full = urljoin(base_url, href)
+        if normalize_domain(full) != base_domain:
+            continue
+
+        if url_denied(full, rules):
+            continue
+
+        if re.search(chapter_regex, _path(full)):
+            urls.append(full)
+
+    unique = _dedupe(urls)
+    return _sort_urls_by_chapter_number(unique, chapter_regex)
+
+
+def _extract_by_existing_rule_selector(soup: BeautifulSoup, rules: dict, base_url: str) -> list[str]:
+    if "chapter_list_selector" not in rules:
+        return []
+
+    anchors = soup.select(rules["chapter_list_selector"])
+    urls = []
+
+    for a in anchors:
+        href = a.get("href")
+        if not href:
+            continue
+
+        full = urljoin(base_url, href)
+        text = a.get_text(strip=True)
+
+        if anchor_is_ui(text, rules):
+            continue
+
+        urls.append(full)
+
+    return _dedupe(urls)
+
+
+def _extract_with_legacy_fallback(soup: BeautifulSoup, rules: dict, base_url: str) -> list[str]:
+    urls = []
+
     for a in soup.find_all("a"):
         href = a.get("href")
         if not href:
@@ -147,25 +173,34 @@ def extract_chapter_urls(index_html: str, rules: dict, base_url: str) -> list:
         if parent_is_ignored(a, rules):
             continue
 
-        # Domain-specific regex
         if url_matches_regex(full, rules):
             urls.append(full)
             continue
 
-        # Allowlist
         if url_allowed(full, rules):
             urls.append(full)
             continue
 
-        # Generic fallback
         if generic_chapter_detection(full, rules):
             urls.append(full)
 
-    return list(dict.fromkeys(urls))
+    return _dedupe(urls)
 
-# ─────────────────────────────────────────────────────────────────────
-# Title extraction (unchanged)
-# ─────────────────────────────────────────────────────────────────────
+
+def extract_chapter_urls(index_html: str, rules: dict, base_url: str) -> list:
+    soup = BeautifulSoup(index_html, "html.parser")
+
+    if rules.get("learned"):
+        learned_urls = _extract_by_learned_rule(soup, rules, base_url)
+        if learned_urls:
+            return learned_urls
+
+    selector_urls = _extract_by_existing_rule_selector(soup, rules, base_url)
+    if selector_urls:
+        return selector_urls
+
+    return _extract_with_legacy_fallback(soup, rules, base_url)
+
 
 def extract_title(html: str, rules: dict) -> str:
     soup = BeautifulSoup(html, "html.parser")
@@ -186,9 +221,6 @@ def extract_title(html: str, rules: dict) -> str:
 
     return "Untitled Chapter"
 
-# ─────────────────────────────────────────────────────────────────────
-# Content extraction (unchanged)
-# ─────────────────────────────────────────────────────────────────────
 
 def extract_content(html: str, rules: dict) -> str:
     soup = BeautifulSoup(html, "html.parser")
