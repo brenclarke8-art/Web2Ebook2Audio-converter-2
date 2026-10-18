@@ -1,21 +1,18 @@
 """
-Phase 06 — Audio Rendering
-
-Copilot Instructions:
-- Follow Phase 00–05 output_schema.py EXACTLY.
-- Do NOT add or remove fields.
+Phase 06 — Voice Assignment
 """
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
+
 class Phase06Output(BaseModel):
-    audio_chunks: List[Dict[str, Any]] = Field(
-        ..., description="Rendered audio chunks."
+    voice_segments: List[Dict[str, Any]] = Field(
+        ..., description="TTS-ready segments with voice IDs."
     )
 
-    audio_index: Dict[str, Dict[str, Any]] = Field(
-        ..., description="Lookup table for audio chunks."
+    voice_registry: List[Dict[str, Any]] = Field(
+        ..., description="Voice-to-character mapping registry."
     )
 
     meta: Dict[str, Any] = Field(..., description="Phase metadata.")

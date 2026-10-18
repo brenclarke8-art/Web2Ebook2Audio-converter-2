@@ -1,21 +1,22 @@
 """
-Phase 05 — Audio Script Generation
-
-Copilot Instructions:
-- Follow Phase 00–04 output_schema.py EXACTLY.
-- Do NOT add or remove fields.
+Phase 05 — Semantic Enrichment
 """
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
+
 class Phase05Output(BaseModel):
-    script_segments: List[Dict[str, Any]] = Field(
-        ..., description="Segments formatted for TTS narration."
+    enriched_segments: List[Dict[str, Any]] = Field(
+        ..., description="Segments with semantic attribution metadata."
     )
 
-    script_index: Dict[str, Dict[str, Any]] = Field(
-        ..., description="Lookup table for script segments."
+    character_registry: List[Dict[str, Any]] = Field(
+        ..., description="Pass-through canonical character registry."
+    )
+
+    enrichment_stats: Dict[str, Any] = Field(
+        ..., description="Semantic enrichment counts and confidence summaries."
     )
 
     meta: Dict[str, Any] = Field(..., description="Phase metadata.")

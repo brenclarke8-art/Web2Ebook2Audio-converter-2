@@ -1,22 +1,18 @@
 """
-Phase 05 — Audio Script Generation
-
-Copilot Instructions:
-- Follow Phase 00–04 input_schema.py EXACTLY.
-- Do NOT add fields.
-- Do NOT import legacy code.
+Phase 05 — Semantic Enrichment
 """
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
+
 class Phase05Input(BaseModel):
-    enriched_segments: List[Dict[str, Any]] = Field(
-        ..., description="Enriched segment objects from Phase 04."
+    segments: List[Dict[str, Any]] = Field(
+        ..., description="Segment objects from Phase 03."
     )
 
-    enriched_index: Dict[str, Dict[str, Any]] = Field(
-        ..., description="Lookup table from Phase 04."
+    character_registry: List[Dict[str, Any]] = Field(
+        ..., description="Canonical character registry from Phase 04."
     )
 
     settings: Dict[str, Any] = Field(

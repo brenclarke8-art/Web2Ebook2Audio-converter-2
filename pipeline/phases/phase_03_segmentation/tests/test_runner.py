@@ -1,17 +1,14 @@
-"""
-Phase 03 — Runner Tests
-Copilot: Follow Phase 00–02 patterns EXACTLY.
-"""
+from pipeline.phases.phase_03_segmentation.runner import run
 
-from pipeline.phases.phase_03_segment.runner import run
 
-def test_runner_executes():
-    context = {"artifact_root": "pipeline/artifacts"}
+def test_runner_executes(tmp_path):
+    context = {"artifact_root": str(tmp_path)}
     input_artifact = {
         "normalized_chapters": {"ch1": "Hello world."},
         "chapter_stats": {"ch1": {}},
-        "settings": {"config_version": "1.0"}
+        "settings": {"config_version": "1.0"},
     }
 
     output = run(context, input_artifact)
     assert "meta" in output
+    assert "segmentation_stats" in output

@@ -1,22 +1,18 @@
 """
-Phase 06 — Audio Rendering
-
-Copilot Instructions:
-- Follow Phase 00–05 input_schema.py EXACTLY.
-- Do NOT add fields.
-- Do NOT import legacy code.
+Phase 06 — Voice Assignment
 """
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
+
 class Phase06Input(BaseModel):
-    script_segments: List[Dict[str, Any]] = Field(
-        ..., description="Script segments from Phase 05."
+    enriched_segments: List[Dict[str, Any]] = Field(
+        ..., description="Semantically enriched segments from Phase 05."
     )
 
-    script_index: Dict[str, Dict[str, Any]] = Field(
-        ..., description="Lookup table from Phase 05."
+    character_registry: List[Dict[str, Any]] = Field(
+        ..., description="Canonical character registry from Phase 04/05."
     )
 
     settings: Dict[str, Any] = Field(
