@@ -15,4 +15,6 @@ def test_process_basic():
 
     assert "character_registry" in output.dict()
     assert "segments" in output.dict()
-    assert output.character_registry[0]["character_id"].startswith("char_")
+    assert output.character_registry[0].character_id.startswith("char_")
+    assert output.character_registry[0].first_seen_segment == "seg1"
+    assert output.character_registry[0].character_profile == {}

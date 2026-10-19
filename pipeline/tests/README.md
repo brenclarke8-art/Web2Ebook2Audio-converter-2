@@ -1,6 +1,6 @@
 # Pipeline Test Suite
 
-This directory contains the Phase 00/01/02 and pipeline-level tests, plus synthetic fixtures and regression snapshots.
+This directory contains the pipeline-level tests, synthetic fixtures, and regression snapshots.
 
 ## How to run tests
 
@@ -52,13 +52,9 @@ This directory contains the Phase 00/01/02 and pipeline-level tests, plus synthe
 - Use them as stable expected baselines for shape/content checks.
 - When behavior intentionally changes, update snapshots in the same change and keep them aligned with current processor output.
 
-## How to add new real-world sites
+## Phase 03–06 contract checks
 
-1. Add scraper rules in `pipeline/phases/phase_00_fetch/rules/scraper_rules.json`.
-2. Add synthetic fixture coverage for the site structure under `pipeline/tests/fixtures/phase_00/`.
-3. Add/extend Phase 00 site-specific tests in `pipeline/tests/phases/phase_00/`.
-4. Add/extend pipeline-level live test coverage in `pipeline/tests/phases/pipeline/`.
-5. For live tests:
-   - mark with `@pytest.mark.live`
-   - include network-unavailable skip handling
-   - keep deterministic assertions focused on stable outputs (counts, summaries, non-empty cleaned text).
+- Phase 03 segments are structural-only and ordered by `chapter_id` + `sequence`.
+- Phase 04 registry emits canonical `character_id` plus unified `character_profile`.
+- Phase 05 semantic output uses a single `primary_type` with confidence metrics.
+- Phase 06 voice assignment supports both manual and adaptive mode contracts.

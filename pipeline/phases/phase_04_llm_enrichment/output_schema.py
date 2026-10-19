@@ -3,11 +3,20 @@ Phase 04 — Character Registry
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
+
+class CharacterEntry(BaseModel):
+    character_id: str
+    canonical_name: str
+    aliases: List[str] = Field(default_factory=list)
+    importance: str
+    first_seen_segment: str
+    character_profile: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Phase04Output(BaseModel):
-    character_registry: List[Dict[str, Any]] = Field(
+    character_registry: List[CharacterEntry] = Field(
         ..., description="Book-wide canonical character registry."
     )
 
