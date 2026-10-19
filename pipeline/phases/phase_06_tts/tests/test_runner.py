@@ -1,23 +1,24 @@
-"""
-Phase 06 — Runner Tests
-Copilot: Follow Phase 00–05 patterns EXACTLY.
-"""
+from pipeline.phases.phase_06_tts.runner import run
 
-from pipeline.phases.phase_06_audio.runner import run
 
-def test_runner_executes():
-    context = {"artifact_root": "pipeline/artifacts"}
+def test_runner_executes(tmp_path):
+    context = {"artifact_root": str(tmp_path)}
     input_artifact = {
-        "script_segments": [{
-            "script_id": "scr1",
-            "chapter_id": "ch1",
-            "text": "Hello",
-            "voice": {"style": "default"},
-            "pacing": {"pause_ms": 150}
-        }],
-        "script_index": {"scr1": {}},
-        "settings": {"config_version": "1.0"}
+        "enriched_segments": [
+            {
+                "segment_id": "seg1",
+                "text": "Hello",
+                "segment_type": "narration",
+                "speaker_id": None,
+                "thought_owner_id": None,
+                "referenced_characters": [],
+                "confidence": 0.7,
+            }
+        ],
+        "character_registry": [],
+        "settings": {"config_version": "1.0"},
     }
 
     output = run(context, input_artifact)
     assert "meta" in output
+    assert "voice_registry" in output

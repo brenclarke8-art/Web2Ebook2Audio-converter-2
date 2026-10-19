@@ -1,21 +1,18 @@
 """
-Phase 04 — Semantic Enrichment
-
-Copilot Instructions:
-- Follow Phase 00–03 output_schema.py EXACTLY.
-- Do NOT add or remove fields.
+Phase 04 — Character Registry
 """
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
+
 class Phase04Output(BaseModel):
-    enriched_segments: List[Dict[str, Any]] = Field(
-        ..., description="Segments with semantic metadata."
+    character_registry: List[Dict[str, Any]] = Field(
+        ..., description="Book-wide canonical character registry."
     )
 
-    enriched_index: Dict[str, Dict[str, Any]] = Field(
-        ..., description="Lookup table for enriched segments."
+    segments: List[Dict[str, Any]] = Field(
+        ..., description="Pass-through segments from Phase 03."
     )
 
     meta: Dict[str, Any] = Field(..., description="Phase metadata.")

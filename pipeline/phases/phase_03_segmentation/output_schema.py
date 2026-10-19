@@ -1,21 +1,18 @@
 """
 Phase 03 — Segmentation
-
-Copilot Instructions:
-- Follow Phase 00–02 output_schema.py EXACTLY.
-- Do NOT add or remove fields.
 """
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
+
 class Phase03Output(BaseModel):
     segments: List[Dict[str, Any]] = Field(
-        ..., description="List of segmented text blocks."
+        ..., description="List of deterministic structural analysis segments."
     )
 
-    segment_index: Dict[str, Dict[str, Any]] = Field(
-        ..., description="Lookup table for segments."
+    segmentation_stats: Dict[str, Any] = Field(
+        ..., description="Segmentation statistics across chapters and segment kinds."
     )
 
     meta: Dict[str, Any] = Field(..., description="Phase metadata.")
