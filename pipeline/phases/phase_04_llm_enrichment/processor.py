@@ -23,7 +23,6 @@ _GENERIC_TOKENS = {
     "Saturday",
     "Sunday",
 }
-_TITLE_GENDER = {"mr": "male", "mrs": "female", "ms": "female", "miss": "female"}
 
 
 def _clean_alias(alias: str) -> str:
@@ -34,7 +33,7 @@ def _canonical_key(alias: str) -> str:
     parts = [p for p in _clean_alias(alias).split() if p]
     if not parts:
         return ""
-    if parts[0].rstrip(".").lower() in _TITLE_GENDER:
+    if parts[0].rstrip(".").lower() in {"mr", "mrs", "ms", "miss", "dr"}:
         parts = parts[1:]
     return " ".join(parts)
 
@@ -56,25 +55,22 @@ def _extract_character_mentions(text: str) -> list[str]:
 def _build_character_registry(segments: list[dict]) -> list[dict]:
     canonical_aliases: dict[str, set[str]] = defaultdict(set)
     canonical_counts: dict[str, int] = defaultdict(int)
-    canonical_gender: dict[str, str | None] = defaultdict(lambda: None)
+    first_seen_segment: dict[str, str] = {}
 
     for segment in segments:
+        segment_id = segment.get("segment_id", "")
         for alias in _extract_character_mentions(segment.get("text", "")):
             canonical = _canonical_key(alias)
             if not canonical:
                 continue
             canonical_aliases[canonical].add(alias)
             canonical_counts[canonical] += 1
-            title = alias.split()[0].rstrip(".").lower()
-            if canonical_gender[canonical] is None and title in _TITLE_GENDER:
-                canonical_gender[canonical] = _TITLE_GENDER[title]
+            first_seen_segment.setdefault(canonical, segment_id)
 
-    ordered_canonical = sorted(
-        canonical_counts.keys(), key=lambda name: (-canonical_counts[name], name.lower())
-    )
+    ordered = sorted(canonical_counts.keys(), key=lambda name: (-canonical_counts[name], name.lower()))
 
     registry = []
-    for idx, canonical in enumerate(ordered_canonical, start=1):
+    for idx, canonical in enumerate(ordered, start=1):
         aliases = sorted(canonical_aliases[canonical])
         if canonical not in aliases:
             aliases.insert(0, canonical)
@@ -84,8 +80,9 @@ def _build_character_registry(segments: list[dict]) -> list[dict]:
                 "character_id": f"char_{idx:03d}",
                 "canonical_name": canonical,
                 "aliases": aliases,
-                "gender": canonical_gender[canonical],
                 "importance": "major" if canonical_counts[canonical] >= 2 else "minor",
+                "first_seen_segment": first_seen_segment.get(canonical, ""),
+                "character_profile": {},
             }
         )
 
@@ -102,7 +99,7 @@ def process(input_data: Phase04Input) -> Phase04Output:
         segments=input_data.segments,
         meta={
             "phase": "04_character_registry",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "timestamp": time.time(),
         },
         input_summary={

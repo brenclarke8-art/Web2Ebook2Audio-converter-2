@@ -3,11 +3,12 @@ Phase 04 — Character Registry
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+from pipeline.phases.shared_schemas import CharacterEntry
 
 
 class Phase04Output(BaseModel):
-    character_registry: List[Dict[str, Any]] = Field(
+    character_registry: List[CharacterEntry] = Field(
         ..., description="Book-wide canonical character registry."
     )
 

@@ -1,53 +1,35 @@
-Phase 05 — Audio Script Generation
-Copilot Instructions (READ THIS BEFORE GENERATING ANY CODE)
+Phase 05 — Semantic Enrichment
 
-Your job is to implement Phase 05 using Phase 00–04 as templates.
-Follow their structure EXACTLY.
+Responsibility
+- Own story understanding and semantic attribution.
+- Determine narration/dialogue/thought and attribution metadata.
 
-Inputs:
-You receive:
-- enriched_segments: list of enriched segment objects from Phase 04
-- enriched_index: lookup table from Phase 04
-- settings: normalized_config from Phase 00
+Inputs
+- segments
+- character_registry
+- settings
 
-Outputs:
-You must produce:
-- script_segments: [
-    {
-        script_id: "scr_0001",
-        segment_id: "seg_0001",
-        chapter_id: "ch1",
-        text: "tts-ready text",
-        pacing: { pause_ms, speed, emphasis },
-        voice: { style, tone, variation },
-        metadata: { length, word_count }
-    }
-]
-- script_index: { script_id: script_segment }
-Plus:
-- meta
-- input_summary
-- output_summary
-- errors[]
-- warnings[]
-- timings{}
+Outputs
+- enriched_segments[] with fields:
+  - segment_id
+  - primary_type (narration | dialogue | thought)
+  - speaker_id
+  - thought_owner_id
+  - pov_character_id
+  - referenced_characters
+  - emotion_tag
+  - classification_confidence
+  - speaker_confidence
+- pass-through character_registry
+- enrichment_stats
+- meta / input_summary / output_summary / errors / warnings / timings
 
-Rules:
-- Do NOT import legacy code. Use it ONLY as reference:
-    legacy/ebook_app/audio/*
-    legacy/ebook_app/tts/*
-    legacy/ebook_app/text/*
-- processor.py must be pure logic.
-- No filesystem writes.
-- No logging.
-- No network calls.
-- No side effects.
-- runner.py must follow Phase 00 exactly.
-- debug.py must write:
-    script_segments.json
-    script_index.json
-    meta.json
-    summary.json
-- Tests must follow Phase 00 patterns.
-- All code must be deterministic.
-- All artifacts must be JSON.
+Rules
+- Use Phase 03 text_markers as cues, not hard rules.
+- Keep a single primary_type (no mixed content_types).
+- All character references must use canonical character_id values.
+
+Future TODOs
+- Improve emotion detection.
+- Add scene awareness and cross-segment speaker inference.
+- Strengthen POV continuity tracking.

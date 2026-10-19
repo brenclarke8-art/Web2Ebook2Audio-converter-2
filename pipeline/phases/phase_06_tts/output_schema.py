@@ -3,15 +3,32 @@ Phase 06 — Voice Assignment
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Optional
+
+
+class VoiceRegistryEntry(BaseModel):
+    voice_id: str
+    character_id: Optional[str] = None
+    voice_role: str
+    provider: str
+    voice_name: str
+    generation_settings: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceSegmentAssignment(BaseModel):
+    segment_id: str
+    voice_id: str
+    character_id: Optional[str] = None
+    voice_role: str
+    primary_type: str
 
 
 class Phase06Output(BaseModel):
-    voice_segments: List[Dict[str, Any]] = Field(
-        ..., description="TTS-ready segments with voice IDs."
+    voice_segments: List[VoiceSegmentAssignment] = Field(
+        ..., description="Per-segment voice assignments."
     )
 
-    voice_registry: List[Dict[str, Any]] = Field(
+    voice_registry: List[VoiceRegistryEntry] = Field(
         ..., description="Voice-to-character mapping registry."
     )
 

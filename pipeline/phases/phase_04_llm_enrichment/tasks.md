@@ -1,58 +1,28 @@
-Phase 04 — Semantic Enrichment
-Copilot Instructions (READ THIS BEFORE GENERATING ANY CODE)
+Phase 04 — Character Registry
 
-Your job is to implement Phase 04 using Phase 00–03 as templates.
-Follow their structure EXACTLY.
+Responsibility
+- First LLM-capable semantic phase boundary (current implementation may use deterministic placeholders).
+- Book-wide entity discovery and canonicalization.
 
-Inputs:
-You receive:
-- segments: list of segment objects from Phase 03
-- segment_index: lookup table from Phase 03
-- settings: normalized_config from Phase 00
+Inputs
+- segments
+- settings
 
-Outputs:
-You must produce:
-- enriched_segments: [
-    {
-        segment_id,
-        chapter_id,
-        text,
-        semantic: {
-            entities: [...],
-            keywords: [...],
-            topics: [...],
-            sentiment: "positive" | "neutral" | "negative",
-            readability: {...},
-            embedding: [...],
-            summary: "..."
-        }
-    }
-]
-- enriched_index: { segment_id: enriched_segment }
-Plus:
-- meta
-- input_summary
-- output_summary
-- errors[]
-- warnings[]
-- timings{}
+Outputs
+- character_registry[] with fields:
+  - character_id
+  - canonical_name
+  - aliases
+  - importance
+  - first_seen_segment
+  - character_profile (future expansion area)
+- pass-through segments
+- meta / input_summary / output_summary / errors / warnings / timings
 
-Rules:
-- Do NOT import legacy code. Use it ONLY as reference:
-    legacy/ebook_app/semantic/*
-    legacy/ebook_app/nlp/*
-    legacy/ebook_app/text/*
-- processor.py must be pure logic.
-- No filesystem writes.
-- No logging.
-- No network calls.
-- No side effects.
-- runner.py must follow Phase 00 exactly.
-- debug.py must write:
-    enriched_segments.json
-    enriched_index.json
-    meta.json
-    summary.json
-- Tests must follow Phase 00 patterns.
-- All code must be deterministic.
-- All artifacts must be JSON.
+Rules
+- Emit canonical character IDs (char_###) for all downstream use.
+- Replace legacy gender/entity/voice trait fields with character_profile.
+
+Future TODOs
+- Enrich character_profile with age/presentation/personality/tts_hints.
+- Add relationship inference and cross-chapter consistency checks.

@@ -7,12 +7,14 @@ def test_runner_executes(tmp_path):
         "enriched_segments": [
             {
                 "segment_id": "seg1",
-                "text": "Hello",
-                "segment_type": "narration",
+                "primary_type": "narration",
                 "speaker_id": None,
                 "thought_owner_id": None,
+                "pov_character_id": None,
                 "referenced_characters": [],
-                "confidence": 0.7,
+                "emotion_tag": None,
+                "classification_confidence": 0.7,
+                "speaker_confidence": None,
             }
         ],
         "character_registry": [],
