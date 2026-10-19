@@ -4,6 +4,7 @@ Phase 03 — Segmentation Debug Writer
 
 import json
 from pathlib import Path
+from pipeline.phases.debug_utils import to_jsonable
 from .output_schema import Phase03Output
 
 
@@ -12,10 +13,10 @@ def write_debug_artifacts(context: dict, output: Phase03Output):
     base.mkdir(parents=True, exist_ok=True)
 
     with open(base / "segments.json", "w", encoding="utf-8") as f:
-        json.dump(output.segments, f, indent=2)
+        json.dump(to_jsonable(output.segments), f, indent=2)
 
     with open(base / "segmentation_stats.json", "w", encoding="utf-8") as f:
-        json.dump(output.segmentation_stats, f, indent=2)
+        json.dump(to_jsonable(output.segmentation_stats), f, indent=2)
 
     with open(base / "meta.json", "w", encoding="utf-8") as f:
         json.dump(output.meta, f, indent=2)

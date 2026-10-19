@@ -101,15 +101,6 @@ def process(input_data: Phase04Input) -> Phase04Output:
             "phase": "04_character_registry",
             "version": "2.0.0",
             "timestamp": time.time(),
-            "future_todos": {
-                "character_profile_enrichment": [
-                    "estimated_age",
-                    "presentation",
-                    "personality",
-                    "tts_hints",
-                    "relationship_inference",
-                ]
-            },
         },
         input_summary={
             "segment_count": len(input_data.segments),

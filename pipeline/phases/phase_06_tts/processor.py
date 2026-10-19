@@ -19,6 +19,7 @@ _DEFAULT_VOICES = {
 }
 
 _DEFAULT_GENERATION_SETTINGS = {"style": "neutral", "pitch": 0, "speed": 1.0}
+_FALLBACK_SENTINEL = "__fallback__"
 
 
 def _resolve_tts_settings(settings: dict) -> dict:
@@ -91,7 +92,7 @@ def _build_voice_registry(character_registry: list[dict], settings: dict) -> lis
         character_id = character["character_id"]
         manual_voice = manual_map.get(character_id)
         if voice_mode == "manual":
-            voice_name = manual_voice or _DEFAULT_VOICES["character_pool"][(idx - 1) % len(_DEFAULT_VOICES["character_pool"])]
+            voice_name = manual_voice or fallback_voice
         else:
             voice_name = manual_voice or _adaptive_voice_name(character, fallback_voice, idx - 1)
 
@@ -124,7 +125,7 @@ def _segment_character_id(enriched_segment: dict) -> str | None:
 
 def _build_voice_segment(enriched_segment: dict, voice_map: dict[str | None, dict]) -> dict:
     character_id = _segment_character_id(enriched_segment)
-    fallback = voice_map.get("__fallback__") or voice_map.get(None)
+    fallback = voice_map.get(_FALLBACK_SENTINEL) or voice_map.get(None)
     if character_id and character_id in voice_map:
         voice = voice_map[character_id]
     elif enriched_segment.get("primary_type") == "narration":
@@ -145,8 +146,14 @@ def process(input_data: Phase06Input) -> Phase06Output:
     start = time.time()
 
     voice_registry = _build_voice_registry(input_data.character_registry, input_data.settings)
+    if not voice_registry:
+        raise ValueError("voice_registry must not be empty")
+
     voice_map = _voice_lookup(voice_registry)
-    voice_map["__fallback__"] = next((v for v in voice_registry if v.get("voice_role") == "fallback"), voice_registry[0])
+    voice_map[_FALLBACK_SENTINEL] = next(
+        (v for v in voice_registry if v.get("voice_role") == "fallback"),
+        voice_registry[0],
+    )
 
     voice_segments = [
         _build_voice_segment(segment, voice_map) for segment in input_data.enriched_segments
@@ -162,14 +169,6 @@ def process(input_data: Phase06Input) -> Phase06Output:
             "version": "2.0.0",
             "timestamp": time.time(),
             "voice_mode": voice_mode,
-            "future_todos": {
-                "voice_assignment": [
-                    "adaptive_voice_assignment",
-                    "emotion_aware_tts",
-                    "provider_specific_optimization",
-                    "multi_provider_fallback",
-                ]
-            },
         },
         input_summary={
             "enriched_segment_count": len(input_data.enriched_segments),

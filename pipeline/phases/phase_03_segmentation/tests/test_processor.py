@@ -5,7 +5,7 @@ from pipeline.phases.phase_03_segmentation.input_schema import Phase03Input
 def test_process_basic():
     input_data = Phase03Input(
         normalized_chapters={
-            "ch1": "CHAPTER ONE\n\n"Hello world," Sarah said.\n\n***\n\n_Quiet thoughts_."
+            "ch1": "CHAPTER ONE\n\n\"Hello world,\" Sarah said.\n\n***\n\n_Quiet thoughts_."
         },
         chapter_stats={"ch1": {}},
         settings={"config_version": "1.0"},

@@ -44,10 +44,10 @@ def _find_speaker_id(text: str, alias_map: dict[str, str]) -> tuple[str | None, 
     for verb in _DIALOGUE_VERBS:
         for alias, cid in alias_map.items():
             if re.search(rf"\b{re.escape(alias)}\b\s+{verb}\b", lowered) or re.search(
-                rf"\b{verb}\s+\b{re.escape(alias)}\b", lowered
+                rf"\b{verb}\s+{re.escape(alias)}\b", lowered
             ):
                 return cid, 0.9
-    return None, 0.45 if any(verb in lowered for verb in _DIALOGUE_VERBS) else None
+    return (None, 0.45) if any(verb in lowered for verb in _DIALOGUE_VERBS) else (None, None)
 
 
 def _find_thought_owner_id(text: str, alias_map: dict[str, str]) -> str | None:
@@ -60,14 +60,15 @@ def _find_thought_owner_id(text: str, alias_map: dict[str, str]) -> str | None:
 
 def _classify_primary_type(text: str, text_markers: list[str]) -> tuple[str, float]:
     lowered = text.lower()
+    has_thought_verb = any(verb in lowered for verb in _THOUGHT_VERBS)
     if "double_quote" in text_markers:
         return "dialogue", 0.92
-    if "single_quote" in text_markers and any(verb in lowered for verb in _THOUGHT_VERBS):
+    if "single_quote" in text_markers and has_thought_verb:
         return "thought", 0.9
-    if "single_quote" in text_markers:
-        return "thought", 0.78
-    if any(verb in lowered for verb in _THOUGHT_VERBS):
+    if has_thought_verb:
         return "thought", 0.8
+    if "single_quote" in text_markers:
+        return "narration", 0.66
     if any(marker in text for marker in ('"', "“", "”")):
         return "dialogue", 0.82
     return "narration", 0.7
@@ -135,14 +136,6 @@ def process(input_data: Phase05Input) -> Phase05Output:
             "phase": "05_semantic_enrichment",
             "version": "2.0.0",
             "timestamp": time.time(),
-            "future_todos": {
-                "semantic_enrichment": [
-                    "emotion_detection_improvements",
-                    "pov_tracking",
-                    "scene_awareness",
-                    "cross_segment_speaker_inference",
-                ]
-            },
         },
         input_summary={
             "segment_count": len(input_data.segments),

@@ -12,17 +12,37 @@ from .output_schema import Phase03Output
 _CHAPTER_TITLE_PATTERN = re.compile(r"^chapter\b", re.IGNORECASE)
 _SCENE_BREAK_PATTERN = re.compile(r"^(?:[-*_~•\s]{3,}|#\s*#\s*#)$")
 _ITALIC_TAG_PATTERN = re.compile(r"<\s*(?:i|em)\b.*?>.*?<\s*/\s*(?:i|em)\s*>", re.IGNORECASE | re.DOTALL)
-_MARKDOWN_ITALIC_PATTERN = re.compile(r"(?:^|\s)(?:\*[^*]+\*|_[^_]+_)(?:\s|$)")
+_MARKDOWN_ITALIC_PATTERN = re.compile(r"(?<!\w)(?:\*[^*\n]+\*|_[^_\n]+_)(?!\w)")
 _SINGLE_QUOTE_PATTERN = re.compile(r"(^|[^\w])['‘’][^'‘’]+['‘’]([^\w]|$)")
 _DOUBLE_QUOTE_PATTERN = re.compile(r'["“”][^"“”]+["“”]')
 
 
 def _split_paragraphs(text: str) -> list[tuple[str, int, int]]:
     segments: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\S(?:.*?\S)?(?=\n\s*\n|$)", text or "", flags=re.DOTALL):
-        paragraph = match.group(0).strip()
+    source = text or ""
+    separator_pattern = re.compile(r"\n\s*\n")
+
+    cursor = 0
+    for separator in separator_pattern.finditer(source):
+        raw = source[cursor:separator.start()]
+        paragraph = raw.strip()
         if paragraph:
-            segments.append((paragraph, match.start(), match.end()))
+            leading_ws = len(raw) - len(raw.lstrip())
+            trailing_ws = len(raw) - len(raw.rstrip())
+            start = cursor + leading_ws
+            end = separator.start() - trailing_ws
+            segments.append((paragraph, start, end))
+        cursor = separator.end()
+
+    raw = source[cursor:]
+    paragraph = raw.strip()
+    if paragraph:
+        leading_ws = len(raw) - len(raw.lstrip())
+        trailing_ws = len(raw) - len(raw.rstrip())
+        start = cursor + leading_ws
+        end = len(source) - trailing_ws
+        segments.append((paragraph, start, end))
+
     return segments
 
 
@@ -41,7 +61,7 @@ def _is_heading_candidate(text: str) -> bool:
     compact = " ".join(text.split())
     if not compact or len(compact) > 90:
         return False
-    if compact.endswith((".", "?", "!", ";", ":", "))"):
+    if compact.endswith((".", "?", "!", ";", ":", ")")):
         return False
     words = compact.split()
     if len(words) > 10:
@@ -51,12 +71,11 @@ def _is_heading_candidate(text: str) -> bool:
 
 def _structural_type(text: str) -> str:
     compact = " ".join(text.split())
-    lowered = compact.lower()
     if _CHAPTER_TITLE_PATTERN.match(compact):
         return "chapter_title"
     if _SCENE_BREAK_PATTERN.match(compact):
         return "scene_break"
-    if _is_heading_candidate(compact) and lowered != "chapter":
+    if _is_heading_candidate(compact):
         return "heading"
     return "paragraph"
 

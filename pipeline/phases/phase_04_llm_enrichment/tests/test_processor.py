@@ -6,7 +6,7 @@ def test_process_basic():
     input_data = Phase04Input(
         segments=[
             {"segment_id": "seg1", "chapter_id": "ch1", "text": "Sarah Carter spoke."},
-            {"segment_id": "seg2", "chapter_id": "ch1", "text": "Sarah replied."},
+            {"segment_id": "seg2", "chapter_id": "ch1", "text": "Sarah Carter replied."},
         ],
         settings={"config_version": "1.0"},
     )
