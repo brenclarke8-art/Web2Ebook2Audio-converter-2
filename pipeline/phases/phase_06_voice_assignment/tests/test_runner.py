@@ -1,4 +1,4 @@
-from pipeline.phases.phase_06_tts.runner import run
+from pipeline.phases.phase_06_voice_assignment.runner import run
 
 
 def test_runner_executes(tmp_path):

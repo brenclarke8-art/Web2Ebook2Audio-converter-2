@@ -1,4 +1,4 @@
-from pipeline.phases.phase_06_tts.output_schema import Phase06Output
+from pipeline.phases.phase_06_voice_assignment.output_schema import Phase06Output
 
 
 def test_contract_fields_exist():

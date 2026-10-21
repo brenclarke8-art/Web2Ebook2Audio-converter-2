@@ -1,4 +1,4 @@
-from pipeline.phases.phase_04_llm_enrichment.runner import run
+from pipeline.phases.phase_04_character_registry.runner import run
 
 
 def test_runner_executes(tmp_path):

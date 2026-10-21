@@ -1,4 +1,4 @@
-from pipeline.phases.phase_04_llm_enrichment.output_schema import Phase04Output
+from pipeline.phases.phase_04_character_registry.output_schema import Phase04Output
 
 
 def test_contract_fields_exist():

@@ -1,4 +1,4 @@
-from pipeline.phases.phase_05_voice_assignment.output_schema import Phase05Output
+from pipeline.phases.phase_05_semantic_enrichment.output_schema import Phase05Output
 
 
 def test_contract_fields_exist():

@@ -1,5 +1,5 @@
-from pipeline.phases.phase_04_llm_enrichment.processor import process
-from pipeline.phases.phase_04_llm_enrichment.input_schema import Phase04Input
+from pipeline.phases.phase_04_character_registry.processor import process
+from pipeline.phases.phase_04_character_registry.input_schema import Phase04Input
 
 
 def test_process_basic():

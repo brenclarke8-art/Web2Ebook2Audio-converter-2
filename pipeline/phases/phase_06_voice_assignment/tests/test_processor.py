@@ -1,5 +1,5 @@
-from pipeline.phases.phase_06_tts.processor import process
-from pipeline.phases.phase_06_tts.input_schema import Phase06Input
+from pipeline.phases.phase_06_voice_assignment.processor import process
+from pipeline.phases.phase_06_voice_assignment.input_schema import Phase06Input
 
 
 def test_process_manual_mode_basic():

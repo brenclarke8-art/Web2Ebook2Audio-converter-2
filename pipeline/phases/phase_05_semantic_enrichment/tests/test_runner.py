@@ -1,4 +1,4 @@
-from pipeline.phases.phase_05_voice_assignment.runner import run
+from pipeline.phases.phase_05_semantic_enrichment.runner import run
 
 
 def test_runner_executes(tmp_path):

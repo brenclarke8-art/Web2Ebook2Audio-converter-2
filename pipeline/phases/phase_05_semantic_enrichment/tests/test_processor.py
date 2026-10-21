@@ -1,5 +1,5 @@
-from pipeline.phases.phase_05_voice_assignment.processor import process
-from pipeline.phases.phase_05_voice_assignment.input_schema import Phase05Input
+from pipeline.phases.phase_05_semantic_enrichment.processor import process
+from pipeline.phases.phase_05_semantic_enrichment.input_schema import Phase05Input
 
 
 def test_process_basic():
