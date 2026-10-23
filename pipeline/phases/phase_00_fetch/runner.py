@@ -17,4 +17,4 @@ def run(context: dict, input_artifact: dict) -> dict:
     # Pass full context to debug writer
     write_debug_artifacts(context, output_model)
 
-    return output_model.model_dump()
+    return output_model.dict()
