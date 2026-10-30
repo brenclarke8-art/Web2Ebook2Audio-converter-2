@@ -1,0 +1,66 @@
+{
+  "package_manifest": {
+    "audiobook": {
+      "chapters": [
+        {
+          "chapter_id": "ch1",
+          "stitched_id": "sti_0000",
+          "path": "placeholder/stitch_12345.wav",
+          "metadata": {
+            "duration_ms": 1500,
+            "sample_rate": 22050,
+            "format": "wav"
+          }
+        }
+      ]
+    },
+    "epub": {
+      "chapters": [],
+      "metadata": {
+        "title": "Example Novel",
+        "author": "Example Author",
+        "language": "en"
+      }
+    }
+  },
+  "package_index": {
+    "audiobook": {
+      "chapters": [
+        {
+          "chapter_id": "ch1",
+          "stitched_id": "sti_0000",
+          "path": "placeholder/stitch_12345.wav",
+          "metadata": {
+            "duration_ms": 1500,
+            "sample_rate": 22050,
+            "format": "wav"
+          }
+        }
+      ]
+    },
+    "epub": {
+      "chapters": [],
+      "metadata": {
+        "title": "Example Novel",
+        "author": "Example Author",
+        "language": "en"
+      }
+    }
+  },
+  "meta": {
+    "phase": "08_package",
+    "version": "1.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "stitched_count": 1
+  },
+  "output_summary": {
+    "manifest_sections": 2
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

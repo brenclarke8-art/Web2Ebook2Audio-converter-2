@@ -1,0 +1,68 @@
+{
+  "voice_segments": [
+    {
+      "segment_id": "ch1_seg0002",
+      "voice_id": "voice_char_001",
+      "character_id": "char_001",
+      "voice_role": "character",
+      "primary_type": "dialogue"
+    }
+  ],
+  "voice_registry": [
+    {
+      "voice_id": "voice_narrator",
+      "character_id": null,
+      "voice_role": "narrator",
+      "provider": "edge",
+      "voice_name": "en-US-AriaNeural",
+      "generation_settings": {
+        "style": "neutral",
+        "pitch": 0,
+        "speed": 1.0
+      }
+    },
+    {
+      "voice_id": "voice_fallback",
+      "character_id": null,
+      "voice_role": "fallback",
+      "provider": "edge",
+      "voice_name": "en-US-JennyNeural",
+      "generation_settings": {
+        "style": "neutral",
+        "pitch": 0,
+        "speed": 1.0
+      }
+    },
+    {
+      "voice_id": "voice_char_001",
+      "character_id": "char_001",
+      "voice_role": "character",
+      "provider": "edge",
+      "voice_name": "en-US-JennyNeural",
+      "generation_settings": {
+        "style": "neutral",
+        "pitch": 0,
+        "speed": 1.0
+      }
+    }
+  ],
+  "meta": {
+    "phase": "06_voice_assignment",
+    "version": "2.0.0",
+    "timestamp": 0.0,
+    "voice_mode": "manual"
+  },
+  "input_summary": {
+    "enriched_segment_count": 1,
+    "character_count": 1
+  },
+  "output_summary": {
+    "voice_segment_count": 1,
+    "voice_registry_count": 3
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

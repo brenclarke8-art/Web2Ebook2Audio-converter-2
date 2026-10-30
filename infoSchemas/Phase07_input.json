@@ -1,0 +1,19 @@
+{
+  "audio_chunks": [
+    {
+      "audio_id": "aud_0001",
+      "chapter_id": "ch1",
+      "metadata": {
+        "duration_ms": 1500,
+        "sample_rate": 22050
+      }
+    }
+  ],
+  "audio_index": {
+    "aud_0001": {
+      "audio_id": "aud_0001",
+      "chapter_id": "ch1"
+    }
+  },
+  "settings": {}
+}

@@ -1,0 +1,16 @@
+{
+  "package_manifest": {
+    "audiobook": {
+      "chapters": []
+    },
+    "epub": {
+      "chapters": [],
+      "metadata": {}
+    }
+  },
+  "package_index": {
+    "audiobook": {},
+    "epub": {}
+  },
+  "settings": {}
+}

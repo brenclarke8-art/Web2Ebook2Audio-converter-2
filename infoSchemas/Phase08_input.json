@@ -1,0 +1,28 @@
+{
+  "stitched_audio": [
+    {
+      "stitched_id": "sti_0000",
+      "chapter_id": "ch1",
+      "chunk_ids": [
+        "aud_0001"
+      ],
+      "path": "placeholder/stitch_12345.wav",
+      "metadata": {
+        "duration_ms": 1500,
+        "sample_rate": 22050,
+        "format": "wav"
+      }
+    }
+  ],
+  "stitched_index": {
+    "sti_0000": {
+      "stitched_id": "sti_0000",
+      "chapter_id": "ch1"
+    }
+  },
+  "settings": {
+    "title": "Example Novel",
+    "author": "Example Author",
+    "language": "en"
+  }
+}

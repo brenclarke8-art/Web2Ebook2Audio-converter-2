@@ -1,0 +1,41 @@
+{
+  "segments": [
+    {
+      "segment_id": "ch1_seg0001",
+      "chapter_id": "ch1",
+      "sequence": 1,
+      "paragraph_index": 0,
+      "structural_type": "chapter_title",
+      "text": "Chapter One",
+      "text_markers": [],
+      "source_offset_start": 0,
+      "source_offset_end": 11
+    }
+  ],
+  "segmentation_stats": {
+    "chapters": 1,
+    "total_segments": 1,
+    "segments_per_chapter": {
+      "ch1": 1
+    },
+    "structural_type_counts": {
+      "chapter_title": 1
+    }
+  },
+  "meta": {
+    "phase": "03_segmentation",
+    "version": "2.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "chapter_count": 1
+  },
+  "output_summary": {
+    "segment_count": 1
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

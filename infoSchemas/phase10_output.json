@@ -1,0 +1,37 @@
+{
+  "export_manifest": {
+    "audiobook_dir": "/tmp/export/audiobook",
+    "epub_dir": "/tmp/export/epub",
+    "metadata_path": "/tmp/export/metadata.json",
+    "files_written": []
+  },
+  "export_index": {
+    "audiobook": {
+      "dir": "/tmp/export/audiobook",
+      "files": []
+    },
+    "epub": {
+      "dir": "/tmp/export/epub",
+      "files": []
+    },
+    "metadata": {
+      "path": "/tmp/export/metadata.json"
+    }
+  },
+  "meta": {
+    "phase": "09_export",
+    "version": "1.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "manifest_sections": 2
+  },
+  "output_summary": {
+    "file_count": 0
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

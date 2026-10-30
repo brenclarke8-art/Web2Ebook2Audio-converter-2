@@ -1,0 +1,49 @@
+{
+  "stitched_audio": [
+    {
+      "stitched_id": "sti_0000",
+      "chapter_id": "ch1",
+      "chunk_ids": [
+        "aud_0001"
+      ],
+      "path": "placeholder/stitch_12345.wav",
+      "metadata": {
+        "duration_ms": 1500,
+        "sample_rate": 22050,
+        "format": "wav"
+      }
+    }
+  ],
+  "stitched_index": {
+    "sti_0000": {
+      "stitched_id": "sti_0000",
+      "chapter_id": "ch1",
+      "chunk_ids": [
+        "aud_0001"
+      ],
+      "path": "placeholder/stitch_12345.wav",
+      "metadata": {
+        "duration_ms": 1500,
+        "sample_rate": 22050,
+        "format": "wav"
+      }
+    }
+  },
+  "meta": {
+    "phase": "07_stitch",
+    "version": "1.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "chunk_count": 1,
+    "chapter_count": 1
+  },
+  "output_summary": {
+    "stitched_count": 1
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}
