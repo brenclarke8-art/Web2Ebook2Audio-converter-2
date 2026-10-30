@@ -1,0 +1,31 @@
+{
+  "package_manifest": {
+    "audiobook": {
+      "chapters": [
+        {
+          "chapter_id": "ch1",
+          "stitched_id": "sti_0000",
+          "path": "placeholder/stitch_12345.wav",
+          "metadata": {
+            "duration_ms": 1500
+          }
+        }
+      ]
+    },
+    "epub": {
+      "chapters": [],
+      "metadata": {
+        "title": "Example Novel"
+      }
+    }
+  },
+  "package_index": {
+    "audiobook": {
+      "chapters": []
+    },
+    "epub": {
+      "chapters": []
+    }
+  },
+  "settings": {}
+}

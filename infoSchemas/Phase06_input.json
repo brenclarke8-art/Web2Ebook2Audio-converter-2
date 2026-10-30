@@ -1,0 +1,33 @@
+{
+  "enriched_segments": [
+    {
+      "segment_id": "ch1_seg0002",
+      "primary_type": "dialogue",
+      "speaker_id": "char_001",
+      "thought_owner_id": null
+    }
+  ],
+  "character_registry": [
+    {
+      "character_id": "char_001",
+      "canonical_name": "Sarah",
+      "aliases": [
+        "Sarah"
+      ],
+      "importance": "major",
+      "first_seen_segment": "ch1_seg0001",
+      "character_profile": {}
+    }
+  ],
+  "settings": {
+    "tts": {
+      "voice_mode": "manual",
+      "provider": "edge",
+      "manual": {
+        "character_voice_map": {
+          "char_001": "en-US-JennyNeural"
+        }
+      }
+    }
+  }
+}

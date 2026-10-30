@@ -1,0 +1,38 @@
+{
+  "character_registry": [
+    {
+      "character_id": "char_001",
+      "canonical_name": "Sarah Carter",
+      "aliases": [
+        "Sarah Carter"
+      ],
+      "importance": "minor",
+      "first_seen_segment": "ch1_seg0001",
+      "character_profile": {}
+    }
+  ],
+  "segments": [
+    {
+      "segment_id": "ch1_seg0001",
+      "text": "Sarah Carter spoke.",
+      "text_markers": []
+    }
+  ],
+  "meta": {
+    "phase": "04_character_registry",
+    "version": "2.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "segment_count": 1
+  },
+  "output_summary": {
+    "character_count": 1,
+    "segment_count": 1
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

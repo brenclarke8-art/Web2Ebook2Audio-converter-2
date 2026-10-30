@@ -1,0 +1,34 @@
+{
+  "segments": [
+    {
+      "segment_id": "ch1_seg0002",
+      "text": "\"Hello, John,\" Sarah said.",
+      "text_markers": [
+        "double_quote"
+      ]
+    }
+  ],
+  "character_registry": [
+    {
+      "character_id": "char_001",
+      "canonical_name": "Sarah",
+      "aliases": [
+        "Sarah"
+      ],
+      "importance": "major",
+      "first_seen_segment": "ch1_seg0001",
+      "character_profile": {}
+    },
+    {
+      "character_id": "char_002",
+      "canonical_name": "John",
+      "aliases": [
+        "John"
+      ],
+      "importance": "major",
+      "first_seen_segment": "ch1_seg0001",
+      "character_profile": {}
+    }
+  ],
+  "settings": {}
+}

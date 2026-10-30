@@ -1,0 +1,18 @@
+{
+  "source": {
+    "type": "web",
+    "url": "https://example.com/novel/my-book",
+    "chapters": [
+      {
+        "title": "Chapter 1",
+        "content": "<p>Hello</p>",
+        "source": "https://example.com/c1"
+      }
+    ],
+    "chapter_range": [
+      1,
+      1
+    ]
+  },
+  "settings": {}
+}

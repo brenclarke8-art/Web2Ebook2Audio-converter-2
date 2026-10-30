@@ -1,0 +1,55 @@
+{
+  "enriched_segments": [
+    {
+      "segment_id": "ch1_seg0002",
+      "primary_type": "dialogue",
+      "speaker_id": "char_001",
+      "thought_owner_id": null,
+      "pov_character_id": "char_001",
+      "referenced_characters": [
+        "char_001",
+        "char_002"
+      ],
+      "emotion_tag": null,
+      "classification_confidence": 0.92,
+      "speaker_confidence": 0.9
+    }
+  ],
+  "character_registry": [
+    {
+      "character_id": "char_001",
+      "canonical_name": "Sarah",
+      "aliases": [
+        "Sarah"
+      ],
+      "importance": "major",
+      "first_seen_segment": "ch1_seg0001",
+      "character_profile": {}
+    }
+  ],
+  "enrichment_stats": {
+    "primary_type_counts": {
+      "dialogue": 1
+    },
+    "segments_with_speaker": 1,
+    "segments_with_thought_owner": 0,
+    "average_classification_confidence": 0.92
+  },
+  "meta": {
+    "phase": "05_semantic_enrichment",
+    "version": "2.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "segment_count": 1,
+    "character_count": 2
+  },
+  "output_summary": {
+    "enriched_count": 1
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

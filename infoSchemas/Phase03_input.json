@@ -1,0 +1,11 @@
+{
+  "normalized_chapters": {
+    "ch1": "Chapter One\\n\\n\"Hello\" she said."
+  },
+  "chapter_stats": {
+    "ch1": {
+      "length": 25
+    }
+  },
+  "settings": {}
+}

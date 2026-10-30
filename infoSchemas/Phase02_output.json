@@ -1,0 +1,30 @@
+{
+  "normalized_chapters": {
+    "ch1": "Hello world."
+  },
+  "chapter_stats": {
+    "ch1": {
+      "length": 12,
+      "word_count": 2,
+      "paragraph_count": 1,
+      "sentence_count": 1
+    }
+  },
+  "meta": {
+    "phase": "02_cleaning",
+    "version": "1.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "chapter_count": 1,
+    "payload_count": 1
+  },
+  "output_summary": {
+    "normalized_count": 1
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}

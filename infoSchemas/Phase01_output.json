@@ -1,0 +1,36 @@
+{
+  "chapter_index": [
+    {
+      "chapter_id": "ch1",
+      "title": "Chapter 1",
+      "order": 1,
+      "source_type": "web",
+      "source": "https://example.com/c1"
+    }
+  ],
+  "raw_payloads": {
+    "ch1": "<p>Hello</p>"
+  },
+  "meta": {
+    "phase": "01_source",
+    "version": "1.0.0",
+    "timestamp": 0.0
+  },
+  "input_summary": {
+    "source_type": "web",
+    "source_fields": [
+      "type",
+      "url",
+      "chapters",
+      "chapter_range"
+    ]
+  },
+  "output_summary": {
+    "chapter_count": 1
+  },
+  "errors": [],
+  "warnings": [],
+  "timings": {
+    "total_ms": 0.0
+  }
+}
