@@ -1,5 +1,5 @@
 """
-Phase 09 — File Writing & Export
+Phase 10 — File Writing & Export
 
 Copilot Instructions:
 - Follow Phase 00–08 output_schema.py EXACTLY.
@@ -9,7 +9,7 @@ Copilot Instructions:
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
-class Phase09Output(BaseModel):
+class Phase10Output(BaseModel):
     export_manifest: Dict[str, Any] = Field(
         ..., description="Paths and file list for final export."
     )

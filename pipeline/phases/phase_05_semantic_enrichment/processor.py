@@ -135,7 +135,7 @@ def process(input_data: Phase05Input) -> Phase05Output:
         meta={
             "phase": "05_semantic_enrichment",
             "version": "2.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
         },
         input_summary={
             "segment_count": len(input_data.segments),
@@ -146,7 +146,7 @@ def process(input_data: Phase05Input) -> Phase05Output:
         },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output

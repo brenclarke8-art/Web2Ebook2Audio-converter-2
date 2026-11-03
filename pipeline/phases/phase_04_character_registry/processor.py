@@ -100,7 +100,7 @@ def process(input_data: Phase04Input) -> Phase04Output:
         meta={
             "phase": "04_character_registry",
             "version": "2.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
         },
         input_summary={
             "segment_count": len(input_data.segments),
@@ -111,7 +111,7 @@ def process(input_data: Phase04Input) -> Phase04Output:
         },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output

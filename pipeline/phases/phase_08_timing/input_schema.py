@@ -10,7 +10,7 @@ Copilot Instructions:
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
-class Phase07Input(BaseModel):
+class Phase08Input(BaseModel):
     audio_chunks: List[Dict[str, Any]] = Field(
         ..., description="Audio chunks from Phase 06."
     )

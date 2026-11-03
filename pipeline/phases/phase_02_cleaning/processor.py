@@ -130,7 +130,7 @@ def process(input_data: Phase02Input) -> Phase02Output:
         meta={
             "phase": "02_cleaning",
             "version": "1.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
         },
         input_summary={
             "chapter_count": len(input_data.chapter_index),
@@ -141,7 +141,7 @@ def process(input_data: Phase02Input) -> Phase02Output:
         },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output

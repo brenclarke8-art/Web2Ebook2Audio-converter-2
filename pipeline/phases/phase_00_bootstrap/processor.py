@@ -8,8 +8,6 @@ def process(input_data: Phase00Input) -> Phase00Output:
     No filesystem access. No logging. Deterministic output.
     """
 
-    start_time = time.time()
-
     # Normalize settings and environment
     normalized = {
         "config_version": input_data.settings.get("version", "unknown"),
@@ -33,7 +31,7 @@ def process(input_data: Phase00Input) -> Phase00Output:
         meta={
             "phase": "00_bootstrap",
             "version": "1.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
         },
 
         input_summary={
@@ -48,7 +46,7 @@ def process(input_data: Phase00Input) -> Phase00Output:
 
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start_time) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output

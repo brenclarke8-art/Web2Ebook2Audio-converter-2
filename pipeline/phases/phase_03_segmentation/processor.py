@@ -126,7 +126,7 @@ def process(input_data: Phase03Input) -> Phase03Output:
         meta={
             "phase": "03_segmentation",
             "version": "2.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
         },
         input_summary={
             "chapter_count": len(input_data.normalized_chapters),
@@ -136,7 +136,7 @@ def process(input_data: Phase03Input) -> Phase03Output:
         },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output

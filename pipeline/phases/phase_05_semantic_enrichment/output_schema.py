@@ -3,8 +3,7 @@ Phase 05 — Semantic Enrichment
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
-from pipeline.phases.shared_schemas import CharacterEntry
+from typing import Any, Dict, List, Optional
 
 
 class EnrichedSegment(BaseModel):
@@ -20,11 +19,11 @@ class EnrichedSegment(BaseModel):
 
 
 class Phase05Output(BaseModel):
-    enriched_segments: List[EnrichedSegment] = Field(
+    enriched_segments: List[Dict[str, Any]] = Field(
         ..., description="Segments with semantic attribution metadata."
     )
 
-    character_registry: List[CharacterEntry] = Field(
+    character_registry: List[Dict[str, Any]] = Field(
         ..., description="Pass-through canonical character registry."
     )
 

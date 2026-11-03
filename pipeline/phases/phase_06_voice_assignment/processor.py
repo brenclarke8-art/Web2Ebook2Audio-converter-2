@@ -167,7 +167,7 @@ def process(input_data: Phase06Input) -> Phase06Output:
         meta={
             "phase": "06_voice_assignment",
             "version": "2.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
             "voice_mode": voice_mode,
         },
         input_summary={
@@ -180,7 +180,7 @@ def process(input_data: Phase06Input) -> Phase06Output:
         },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output
