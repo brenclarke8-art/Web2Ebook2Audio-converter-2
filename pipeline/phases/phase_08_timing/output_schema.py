@@ -9,7 +9,7 @@ Copilot Instructions:
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
-class Phase07Output(BaseModel):
+class Phase08Output(BaseModel):
     stitched_audio: List[Dict[str, Any]] = Field(
         ..., description="Simulated stitched chapter audio."
     )

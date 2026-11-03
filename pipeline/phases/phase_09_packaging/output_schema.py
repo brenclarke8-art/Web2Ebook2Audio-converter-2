@@ -9,7 +9,7 @@ Copilot Instructions:
 from pydantic import BaseModel, Field
 from typing import Dict, Any
 
-class Phase08Output(BaseModel):
+class Phase09Output(BaseModel):
     package_manifest: Dict[str, Any] = Field(
         ..., description="Audiobook + EPUB packaging manifest."
     )

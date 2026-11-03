@@ -14,7 +14,7 @@ Copilot Instructions:
 """
 
 import time
-from .input_schema import Phase07Input
+from .input_schema import Phase08Input
 from .output_schema import Phase07Output
 
 # Helper stubs Copilot will fill in
@@ -72,9 +72,9 @@ def process(input_data: Phase07Input) -> Phase07Output:
         stitched_audio=stitched_audio,
         stitched_index=stitched_index,
         meta={
-            "phase": "07_stitch",
+            "phase": "08_stitch",
             "version": "1.0.0",
-            "timestamp": time.time(),
+            "timestamp": 0.0,
         },
         input_summary={
             "chunk_count": len(input_data.audio_chunks),
@@ -85,7 +85,7 @@ def process(input_data: Phase07Input) -> Phase07Output:
         },
         errors=[],
         warnings=[],
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output

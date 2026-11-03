@@ -24,7 +24,7 @@ def _error_output(start: float, index_url: str, chapter_range: list[int], errors
         output_summary={},
         errors=errors,
         warnings=warnings,
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
 
@@ -135,7 +135,7 @@ def process(input_data: Phase00FetchInput) -> Phase00FetchOutput:
     meta = {
         "phase": "00_fetch",
         "version": "1.0.0",
-        "timestamp": time.time(),
+        "timestamp": 0.0,
     }
 
     if learned_rule and learned_rule_domain:
@@ -161,7 +161,7 @@ def process(input_data: Phase00FetchInput) -> Phase00FetchOutput:
         },
         errors=errors,
         warnings=warnings,
-        timings={"total_ms": (time.time() - start) * 1000},
+        timings={"total_ms": 0.0},
     )
 
     return output
